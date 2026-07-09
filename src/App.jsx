@@ -594,9 +594,25 @@ export default function App() {
 
       <main className="main-content">
         {/* ======================================= */}
+        {/* ======================================= */}
         {/* VIEW 1: LOGIN ROUTE */}
         {/* ======================================= */}
-        {currentRoute.path === 'login' && (
+        {['dashboard', 'yatra', 'my-yatra'].includes(currentRoute.path) && !currentUser && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+            <div className="card" style={{ width: '100%', maxWidth: '420px', padding: '2.5rem', textAlign: 'center' }}>
+              <div style={{ backgroundColor: 'var(--warning-light)', color: 'var(--warning)', width: '3.5rem', height: '3.5rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+                <AlertTriangle size={28} />
+              </div>
+              <h2>Session Cleared</h2>
+              <p style={{ color: 'var(--text-muted)', margin: '1rem 0 2rem' }}>Your session was cleared when you refreshed the browser. Please log in again to continue.</p>
+              <button className="btn btn-primary" onClick={() => navigateTo('login')} style={{ width: '100%' }}>
+                Return to Login
+              </button>
+            </div>
+          </div>
+        )}
+
+        {currentRoute.path === 'login' && !currentUser && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
             <div className="card" style={{ width: '100%', maxWidth: '420px', padding: '2.5rem' }}>
               <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
