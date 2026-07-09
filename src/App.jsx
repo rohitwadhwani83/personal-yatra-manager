@@ -649,7 +649,7 @@ export default function App() {
                 >Devotee</button>
               </div>
 
-              <form onSubmit={handleLogin}>
+              <form onSubmit={handleLogin} autoComplete="off">
                 {loginRole === 'participant' ? (
                   <div className="form-group">
                     <label>Enter Registered Mobile Number</label>
@@ -658,7 +658,7 @@ export default function App() {
                       <input 
                         type="tel" 
                         className="form-control" 
-                        placeholder="9876543210" 
+                        autoComplete="off"
                         value={loginPhone}
                         onChange={(e) => setLoginPhone(e.target.value)}
                       />
@@ -671,7 +671,7 @@ export default function App() {
                       <input 
                         type="email" 
                         className="form-control" 
-                        placeholder={loginRole === 'super_admin' ? 'Email address...' : 'Email address...'} 
+                        autoComplete="off"
                         value={loginEmail}
                         onChange={(e) => setLoginEmail(e.target.value)}
                       />
@@ -681,7 +681,7 @@ export default function App() {
                       <input 
                         type="password" 
                         className="form-control" 
-                        placeholder="••••••••" 
+                        autoComplete="new-password"
                         value={loginPassword}
                         onChange={(e) => setLoginPassword(e.target.value)}
                       />
