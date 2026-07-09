@@ -359,6 +359,10 @@ class Database {
   }
 
   // --- Specific API Wrappers ---
+  async getUsers() { return this.getCollection('users'); }
+  async addUser(user) { return this.addDocument('users', user); }
+  async deleteUser(id) { return this.deleteDocument('users', id); }
+
   async getYatras() { return this.getCollection('yatras'); }
   async addYatra(yatra) { return this.addDocument('yatras', yatra); }
   async updateYatra(id, updates) { return this.updateDocument('yatras', id, updates); }

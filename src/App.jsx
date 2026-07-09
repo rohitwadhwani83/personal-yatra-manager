@@ -47,6 +47,10 @@ export default function App() {
   const [loginRole, setLoginRole] = useState('admin'); // 'admin' | 'super_admin' | 'participant'
   const [loginError, setLoginError] = useState('');
 
+  // Admin Management State
+  const [systemUsers, setSystemUsers] = useState([]);
+  const [newAdminEmail, setNewAdminEmail] = useState('');
+
   // Modals
   const [isCreateYatraOpen, setIsCreateYatraOpen] = useState(false);
   const [isAddHotelOpen, setIsAddHotelOpen] = useState(false);
@@ -99,6 +103,9 @@ export default function App() {
     async function loadData() {
       const yData = await db.getYatras();
       setYatras(yData);
+
+      const uData = await db.getUsers();
+      setSystemUsers(uData);
 
       // If a yatra is selected, load its detailed collections
       if (selectedYatra) {
@@ -460,6 +467,34 @@ export default function App() {
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
+
+  // --- Admin Management ---
+  const handleAddAdmin = async (e) => {
+    e.preventDefault();
+    if (!newAdminEmail.trim()) return;
+    
+    // Check if user already exists
+    if (systemUsers.some(u => u.email === newAdminEmail.trim().toLowerCase())) {
+      alert("An admin with this email already exists.");
+      return;
+    }
+
+    await db.addUser({
+      email: newAdminEmail.trim().toLowerCase(),
+      role: 'admin',
+      name: 'Yatra Manager',
+      phone: ''
+    });
+    setNewAdminEmail('');
+    setRefreshTrigger(prev => prev + 1);
+  };
+  
+  const handleDeleteAdmin = async (id) => {
+    if (window.confirm("Are you sure you want to completely remove this admin's access?")) {
+      await db.deleteUser(id);
+      setRefreshTrigger(prev => prev + 1);
+    }
   };
 
   // --- Settings (Firebase Sync Config) ---
@@ -2205,7 +2240,7 @@ export default function App() {
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', marginBottom: '2rem' }}>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
                   Connect & Sync Database
                 </button>
@@ -2216,6 +2251,40 @@ export default function App() {
                 )}
               </div>
             </form>
+
+            <hr style={{ margin: '2rem 0', borderColor: 'var(--border)' }} />
+
+            <div style={{ marginBottom: '1rem' }}>
+              <h3>Manage Admin Access</h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Invite secondary administrators who can manage yatras, verify payments, and export reports.</p>
+            </div>
+            
+            <div style={{ marginBottom: '1.5rem' }}>
+              {systemUsers.filter(u => u.role === 'admin').map(user => (
+                <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', marginBottom: '0.5rem', border: '1px solid var(--border)' }}>
+                  <div>
+                    <strong>{user.email}</strong>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Role: Admin</div>
+                  </div>
+                  <button className="btn btn-danger btn-icon" onClick={() => handleDeleteAdmin(user.id)}>
+                    <Trash2 size={16} />
+                  </button>
+                </div>
+              ))}
+              {systemUsers.filter(u => u.role === 'admin').length === 0 && (
+                <div style={{ padding: '1rem', textAlign: 'center', color: 'var(--text-muted)', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
+                  No extra admins invited yet.
+                </div>
+              )}
+            </div>
+
+            <form onSubmit={handleAddAdmin}>
+              <div className="form-group" style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                <input type="email" required className="form-control" placeholder="Enter new admin email..." value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)} style={{ flex: 1 }} />
+                <button type="submit" className="btn btn-outline">Add Admin</button>
+              </div>
+            </form>
+
           </div>
         </div>
       )}
