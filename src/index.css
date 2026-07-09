@@ -24,9 +24,9 @@
   --info-light: hsla(190, 80%, 45%, 0.1);
 
   /* Light Theme Variables */
-  --bg: url('/bg.png') center/cover fixed;
-  --bg-card: rgba(255, 255, 255, 0.85);
-  --bg-header: rgba(255, 255, 255, 0.85);
+  --bg: hsl(220, 20%, 97%);
+  --bg-card: hsl(0, 0%, 100%);
+  --bg-header: hsl(0, 0%, 100%);
   --border: hsl(220, 15%, 90%);
   --border-focus: hsl(24, 90%, 54%);
   --text: hsl(220, 20%, 25%);
@@ -46,9 +46,9 @@
 @media (prefers-color-scheme: dark) {
   :root {
     /* Dark Theme Variables */
-    --bg: url('/bg.png') center/cover fixed;
-    --bg-card: rgba(20, 25, 30, 0.75);
-    --bg-header: rgba(20, 25, 30, 0.8);
+    --bg: hsl(222, 18%, 11%);
+    --bg-card: hsl(223, 17%, 16%);
+    --bg-header: hsl(223, 17%, 14%);
     --border: hsl(223, 17%, 22%);
     --text: hsl(210, 17%, 88%);
     --text-muted: hsl(215, 13%, 60%);
@@ -66,7 +66,7 @@
 
 body {
   font-family: var(--font-sans);
-  background: var(--bg);
+  background-color: var(--bg);
   color: var(--text);
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
@@ -91,8 +91,6 @@ body {
   justify-content: space-between;
   align-items: center;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
 }
 
 .header-title-group {
@@ -219,8 +217,6 @@ a:hover {
   padding: 1.5rem;
   box-shadow: var(--shadow);
   transition: var(--transition);
-  backdrop-filter: blur(16px);
-  -webkit-backdrop-filter: blur(16px);
 }
 
 .card:hover {
@@ -429,8 +425,6 @@ a:hover {
   box-shadow: var(--shadow-lg);
   border: 1px solid var(--border);
   animation: modalEnter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-  backdrop-filter: blur(20px);
-  -webkit-backdrop-filter: blur(20px);
 }
 
 @keyframes modalEnter {
@@ -507,5 +501,21 @@ a:hover {
   
   table th, table td {
     white-space: nowrap;
+  }
+}
+
+/* Isolated Login Theme */
+.login-bg-theme {
+  background: url('/bg.png') center/cover fixed;
+}
+.login-bg-theme .header, .login-bg-theme .card {
+  background-color: rgba(255, 255, 255, 0.85);
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+}
+
+@media (prefers-color-scheme: dark) {
+  .login-bg-theme .header, .login-bg-theme .card {
+    background-color: rgba(20, 25, 30, 0.75);
   }
 }

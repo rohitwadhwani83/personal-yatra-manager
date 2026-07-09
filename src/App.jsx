@@ -566,7 +566,7 @@ export default function App() {
 
   // Render Logic
   return (
-    <div className="app-container">
+    <div className={`app-container ${!currentUser ? 'login-bg-theme' : ''}`}>
       {/* HEADER NAVBAR */}
       <header className="header">
         <div className="header-title-group" style={{ cursor: 'pointer' }} onClick={() => currentUser ? navigateTo('dashboard') : null}>
