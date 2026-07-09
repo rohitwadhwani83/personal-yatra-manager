@@ -829,9 +829,10 @@ export default function App() {
                   <p style={{ color: 'var(--text-muted)' }}>📍 {selectedYatra.destination} | 📅 {selectedYatra.startDate} to {selectedYatra.endDate}</p>
                 </div>
               </div>
-              <div style={{ display: 'flex', gap: '0.5rem' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
                 <button className="btn btn-outline" onClick={() => {
-                  navigator.clipboard.writeText(`${window.location.origin}/#/register/${selectedYatra.id}`);
+                  const baseUrl = window.location.href.split('#')[0];
+                  navigator.clipboard.writeText(`${baseUrl}#/register/${selectedYatra.id}`);
                   alert("Copied public registration link to clipboard!");
                 }}>
                   <Share2 size={16} /> Registration Link
