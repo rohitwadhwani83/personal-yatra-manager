@@ -466,7 +466,16 @@ export default function App() {
   const saveFirebaseSettings = (e) => {
     e.preventDefault();
     try {
-      const parsed = JSON.parse(firebaseConfig);
+      let configString = firebaseConfig.trim();
+      if (configString.startsWith('const')) {
+        configString = configString.substring(configString.indexOf('{'));
+      }
+      if (configString.endsWith(';')) {
+        configString = configString.substring(0, configString.length - 1);
+      }
+      // Parse object literal natively (handles unquoted keys from Firebase copy-paste)
+      const parsed = new Function('return ' + configString)();
+      
       const ok = db.initializeFirebase(parsed);
       if (ok) {
         setIsFirebaseConnected(true);
@@ -479,7 +488,7 @@ export default function App() {
         alert("Failed to initialize Firebase with the config provided. Check console.");
       }
     } catch (err) {
-      alert("Invalid JSON config format.");
+      alert("Invalid configuration format. Please paste the exact object from Firebase.");
     }
   };
 
