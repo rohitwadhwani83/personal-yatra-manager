@@ -572,7 +572,7 @@ export default function App() {
         <div className="header-title-group" style={{ cursor: 'pointer' }} onClick={() => currentUser ? navigateTo('dashboard') : null}>
           <Compass className="logo-icon" />
           <div>
-            <h1>Personal Yatra Management System</h1>
+            <h1>Spiritual Yatra Management System</h1>
             {currentUser && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Logged in as: <strong>{currentUser.name}</strong> ({currentUser.role})</span>}
           </div>
         </div>
@@ -671,7 +671,7 @@ export default function App() {
                       <input 
                         type="email" 
                         className="form-control" 
-                        placeholder={loginRole === 'super_admin' ? 'rohit.wadhwani83@gmail.com' : 'admin@yatra.com'} 
+                        placeholder={loginRole === 'super_admin' ? 'Email address...' : 'Email address...'} 
                         value={loginEmail}
                         onChange={(e) => setLoginEmail(e.target.value)}
                       />
@@ -693,14 +693,6 @@ export default function App() {
                   {loginRole === 'participant' ? 'Find My Registration' : 'Sign In'}
                 </button>
               </form>
-
-              {/* DEMO BYPASS INFO FOR SHOWCASE */}
-              <div style={{ marginTop: '1.5rem', padding: '1rem', backgroundColor: 'var(--primary-light)', border: '1px solid var(--primary-border)', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem' }}>
-                <strong style={{ color: 'var(--primary)' }}>Demo Showcase Bypass:</strong><br />
-                - Super Admin: <code>rohit.wadhwani83@gmail.com</code> / <code>admin123</code><br />
-                - Admin: <code>admin@yatra.com</code> / <code>admin123</code><br />
-                - Devotee Phone: <code>9876543210</code> (Ramesh Sharma)
-              </div>
             </div>
           </div>
         )}
@@ -1836,7 +1828,7 @@ export default function App() {
 
       {/* FOOTER */}
       <footer style={{ borderTop: '1px solid var(--border)', padding: '1.5rem', textAlign: 'center', color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: 'auto', backgroundColor: 'var(--bg-header)' }}>
-        <p>© 2026 Personal Yatra Management System | Designed for Spiritual Devotee Tours</p>
+        <p>© 2026 Spiritual Yatra Management System | Designed for Devotee Tours</p>
       </footer>
 
       {/* ======================================================== */}
