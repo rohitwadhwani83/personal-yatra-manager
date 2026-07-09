@@ -53,6 +53,7 @@ export default function App() {
 
   // Modals
   const [isCreateYatraOpen, setIsCreateYatraOpen] = useState(false);
+  const [editingYatraId, setEditingYatraId] = useState(null);
   const [isAddHotelOpen, setIsAddHotelOpen] = useState(false);
   const [isAddParticipantOpen, setIsAddParticipantOpen] = useState(false);
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
@@ -101,7 +102,10 @@ export default function App() {
 
   useEffect(() => {
     async function loadData() {
-      const yData = await db.getYatras();
+      let yData = await db.getYatras();
+      if (currentUser?.role !== 'super_admin') {
+        yData = yData.filter(y => !y.isDeleted);
+      }
       setYatras(yData);
 
       const uData = await db.getUsers();
@@ -127,7 +131,7 @@ export default function App() {
       }
     }
     loadData();
-  }, [selectedYatra, refreshTrigger, isFirebaseConnected]);
+  }, [selectedYatra, refreshTrigger, isFirebaseConnected, currentUser]);
 
   // --- Custom Router Effect ---
   useEffect(() => {
@@ -245,12 +249,34 @@ export default function App() {
   // --- CRUD Operation Triggers ---
   const handleCreateYatra = async (e) => {
     e.preventDefault();
-    const id = 'yatra_' + Math.random().toString(36).substring(2, 9);
-    const added = await db.addYatra({ ...newYatra, id, status: 'planning' });
-    setYatras([...yatras, added]);
+    if (editingYatraId) {
+      await db.updateYatra(editingYatraId, newYatra);
+      setEditingYatraId(null);
+    } else {
+      const id = 'yatra_' + Math.random().toString(36).substring(2, 9);
+      await db.addYatra({ ...newYatra, id, status: 'planning', isDeleted: false });
+    }
     setIsCreateYatraOpen(false);
-    setNewYatra({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani' });
+    setNewYatra({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleDeleteYatra = async (yatraId) => {
+    if (window.confirm("Are you sure you want to delete this Yatra? It will be archived.")) {
+      await db.softDeleteYatra(yatraId);
+      if (selectedYatra?.id === yatraId) {
+        setSelectedYatra(null);
+        navigateTo('dashboard');
+      }
+      setRefreshTrigger(prev => prev + 1);
+    }
+  };
+
+  const handleRestoreYatra = async (yatraId) => {
+    if (window.confirm("Restore this Yatra to active status?")) {
+      await db.restoreYatra(yatraId);
+      setRefreshTrigger(prev => prev + 1);
+    }
   };
 
   const handleAddHotel = async (e) => {
@@ -822,6 +848,36 @@ export default function App() {
                 </div>
               </div>
               <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
+                  <>
+                    <button className="btn btn-outline" onClick={() => {
+                      setEditingYatraId(selectedYatra.id);
+                      setNewYatra({
+                        name: selectedYatra.name,
+                        destination: selectedYatra.destination,
+                        startDate: selectedYatra.startDate,
+                        endDate: selectedYatra.endDate,
+                        expectedParticipants: selectedYatra.expectedParticipants || 30,
+                        upiId: selectedYatra.upiId,
+                        upiName: selectedYatra.upiName,
+                        registrationDeadline: selectedYatra.registrationDeadline || ''
+                      });
+                      setIsCreateYatraOpen(true);
+                    }}>
+                      <Edit2 size={16} /> Edit
+                    </button>
+                    {!selectedYatra.isDeleted && (
+                      <button className="btn btn-danger" onClick={() => handleDeleteYatra(selectedYatra.id)}>
+                        <Trash2 size={16} /> Delete
+                      </button>
+                    )}
+                    {selectedYatra.isDeleted && currentUser.role === 'super_admin' && (
+                      <button className="btn btn-primary" style={{ backgroundColor: 'var(--success)' }} onClick={() => handleRestoreYatra(selectedYatra.id)}>
+                        <RefreshCw size={16} /> Restore
+                      </button>
+                    )}
+                  </>
+                )}
                 <button className="btn btn-outline" onClick={() => {
                   const baseUrl = window.location.href.split('#')[0];
                   navigator.clipboard.writeText(`${baseUrl}#/register/${selectedYatra.id}`);
@@ -1883,7 +1939,7 @@ export default function App() {
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h3>Create New Spiritual Yatra</h3>
+              <h3>{editingYatraId ? 'Edit Spiritual Yatra' : 'Create New Spiritual Yatra'}</h3>
               <button className="modal-close" onClick={() => setIsCreateYatraOpen(false)}>×</button>
             </div>
             <form onSubmit={handleCreateYatra}>
@@ -1925,7 +1981,7 @@ export default function App() {
                   <input type="text" required className="form-control" placeholder="Rohit Wadhwani" value={newYatra.upiName} onChange={(e) => setNewYatra({...newYatra, upiName: e.target.value})} />
                 </div>
               </div>
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>Create Yatra Tour</button>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>{editingYatraId ? 'Save Changes' : 'Create Yatra Tour'}</button>
             </form>
           </div>
         </div>

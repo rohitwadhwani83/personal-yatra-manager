@@ -367,6 +367,8 @@ class Database {
   async addYatra(yatra) { return this.addDocument('yatras', yatra); }
   async updateYatra(id, updates) { return this.updateDocument('yatras', id, updates); }
   async deleteYatra(id) { return this.deleteDocument('yatras', id); }
+  async softDeleteYatra(id) { return this.updateDocument('yatras', id, { isDeleted: true }); }
+  async restoreYatra(id) { return this.updateDocument('yatras', id, { isDeleted: false }); }
 
   async getHotels(yatraId) {
     const all = await this.getCollection('hotels');
