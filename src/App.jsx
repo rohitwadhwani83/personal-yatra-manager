@@ -54,6 +54,7 @@ export default function App() {
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUploadDocOpen, setIsUploadDocOpen] = useState(false);
+  const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   // Form states for adding items
   const [newYatra, setNewYatra] = useState({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani' });
@@ -75,6 +76,7 @@ export default function App() {
 
   // Participant Portal lookup state
   const [myParticipantData, setMyParticipantData] = useState(null);
+  const [editProfileData, setEditProfileData] = useState(null);
   const [myPhotos, setMyPhotos] = useState([]);
   const [myNotes, setMyNotes] = useState(null);
 
@@ -301,6 +303,16 @@ export default function App() {
     // Update participant payment status to pending verification
     await db.updateParticipant(currentRoute.id, { paymentStatus: 'pending' });
     setPublicPayStatus('success');
+  };
+
+  const handleUpdateProfile = async (e) => {
+    e.preventDefault();
+    if (!editProfileData || !myParticipantData) return;
+    const updated = await db.updateParticipant(myParticipantData.id, editProfileData);
+    setMyParticipantData(updated);
+    setIsEditProfileOpen(false);
+    alert("Profile updated successfully!");
+    setRefreshTrigger(prev => prev + 1);
   };
 
   // --- Status Updates & Quick Controls ---
@@ -1637,7 +1649,15 @@ export default function App() {
               <div>
                 {/* MY DETAILS & TRAVEL NOTES */}
                 <div className="card" style={{ marginBottom: '2rem' }}>
-                  <h3>Yatra Schedule & General Reference</h3>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3>Yatra Schedule & General Reference</h3>
+                    <button className="btn btn-outline" style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }} onClick={() => {
+                      setEditProfileData({ ...myParticipantData });
+                      setIsEditProfileOpen(true);
+                    }}>
+                      <Edit2 size={14} /> Update My Profile
+                    </button>
+                  </div>
                   {myNotes ? (
                     <div style={{ marginTop: '1rem', whiteSpace: 'pre-line', fontFamily: 'monospace', backgroundColor: 'var(--bg)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
                       {JSON.parse(myNotes.content).general || "No notes have been shared by the organizer yet."}
@@ -1734,6 +1754,49 @@ export default function App() {
       {/* ======================================================== */}
       {/* MODAL DIALOGS */}
       {/* ======================================================== */}
+
+      {/* MODAL: CREATE YATRA */}
+      {isEditProfileOpen && editProfileData && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3>Update Profile Details</h3>
+              <button className="modal-close" onClick={() => setIsEditProfileOpen(false)}>×</button>
+            </div>
+            <form onSubmit={handleUpdateProfile}>
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Full Name</label>
+                  <input type="text" required className="form-control" value={editProfileData.name} onChange={(e) => setEditProfileData({...editProfileData, name: e.target.value})} />
+                </div>
+                <div className="form-group">
+                  <label>Email Address</label>
+                  <input type="email" className="form-control" value={editProfileData.email} onChange={(e) => setEditProfileData({...editProfileData, email: e.target.value})} />
+                </div>
+              </div>
+              <div className="form-group">
+                <label>City</label>
+                <input type="text" className="form-control" value={editProfileData.city} onChange={(e) => setEditProfileData({...editProfileData, city: e.target.value})} />
+              </div>
+              {editProfileData.type === 'family' && (
+                <div className="form-group">
+                  <label>Members Details (Names/Ages)</label>
+                  <textarea className="form-control" rows={2} value={editProfileData.memberDetails} onChange={(e) => setEditProfileData({...editProfileData, memberDetails: e.target.value})} />
+                </div>
+              )}
+              <div className="form-group">
+                <label>Special Dietary Requirements</label>
+                <input type="text" className="form-control" value={editProfileData.specialRequirements} onChange={(e) => setEditProfileData({...editProfileData, specialRequirements: e.target.value})} />
+              </div>
+              <div className="form-group">
+                <label>Medical Comments / Notes</label>
+                <input type="text" className="form-control" value={editProfileData.medicalNotes} onChange={(e) => setEditProfileData({...editProfileData, medicalNotes: e.target.value})} />
+              </div>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>Save Changes</button>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* MODAL: CREATE YATRA */}
       {isCreateYatraOpen && (
