@@ -473,8 +473,14 @@ export default function App() {
       if (configString.endsWith(';')) {
         configString = configString.substring(0, configString.length - 1);
       }
-      // Parse object literal natively (handles unquoted keys from Firebase copy-paste)
-      const parsed = new Function('return ' + configString)();
+      
+      // Safely convert unquoted JavaScript object keys into strict JSON format
+      // Example: apiKey: "..." -> "apiKey": "..."
+      const safeJsonString = configString
+        .replace(/([{,]\s*)([a-zA-Z0-9_]+)\s*:/g, '$1"$2":')
+        .replace(/'/g, '"');
+        
+      const parsed = JSON.parse(safeJsonString);
       
       const ok = db.initializeFirebase(parsed);
       if (ok) {
@@ -488,7 +494,7 @@ export default function App() {
         alert("Failed to initialize Firebase with the config provided. Check console.");
       }
     } catch (err) {
-      alert("Invalid configuration format. Please paste the exact object from Firebase.");
+      alert("Invalid JSON format. Make sure you pasted the code correctly, or try closing the tab and reopening to clear cache. Error: " + err.message);
     }
   };
 
