@@ -57,7 +57,8 @@ export default function App() {
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
 
   // Form states for adding items
-  const [newYatra, setNewYatra] = useState({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani' });
+  const defaultDeadline = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+  const [newYatra, setNewYatra] = useState({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
   const [newHotel, setNewHotel] = useState({ name: '', address: '', gmapsLink: '', bookingLink: '', contactPerson: '', phone: '', roomsAvailable: 10, roomPrice: 2000, extraMattressCost: 500, distanceFromTemple: '', notes: '', contacted: false, shortlisted: false, finalSelected: false, quoteImageUrl: '' });
   const [newParticipant, setNewParticipant] = useState({ name: '', phone: '', email: '', city: '', type: 'individual', familyName: '', membersCount: 1, memberDetails: '', specialRequirements: '', medicalNotes: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
   const [newExpense, setNewExpense] = useState({ date: new Date().toISOString().split('T')[0], category: 'hotel', amount: '', paidBy: '', remarks: '', appliesTo: 'everyone', targetIds: [], billImageUrl: '' });
@@ -1474,7 +1475,16 @@ export default function App() {
                 <p style={{ color: 'var(--text-muted)' }}>📅 Dates: {selectedYatra.startDate} to {selectedYatra.endDate}</p>
               </div>
 
-              {publicRegStatus === 'success' ? (
+              {selectedYatra.registrationDeadline && new Date() > new Date(selectedYatra.registrationDeadline) ? (
+                <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+                  <div style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', width: '3.5rem', height: '3.5rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+                    <AlertTriangle size={28} />
+                  </div>
+                  <h3>Registration Closed</h3>
+                  <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>The registration link for this Yatra expired on <strong>{selectedYatra.registrationDeadline}</strong>.</p>
+                  <p style={{ color: 'var(--text-muted)' }}>Please contact the organizer if you still wish to participate.</p>
+                </div>
+              ) : publicRegStatus === 'success' ? (
                 <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
                   <div style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', width: '3.5rem', height: '3.5rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justify: 'center', margin: '0 auto 1.5rem', justifyContent: 'center' }}>
                     <Check size={28} />
@@ -1825,9 +1835,15 @@ export default function App() {
                   <input type="date" required className="form-control" value={newYatra.endDate} onChange={(e) => setNewYatra({...newYatra, endDate: e.target.value})} />
                 </div>
               </div>
-              <div className="form-group">
-                <label>Expected Target Seats (Devotees)</label>
-                <input type="number" required className="form-control" min={1} value={newYatra.expectedParticipants} onChange={(e) => setNewYatra({...newYatra, expectedParticipants: parseInt(e.target.value) || 30})} />
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Expected Target Seats (Devotees)</label>
+                  <input type="number" required className="form-control" min={1} value={newYatra.expectedParticipants} onChange={(e) => setNewYatra({...newYatra, expectedParticipants: parseInt(e.target.value) || 30})} />
+                </div>
+                <div className="form-group">
+                  <label>Registration Link Expiry (Deadline)</label>
+                  <input type="date" required className="form-control" value={newYatra.registrationDeadline} onChange={(e) => setNewYatra({...newYatra, registrationDeadline: e.target.value})} />
+                </div>
               </div>
               <div className="grid-cols-2">
                 <div className="form-group">
