@@ -211,13 +211,24 @@ export default function App() {
         return;
       }
 
-      // Check against credentials
-      if (loginEmail === 'rohit.wadhwani83@gmail.com' && loginPassword === 'admin123' && loginRole === 'super_admin') {
+      if (loginRole === 'super_admin' && loginEmail.toLowerCase() === 'rohit.wadhwani83@gmail.com' && loginPassword === 'admin123') {
         setCurrentUser({ email: loginEmail, role: 'super_admin', name: 'Rohit Wadhwani (Super)' });
         navigateTo('dashboard');
-      } else if (loginEmail === 'admin@yatra.com' && loginPassword === 'admin123' && loginRole === 'admin') {
-        setCurrentUser({ email: loginEmail, role: 'admin', name: 'Krishna Das (Admin)' });
-        navigateTo('dashboard');
+      } else if (loginRole === 'admin') {
+        db.getUsers().then(users => {
+          // Check if the email exists in the users table or is the demo admin
+          const matchedAdmin = users.find(u => u.email === loginEmail.toLowerCase() && u.role === 'admin');
+          if ((matchedAdmin || loginEmail.toLowerCase() === 'admin@yatra.com') && loginPassword === 'admin123') {
+            setCurrentUser({ 
+              email: loginEmail, 
+              role: 'admin', 
+              name: matchedAdmin ? matchedAdmin.name : 'Krishna Das (Admin)' 
+            });
+            navigateTo('dashboard');
+          } else {
+            setLoginError('Invalid email, password, or role combination.');
+          }
+        });
       } else {
         setLoginError('Invalid email, password, or role combination.');
       }
