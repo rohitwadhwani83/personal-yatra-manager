@@ -598,25 +598,45 @@ export default function App() {
   const expCalc = getExpenseCalculations();
 
   // --- WhatsApp Follow-up click-to-chat Generator ---
-  const sendWhatsApp = (participant, template) => {
+  const sendWhatsApp = (participant, template, extraData = {}) => {
+    if (!participant || !participant.phone) {
+      alert("No phone number found for this participant.");
+      return;
+    }
     const phone = participant.phone.replace(/[^0-9]/g, '');
     let text = '';
     
+    // Correct URL handling on GitHub Pages (preserves repo path)
+    const baseUrl = window.location.href.split('#')[0];
+    const paymentUrl = `${baseUrl}#/payment/${participant.id}`;
+    const portalUrl = `${baseUrl}#/login`;
+
+    // Compute dynamic financial numbers
+    const splitInfo = expCalc.splits.find(s => s.id === participant.id);
+    const totalDue = splitInfo ? splitInfo.share : (participant.customAmount ? parseFloat(participant.customAmount) : 0);
+    const paidSoFar = splitInfo ? splitInfo.paid : 0;
+    const balance = Math.max(0, totalDue - paidSoFar);
+    
     switch (template) {
       case 'welcome':
-        text = `Hare Krishna ${participant.name}! \n\nThank you for registering for the upcoming *${selectedYatra.name}* to *${selectedYatra.destination}* (${selectedYatra.startDate}). \n\nYour status is currently set to *${participant.status.toUpperCase()}*. \n\nPlease complete your payment of ₹${participant.type === 'family' ? 'details' : '3,000'} to confirm your seat.\n\nUpload payment receipt here: ${window.location.origin}/#/payment/${participant.id}`;
+        text = `🙏 *Hare Krishna ${participant.name}!* \n\nThank you for registering for the sacred *${selectedYatra.name}* to *${selectedYatra.destination}* (${selectedYatra.startDate} to ${selectedYatra.endDate}).\n\n📌 *Booking Details:*\n- Type: ${participant.type === 'family' ? `Family Group (${participant.familyName || participant.name})` : 'Individual Traveller'}\n- Registered Members: ${participant.membersCount || 1}\n- Total Yatra Contribution: ₹${totalDue.toLocaleString('en-IN')}\n\n💳 *Payment & Receipt Submission:*\nPlease complete your contribution and upload your screenshot here:\n👉 ${paymentUrl}\n\nUPI ID: *${selectedYatra.upiId}* (${selectedYatra.upiName})\n\nLooking forward to having you on this divine journey! Haribol! 🙏`;
         break;
       case 'payment_reminder':
-        text = `Hare Krishna ${participant.name}! \n\nThis is a friendly reminder to complete your payment for *${selectedYatra.name}*.\n\nUPI ID: ${selectedYatra.upiId}\nUPI Name: ${selectedYatra.upiName}\n\nUpload your transaction screenshot here: ${window.location.origin}/#/payment/${participant.id}`;
+        text = `🙏 *Hare Krishna ${participant.name}!* \n\nThis is a gentle reminder regarding your seat confirmation for *${selectedYatra.name}*.\n\n📊 *Your Contribution Status:*\n- Total Amount: ₹${totalDue.toLocaleString('en-IN')}\n- Paid So Far: ₹${paidSoFar.toLocaleString('en-IN')}\n- *Pending Balance: ₹${balance.toLocaleString('en-IN')}*\n\n💳 *UPI Details:*\nUPI ID: *${selectedYatra.upiId}*\nName: ${selectedYatra.upiName}\n\nKindly submit your payment screenshot here to confirm your seats:\n👉 ${paymentUrl}\n\nThank you! Haribol! 🙏`;
         break;
       case 'payment_verified':
-        text = `Hare Krishna ${participant.name}! \n\nWe have successfully verified your payment of ₹${participant.paid || ''} for *${selectedYatra.name}*. Your booking is now *CONFIRMED*!\n\nYou can access your participant portal here to view schedule notes and shared photos: ${window.location.origin}/#/login`;
+        const verifiedAmt = extraData.amount || paidSoFar;
+        text = `🎉 *Hare Krishna ${participant.name}!* \n\nWe have verified your payment of *₹${Number(verifiedAmt).toLocaleString('en-IN')}* for *${selectedYatra.name}*!\n\n✅ *Status:* ${balance <= 0 ? 'Booking Fully CONFIRMED! 🎊' : `Partially Paid (Remaining Balance: ₹${balance.toLocaleString('en-IN')})`}\n\n📱 *Devotee Portal:*\nYou can log in with your mobile number (*${participant.phone}*) to access itinerary notes, travel updates, and photo memories:\n👉 ${portalUrl}\n\nHaribol! 🙏`;
+        break;
+      case 'itinerary_update':
+        text = `📢 *Yatra Itinerary & Travel Update - ${selectedYatra.name}*\n\nHare Krishna ${participant.name}!\n\nOrganizers have posted important updates for our upcoming yatra to ${selectedYatra.destination}.\n\nPlease check your devotee portal for details and hotel contacts:\n👉 ${portalUrl}\n\nHaribol! 🙏`;
         break;
       default:
-        text = `Hare Krishna ${participant.name}!`;
+        text = `🙏 Hare Krishna ${participant.name}!\n\nGreetings from ${selectedYatra.name} organizing team.`;
     }
 
-    const waUrl = `https://wa.me/${phone.startsWith('91') ? phone : '91' + phone}?text=${encodeURIComponent(text)}`;
+    const cleanPhone = phone.startsWith('91') && phone.length === 12 ? phone : (phone.length === 10 ? '91' + phone : phone);
+    const waUrl = `https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(text)}`;
     window.open(waUrl, '_blank');
   };
 
@@ -1767,11 +1787,17 @@ export default function App() {
                                           </div>
 
                                           <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
-                                            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem' }} onClick={() => sendWhatsApp(part, 'welcome')}>
-                                              Send Welcome WhatsApp
+                                            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: '#047857' }} onClick={() => sendWhatsApp(part, 'welcome')}>
+                                              💬 Welcome WhatsApp
                                             </button>
-                                            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem' }} onClick={() => sendWhatsApp(part, 'payment_reminder')}>
-                                              Send Reminder
+                                            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: '#b45309' }} onClick={() => sendWhatsApp(part, 'payment_reminder')}>
+                                              💰 Payment Reminder
+                                            </button>
+                                            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: '#1d4ed8' }} onClick={() => sendWhatsApp(part, 'payment_verified')}>
+                                              ✅ Confirmation WhatsApp
+                                            </button>
+                                            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: '#4338ca' }} onClick={() => sendWhatsApp(part, 'itinerary_update')}>
+                                              📢 Itinerary Update
                                             </button>
                                           </div>
                                         </div>
@@ -1945,13 +1971,29 @@ export default function App() {
                               </span>
                             </td>
                             <td>
-                              <div style={{ display: 'flex', gap: '0.35rem' }}>
-                                <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', color: 'var(--success)', borderColor: 'var(--success-border)', backgroundColor: 'var(--success-light)' }} onClick={() => verifyPayment(pay.id, pay.participantId, 'verified')}>
-                                  <Check size={14} /> Verify
-                                </button>
-                                <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', color: 'var(--danger)', borderColor: 'hsla(350,80%,55%,0.2)', backgroundColor: 'var(--danger-light)' }} onClick={() => verifyPayment(pay.id, pay.participantId, 'rejected')}>
-                                  <X size={14} /> Reject
-                                </button>
+                              <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                {pay.status !== 'verified' ? (
+                                  <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', color: 'var(--success)', borderColor: 'var(--success-border)', backgroundColor: 'var(--success-light)' }} onClick={() => verifyPayment(pay.id, pay.participantId, 'verified')}>
+                                    <Check size={14} /> Verify
+                                  </button>
+                                ) : (
+                                  <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: '600' }}>✓ Verified</span>
+                                )}
+                                {partObj && partObj.phone && (
+                                  <button
+                                    className="btn btn-outline"
+                                    style={{ padding: '0.35rem 0.5rem', color: '#16a34a', borderColor: '#86efac', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem' }}
+                                    onClick={() => sendWhatsApp(partObj, 'payment_verified', { amount: pay.amountPaid })}
+                                    title="Send WhatsApp Confirmation Receipt"
+                                  >
+                                    <MessageSquare size={13} /> WhatsApp
+                                  </button>
+                                )}
+                                {pay.status !== 'rejected' && (
+                                  <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', color: 'var(--danger)', borderColor: 'hsla(350,80%,55%,0.2)', backgroundColor: 'var(--danger-light)' }} onClick={() => verifyPayment(pay.id, pay.participantId, 'rejected')}>
+                                    <X size={14} /> Reject
+                                  </button>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -2542,8 +2584,8 @@ export default function App() {
 
                   <div className="grid-cols-2">
                     <div className="form-group">
-                      <label>Email Address</label>
-                      <input type="email" required className="form-control" placeholder="ramesh@gmail.com" value={newParticipant.email} onChange={(e) => setNewParticipant({...newParticipant, email: e.target.value})} />
+                      <label>Email Address <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 'normal' }}>(Optional)</span></label>
+                      <input type="email" className="form-control" placeholder="ramesh@gmail.com (Optional)" value={newParticipant.email} onChange={(e) => setNewParticipant({...newParticipant, email: e.target.value})} />
                     </div>
                     <div className="form-group">
                       <label>Location (City/State)</label>
