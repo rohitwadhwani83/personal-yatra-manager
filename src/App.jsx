@@ -4,7 +4,7 @@ import {
   FileText, BarChart2, MessageSquare, Plus, Trash2, Edit2, Search, Download, 
   Check, X, LogOut, ArrowLeft, Eye, RefreshCw, AlertTriangle, QrCode, 
   ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink,
-  Sparkles, UserCheck
+  Sparkles, UserCheck, Lock, Clock, ArrowRight
 } from 'lucide-react';
 import db from './db';
 import JSZip from 'jszip';
@@ -1102,9 +1102,29 @@ export default function App() {
                   <ArrowLeft size={16} />
                 </button>
                 <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                    <h2 style={{ fontSize: '1.75rem' }}>{selectedYatra.name}</h2>
-                    <span className={`badge badge-${selectedYatra.status}`}>{selectedYatra.status.replace('_', ' ')}</span>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <h2 style={{ fontSize: '1.75rem', margin: 0 }}>{selectedYatra.name}</h2>
+                    <span 
+                      className={`badge badge-${selectedYatra.status}`}
+                      style={{
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '0.3rem',
+                        textTransform: 'uppercase',
+                        fontWeight: '700',
+                        fontSize: '0.75rem',
+                        padding: '0.25rem 0.6rem',
+                        backgroundColor: selectedYatra.status === 'planning' ? '#fef3c7' : (selectedYatra.status === 'registration_open' ? 'var(--primary-light)' : (selectedYatra.status === 'confirmed' ? 'var(--success-light)' : '#f1f5f9')),
+                        color: selectedYatra.status === 'planning' ? '#b45309' : (selectedYatra.status === 'registration_open' ? 'var(--primary)' : (selectedYatra.status === 'confirmed' ? 'var(--success)' : '#475569')),
+                        border: `1px solid ${selectedYatra.status === 'planning' ? '#fde68a' : (selectedYatra.status === 'registration_open' ? 'var(--primary)' : (selectedYatra.status === 'confirmed' ? 'var(--success-border)' : 'var(--border)'))}`
+                      }}
+                    >
+                      {selectedYatra.status === 'planning' && <Clock size={13} />}
+                      {selectedYatra.status === 'registration_open' && <Share2 size={13} />}
+                      {selectedYatra.status === 'confirmed' && <CheckCircle size={13} />}
+                      {selectedYatra.status === 'completed' && <Compass size={13} />}
+                      {selectedYatra.status === 'planning' ? 'Planning Stage' : (selectedYatra.status === 'registration_open' ? 'Registration Open' : (selectedYatra.status === 'confirmed' ? 'Yatra Confirmed' : 'Yatra Completed'))}
+                    </span>
                   </div>
                   <p style={{ color: 'var(--text-muted)' }}>📍 {selectedYatra.destination} | 📅 {selectedYatra.startDate} to {selectedYatra.endDate}</p>
                 </div>
@@ -1142,26 +1162,55 @@ export default function App() {
                     )}
                   </>
                 )}
-                <button className="btn btn-outline" onClick={() => {
-                  const baseUrl = window.location.href.split('#')[0];
-                  navigator.clipboard.writeText(`${baseUrl}#/register/${selectedYatra.id}`);
-                  alert("Copied public registration link to clipboard!");
-                }}>
-                  <Share2 size={16} /> Registration Link
-                </button>
+                {selectedYatra.status === 'planning' ? (
+                  <button 
+                    className="btn btn-outline" 
+                    style={{ borderColor: 'var(--warning)', color: 'var(--warning)', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', opacity: 0.85 }} 
+                    onClick={() => alert("Registration link is locked during Planning stage. Finalize Yatra essentials (price, hotels, estimated devotees), then switch stage to 'Registration Open' to enable public registrations.")}
+                    title="Registration link locked during Planning stage"
+                  >
+                    <Lock size={15} /> Reg. Link (Locked - Planning)
+                  </button>
+                ) : selectedYatra.status === 'confirmed' ? (
+                  <button 
+                    className="btn btn-outline" 
+                    style={{ borderColor: 'var(--success)', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }} 
+                    onClick={() => alert("This Yatra is Confirmed, so public registration is now closed. Admins can still add devotees individually from the Participants tab.")}
+                    title="Public registration closed (Yatra Confirmed)"
+                  >
+                    <CheckCircle size={15} /> Yatra Confirmed (Public Closed)
+                  </button>
+                ) : selectedYatra.status === 'completed' ? (
+                  <button 
+                    className="btn btn-outline" 
+                    disabled 
+                    style={{ opacity: 0.6, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                  >
+                    <Compass size={15} /> Yatra Completed
+                  </button>
+                ) : (
+                  <button className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => {
+                    const baseUrl = window.location.href.split('#')[0];
+                    navigator.clipboard.writeText(`${baseUrl}#/register/${selectedYatra.id}`);
+                    alert("Copied public registration link to clipboard! Devotees can now register.");
+                  }}>
+                    <Share2 size={16} /> Share Registration Link
+                  </button>
+                )}
                 <select 
                   value={selectedYatra.status}
                   onChange={async (e) => {
-                    const updated = await db.updateYatra(selectedYatra.id, { status: e.target.value });
+                    const newStatus = e.target.value;
+                    const updated = await db.updateYatra(selectedYatra.id, { status: newStatus });
                     setSelectedYatra(updated);
                     setRefreshTrigger(prev => prev + 1);
                   }}
-                  style={{ width: 'auto', padding: '0.5rem 2rem 0.5rem 0.75rem' }}
+                  style={{ width: 'auto', padding: '0.5rem 2rem 0.5rem 0.75rem', fontWeight: '600' }}
                 >
-                  <option value="planning">Planning</option>
-                  <option value="registration_open">Registration Open</option>
-                  <option value="confirmed">Confirmed</option>
-                  <option value="completed">Completed</option>
+                  <option value="planning">Stage 1: Planning</option>
+                  <option value="registration_open">Stage 2: Registration Open</option>
+                  <option value="confirmed">Stage 3: Confirmed</option>
+                  <option value="completed">Stage 4: Completed</option>
                 </select>
               </div>
             </div>
@@ -1218,6 +1267,119 @@ export default function App() {
 
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  {/* YATRA LIFECYCLE 4-STAGE INTERACTIVE TRACKER */}
+                  <div className="card" style={{ padding: '1.25rem 1.5rem', backgroundColor: 'var(--card-bg)' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                      <div>
+                        <h3 style={{ margin: 0, fontSize: '1.1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                          🚩 Yatra Lifecycle Stage: <span style={{ color: selectedYatra.status === 'confirmed' ? 'var(--success)' : (selectedYatra.status === 'planning' ? 'var(--warning)' : 'var(--primary)'), fontWeight: 'bold' }}>{selectedYatra.status.replace('_', ' ').toUpperCase()}</span>
+                        </h3>
+                        <p style={{ margin: '0.25rem 0 0 0', fontSize: '0.83rem', color: 'var(--text-muted)' }}>
+                          {selectedYatra.status === 'planning' && "Stage 1: Planning — Registration link not active. Admins input essentials (price, hotels, estimated devotees)."}
+                          {selectedYatra.status === 'registration_open' && "Stage 2: Registration Open — Public link active. Devotees can self-register until Yatra reaches Confirmed."}
+                          {selectedYatra.status === 'confirmed' && "Stage 3: Confirmed — Public registrations closed. Admins retain superpower to add devotees individually."}
+                          {selectedYatra.status === 'completed' && "Stage 4: Completed — Yatra has concluded and all expenses are settled. Ready for next Yatra planning!"}
+                        </p>
+                      </div>
+                      
+                      {/* Contextual Action Buttons */}
+                      <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                        {selectedYatra.status === 'planning' && (
+                          <button 
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.82rem', padding: '0.4rem 0.85rem' }}
+                            onClick={async () => {
+                              const updated = await db.updateYatra(selectedYatra.id, { status: 'registration_open' });
+                              setSelectedYatra(updated);
+                              setRefreshTrigger(prev => prev + 1);
+                              alert("Yatra stage changed to 'Registration Open'! You can now copy and share the public registration link.");
+                            }}
+                          >
+                            Open Public Registrations →
+                          </button>
+                        )}
+                        {selectedYatra.status === 'registration_open' && (
+                          <button 
+                            className="btn btn-primary"
+                            style={{ fontSize: '0.82rem', padding: '0.4rem 0.85rem', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
+                            onClick={async () => {
+                              if (window.confirm("Confirm this Yatra? This will close public registration to outside devotees, while still allowing you to add devotees manually.")) {
+                                const updated = await db.updateYatra(selectedYatra.id, { status: 'confirmed' });
+                                setSelectedYatra(updated);
+                                setRefreshTrigger(prev => prev + 1);
+                              }
+                            }}
+                          >
+                            Confirm Yatra & Close Public Link →
+                          </button>
+                        )}
+                        {selectedYatra.status === 'confirmed' && (
+                          <button 
+                            className="btn btn-outline"
+                            style={{ fontSize: '0.82rem', padding: '0.4rem 0.85rem' }}
+                            onClick={async () => {
+                              if (window.confirm("Mark this Yatra as Completed? This archives the Yatra and confirms all accounts are settled.")) {
+                                const updated = await db.updateYatra(selectedYatra.id, { status: 'completed' });
+                                setSelectedYatra(updated);
+                                setRefreshTrigger(prev => prev + 1);
+                              }
+                            }}
+                          >
+                            Mark Yatra Completed & Settle →
+                          </button>
+                        )}
+                        {selectedYatra.status === 'completed' && (
+                          <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: 'var(--success)', backgroundColor: 'var(--success-light)', padding: '0.35rem 0.75rem', borderRadius: 'var(--radius-sm)' }}>
+                            ✓ All Settled & Concluded
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* 4 Interactive Visual Stages */}
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.65rem' }}>
+                      {[
+                        { key: 'planning', label: '1. Planning', desc: 'Lock reg., set price & hotels', icon: Clock },
+                        { key: 'registration_open', label: '2. Registration Open', desc: 'Public link active', icon: Share2 },
+                        { key: 'confirmed', label: '3. Confirmed', desc: 'Public closed, admin adds', icon: CheckCircle },
+                        { key: 'completed', label: '4. Completed', desc: 'Settled & ready for next', icon: Compass }
+                      ].map((step, idx) => {
+                        const isCurrent = selectedYatra.status === step.key;
+                        const stages = ['planning', 'registration_open', 'confirmed', 'completed'];
+                        const currentIndex = stages.indexOf(selectedYatra.status);
+                        const isPast = currentIndex > idx;
+                        const StepIcon = step.icon;
+
+                        return (
+                          <div 
+                            key={step.key}
+                            onClick={async () => {
+                              const updated = await db.updateYatra(selectedYatra.id, { status: step.key });
+                              setSelectedYatra(updated);
+                              setRefreshTrigger(prev => prev + 1);
+                            }}
+                            style={{
+                              padding: '0.75rem',
+                              borderRadius: 'var(--radius-sm)',
+                              border: isCurrent ? '2px solid var(--primary)' : '1px solid var(--border)',
+                              backgroundColor: isCurrent ? 'var(--primary-light)' : (isPast ? 'var(--bg)' : 'transparent'),
+                              cursor: 'pointer',
+                              transition: 'all 0.2s ease'
+                            }}
+                            title={`Click to set stage to ${step.label}`}
+                          >
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginBottom: '0.2rem' }}>
+                              <StepIcon size={15} style={{ color: isCurrent ? 'var(--primary)' : (isPast ? 'var(--success)' : 'var(--text-muted)') }} />
+                              <strong style={{ fontSize: '0.82rem', color: isCurrent ? 'var(--primary)' : 'var(--text-main)' }}>{step.label}</strong>
+                              {isCurrent && <span style={{ fontSize: '0.68rem', backgroundColor: 'var(--primary)', color: '#fff', padding: '0.1rem 0.35rem', borderRadius: '1rem', marginLeft: 'auto' }}>Active</span>}
+                            </div>
+                            <p style={{ margin: 0, fontSize: '0.72rem', color: 'var(--text-muted)', lineHeight: '1.3' }}>{step.desc}</p>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+
                   {/* TOP ROW: SEAT CAPACITY PROGRESS & FINANCIAL HEALTH */}
                   <div className="grid-cols-2">
                     {/* SEAT CAPACITY CARD */}
@@ -1479,6 +1641,32 @@ export default function App() {
 
               return (
                 <div>
+                  {/* STAGE AWARENESS BANNER */}
+                  {selectedYatra.status === 'confirmed' && (
+                    <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid var(--success-border)', borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.84rem', color: 'var(--success)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <CheckCircle size={18} style={{ flexShrink: 0 }} />
+                        <span><strong>Yatra Confirmed (Public Link Closed):</strong> Public self-registration is locked. As an Admin, you retain the superpower to manually add individual devotees using the <strong>"+ Register Devotee"</strong> button below.</span>
+                      </div>
+                    </div>
+                  )}
+                  {selectedYatra.status === 'planning' && (
+                    <div style={{ backgroundColor: '#fef3c7', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.84rem', color: '#b45309' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Clock size={18} style={{ flexShrink: 0 }} />
+                        <span><strong>Planning Stage:</strong> Public registration is not yet open. You can input essentials and manually register core devotees below. Switch status to 'Registration Open' when ready.</span>
+                      </div>
+                    </div>
+                  )}
+                  {selectedYatra.status === 'completed' && (
+                    <div style={{ backgroundColor: '#f1f5f9', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.65rem 1rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.75rem', fontSize: '0.84rem', color: '#475569' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                        <Compass size={18} style={{ flexShrink: 0 }} />
+                        <span><strong>Yatra Completed:</strong> All accounts settled. You can review devotee records, export Excel data, or view photo memories.</span>
+                      </div>
+                    </div>
+                  )}
+
                   {/* TOP TOOLBAR: COUNTS, FILTERS, VIEW TOGGLE & REGISTER */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
                     {/* Filter Pills */}
@@ -2476,7 +2664,60 @@ export default function App() {
                 <p style={{ color: 'var(--text-muted)' }}>📅 Dates: {selectedYatra.startDate} to {selectedYatra.endDate}</p>
               </div>
 
-              {selectedYatra.registrationDeadline && new Date() > new Date(selectedYatra.registrationDeadline) ? (
+              {/* STAGE 1: PLANNING (Registration link not active) */}
+              {selectedYatra.status === 'planning' ? (
+                <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+                  <div style={{ backgroundColor: '#fef3c7', color: '#b45309', width: '3.75rem', height: '3.75rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+                    <Clock size={30} />
+                  </div>
+                  <h3>Registrations Not Yet Open</h3>
+                  <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem', lineHeight: '1.5' }}>
+                    <strong>{selectedYatra.name}</strong> is currently in the <strong>Planning stage</strong>.
+                  </p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                    The organizers are finalizing hotels, travel arrangements, and budgeting. Public registration will open as soon as planning is complete!
+                  </p>
+                  <button className="btn btn-outline" style={{ marginTop: '1.5rem' }} onClick={() => navigateTo('home')}>
+                    Back to Yatras
+                  </button>
+                </div>
+              ) : selectedYatra.status === 'confirmed' ? (
+                /* STAGE 3: CONFIRMED (No more public registrations accepted; only Admin can register devotees manually) */
+                <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+                  <div style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', width: '3.75rem', height: '3.75rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+                    <CheckCircle size={30} />
+                  </div>
+                  <h3>Yatra Confirmed — Public Registration Closed</h3>
+                  <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem', lineHeight: '1.5' }}>
+                    <strong>{selectedYatra.name}</strong> is officially <strong>Confirmed</strong>! Public registration is now closed as hotel rooms and travel arrangements have been locked.
+                  </p>
+                  <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', margin: '1.25rem 0', border: '1px solid var(--border)', fontSize: '0.85rem', color: 'var(--text-main)', textAlign: 'left' }}>
+                    <strong>Want to join or add an extra family member?</strong><br />
+                    Please contact the Yatra Organizer directly. Organizers retain the authority to register individual devotees manually if any seats become available.
+                  </div>
+                  <button className="btn btn-primary" style={{ marginTop: '0.5rem' }} onClick={() => navigateTo('login')}>
+                    Registered Devotee Login
+                  </button>
+                </div>
+              ) : selectedYatra.status === 'completed' ? (
+                /* STAGE 4: COMPLETED (Yatra ended, all settled) */
+                <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+                  <div style={{ backgroundColor: '#f1f5f9', color: '#64748b', width: '3.75rem', height: '3.75rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+                    <Compass size={30} />
+                  </div>
+                  <h3>Yatra Successfully Concluded</h3>
+                  <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem', lineHeight: '1.5' }}>
+                    <strong>{selectedYatra.name}</strong> has successfully concluded. All bookings and financial accounts are settled.
+                  </p>
+                  <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                    Haribol! Thank you to all participants for being part of this sacred journey.
+                  </p>
+                  <button className="btn btn-outline" style={{ marginTop: '1.5rem' }} onClick={() => navigateTo('login')}>
+                    Devotee Portal Login (View Photos)
+                  </button>
+                </div>
+              ) : (selectedYatra.registrationDeadline && new Date() > new Date(selectedYatra.registrationDeadline)) ? (
+                /* EXPIRED DEADLINE */
                 <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
                   <div style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', width: '3.5rem', height: '3.5rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
                     <AlertTriangle size={28} />
