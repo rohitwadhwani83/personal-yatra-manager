@@ -142,6 +142,77 @@ const DEMO_DATA = {
       remarks: 'Interested in registration.',
       status: 'interested',
       paymentStatus: 'pending'
+    },
+    {
+      id: 'p4',
+      yatraId: 'yatra_vrindavan_2026',
+      name: 'Gaurav Kulkarni',
+      phone: '9822012345',
+      email: 'gaurav.kulkarni@gmail.com',
+      location: 'Pune',
+      type: 'family',
+      familyName: 'Kulkarni Family',
+      membersCount: 4,
+      familyMembers: [
+        { name: 'Gaurav Kulkarni', relation: 'Self', age: 40, phone: '9822012345' },
+        { name: 'Priya Kulkarni', relation: 'Spouse', age: 37, phone: '' },
+        { name: 'Vivaan Kulkarni', relation: 'Son', age: 10, phone: '' },
+        { name: 'Ananya Kulkarni', relation: 'Daughter', age: 4, phone: '' }
+      ],
+      memberDetails: 'Gaurav (40), Priya (37), Vivaan (10), Ananya (4)',
+      travelMode: 'organised',
+      travelType: '',
+      boardingStation: '',
+      droppingStation: '',
+      remarks: 'Traveling by organizer bus with family.',
+      status: 'confirmed',
+      paymentStatus: 'completed'
+    },
+    {
+      id: 'p5',
+      yatraId: 'yatra_vrindavan_2026',
+      name: 'Radhika Verma',
+      phone: '9811098765',
+      email: 'radhika.v@gmail.com',
+      location: 'Delhi',
+      type: 'family',
+      familyName: 'Verma Family',
+      membersCount: 3,
+      familyMembers: [
+        { name: 'Radhika Verma', relation: 'Self', age: 34, phone: '9811098765' },
+        { name: 'Manish Verma', relation: 'Spouse', age: 36, phone: '' },
+        { name: 'Aryan Verma', relation: 'Son', age: 8, phone: '' }
+      ],
+      memberDetails: 'Radhika (34), Manish (36), Aryan (8)',
+      travelMode: 'organised',
+      travelType: '',
+      boardingStation: '',
+      droppingStation: '',
+      remarks: 'Prefers front seats if possible.',
+      status: 'confirmed',
+      paymentStatus: 'completed'
+    },
+    {
+      id: 'p6',
+      yatraId: 'yatra_vrindavan_2026',
+      name: 'Vikram Singhal',
+      phone: '9711234567',
+      email: 'vikram.s@outlook.com',
+      location: 'Noida',
+      type: 'individual',
+      familyName: '',
+      membersCount: 1,
+      familyMembers: [
+        { name: 'Vikram Singhal', relation: 'Self', age: 31, phone: '9711234567' }
+      ],
+      memberDetails: 'Vikram (31)',
+      travelMode: 'organised',
+      travelType: '',
+      boardingStation: '',
+      droppingStation: '',
+      remarks: 'Volunteer coordinator.',
+      status: 'confirmed',
+      paymentStatus: 'completed'
     }
   ],
   devotee_profiles: [
@@ -290,6 +361,78 @@ const DEMO_DATA = {
       fileUrl: 'https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf',
       uploadDate: '2026-07-01'
     }
+  ],
+  buses: [
+    {
+      id: 'bus_1',
+      yatraId: 'yatra_vrindavan_2026',
+      name: 'Bus 1 (AC Video Coach)',
+      busNumber: 'MH 02 AB 1234',
+      route: 'Mumbai Central -> Dadar -> Mathura/Vrindavan',
+      capacity: 35,
+      coordinatorName: 'Syamasundara Das',
+      coordinatorPhone: '9812345678',
+      driverName: 'Raju Bhai',
+      driverPhone: '9898765432',
+      departureTime: '06:00 AM (Day 1)',
+      boardingPoint: 'Platform 1 Main Gate, Mumbai Central',
+      status: 'active'
+    },
+    {
+      id: 'bus_2',
+      yatraId: 'yatra_vrindavan_2026',
+      name: 'Bus 2 (Deluxe AC Sleeper)',
+      busNumber: 'MH 02 CD 5678',
+      route: 'Borivali -> Thane -> Mathura/Vrindavan',
+      capacity: 30,
+      coordinatorName: 'Krishna Das',
+      coordinatorPhone: '9999988888',
+      driverName: 'Mohan Sharma',
+      driverPhone: '9811122233',
+      departureTime: '06:30 AM (Day 1)',
+      boardingPoint: 'Near Borivali National Park Flyover',
+      status: 'active'
+    },
+    {
+      id: 'bus_3',
+      yatraId: 'yatra_vrindavan_2026',
+      name: 'Bus 3 (AC Semi-Sleeper)',
+      busNumber: 'MH 04 EF 9012',
+      route: 'Pune -> Navi Mumbai -> Vrindavan',
+      capacity: 36,
+      coordinatorName: 'Rohit Wadhwani',
+      coordinatorPhone: '9876543210',
+      driverName: 'Devendra Yadav',
+      driverPhone: '9822233344',
+      departureTime: '05:30 AM (Day 1)',
+      boardingPoint: 'Vashi Plaza, Navi Mumbai',
+      status: 'active'
+    },
+    {
+      id: 'bus_4',
+      yatraId: 'yatra_vrindavan_2026',
+      name: 'Bus 4 (Express Coach)',
+      busNumber: 'DL 01 XY 3456',
+      route: 'Delhi Airport/Station -> Vrindavan Direct',
+      capacity: 42,
+      coordinatorName: 'Gauranga Das',
+      coordinatorPhone: '9898989898',
+      driverName: 'Suresh Kumar',
+      driverPhone: '9833344455',
+      departureTime: '08:00 AM (Day 1)',
+      boardingPoint: 'New Delhi Railway Station Paharganj Side',
+      status: 'active'
+    }
+  ],
+  rooms: [
+    { id: 'rm_101', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '101', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', extraMattressCost: 500 },
+    { id: 'rm_102', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '102', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', extraMattressCost: 500 },
+    { id: 'rm_103', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '103', roomType: 'Triple Bed', capacity: 3, floor: 'Ground Floor', extraMattressCost: 500 },
+    { id: 'rm_201', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '201', roomType: 'Family Suite', capacity: 4, floor: '1st Floor', extraMattressCost: 500 },
+    { id: 'rm_202', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '202', roomType: 'Family Suite', capacity: 4, floor: '1st Floor', extraMattressCost: 500 },
+    { id: 'rm_203', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '203', roomType: 'Triple Bed', capacity: 3, floor: '1st Floor', extraMattressCost: 500 },
+    { id: 'rm_204', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '204', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', extraMattressCost: 500 },
+    { id: 'rm_205', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '205', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', extraMattressCost: 500 }
   ]
 };
 
@@ -596,6 +739,24 @@ class Database {
 
     return null;
   }
+
+  // --- Bus Logistics Methods ---
+  async getBuses(yatraId) {
+    const all = await this.getCollection('buses');
+    return all.filter(b => b.yatraId === yatraId);
+  }
+  async addBus(bus) { return this.addDocument('buses', bus); }
+  async updateBus(id, updates) { return this.updateDocument('buses', id, updates); }
+  async deleteBus(id) { return this.deleteDocument('buses', id); }
+
+  // --- Hotel Room Logistics Methods ---
+  async getRooms(yatraId) {
+    const all = await this.getCollection('rooms');
+    return all.filter(r => r.yatraId === yatraId);
+  }
+  async addRoom(room) { return this.addDocument('rooms', room); }
+  async updateRoom(id, updates) { return this.updateDocument('rooms', id, updates); }
+  async deleteRoom(id) { return this.deleteDocument('rooms', id); }
 
   // Sync Local Storage Data to Firestore (called when connecting Firebase)
   async syncLocalToFirestore() {

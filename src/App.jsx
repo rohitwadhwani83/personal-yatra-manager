@@ -4,7 +4,8 @@ import {
   FileText, BarChart2, MessageSquare, Plus, Trash2, Edit2, Search, Download, 
   Check, X, LogOut, ArrowLeft, Eye, RefreshCw, AlertTriangle, QrCode, 
   ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink,
-  Sparkles, UserCheck, Lock, Clock, ArrowRight
+  Sparkles, UserCheck, Lock, Clock, ArrowRight,
+  Bus, Bed, Shuffle
 } from 'lucide-react';
 import db from './db';
 import JSZip from 'jszip';
@@ -35,6 +36,10 @@ export default function App() {
   const [photos, setPhotos] = useState([]);
   const [notes, setNotes] = useState(null);
   const [documents, setDocuments] = useState([]);
+  const [buses, setBuses] = useState([]);
+  const [rooms, setRooms] = useState([]);
+  const [busAllocationApproved, setBusAllocationApproved] = useState(false);
+  const [roomAllocationApproved, setRoomAllocationApproved] = useState(false);
 
   // --- Interactive UI States ---
   const [selectedYatra, setSelectedYatra] = useState(null);
@@ -61,6 +66,12 @@ export default function App() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUploadDocOpen, setIsUploadDocOpen] = useState(false);
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
+  const [isAddBusOpen, setIsAddBusOpen] = useState(false);
+  const [editingBusId, setEditingBusId] = useState(null);
+  const [newBus, setNewBus] = useState({ name: '', busNumber: '', route: '', capacity: 35, coordinatorName: '', coordinatorPhone: '', driverName: '', driverPhone: '', departureTime: '06:00 AM', boardingPoint: '', notes: '' });
+  const [isAddRoomOpen, setIsAddRoomOpen] = useState(false);
+  const [editingRoomId, setEditingRoomId] = useState(null);
+  const [newRoom, setNewRoom] = useState({ roomNumber: '', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', hotelName: '', extraMattressCost: 500, notes: '' });
 
   // Form states for adding items
   const defaultDeadline = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -138,6 +149,8 @@ export default function App() {
         const phData = await db.getPhotos(selectedYatra.id);
         const nData = await db.getNotes(selectedYatra.id);
         const dData = await db.getDocuments(selectedYatra.id);
+        const bData = await db.getBuses(selectedYatra.id);
+        const rData = await db.getRooms(selectedYatra.id);
 
         setHotels(hData);
         setParticipants(pData);
@@ -146,6 +159,8 @@ export default function App() {
         setPhotos(phData);
         setNotes(nData);
         setDocuments(dData);
+        setBuses(bData);
+        setRooms(rData);
       }
     }
     loadData();
@@ -397,6 +412,313 @@ export default function App() {
     setAdminAutoFilledDevotee(null);
     setNewParticipant({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  // --- Bus Logistics Handlers ---
+  const handleAddBus = async (e) => {
+    e.preventDefault();
+    if (editingBusId) {
+      await db.updateBus(editingBusId, newBus);
+    } else {
+      const id = 'bus_' + Math.random().toString(36).substring(2, 9);
+      await db.addBus({ ...newBus, id, yatraId: selectedYatra.id });
+    }
+    setIsAddBusOpen(false);
+    setEditingBusId(null);
+    setNewBus({ name: '', busNumber: '', route: '', capacity: 35, coordinatorName: '', coordinatorPhone: '', driverName: '', driverPhone: '', departureTime: '06:00 AM', boardingPoint: '', notes: '' });
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleDeleteBus = async (busId) => {
+    if (window.confirm("Delete this bus? Devotees assigned to this bus will become unallocated.")) {
+      await db.deleteBus(busId);
+      const affected = participants.filter(p => p.busId === busId);
+      for (const p of affected) {
+        await db.updateParticipant(p.id, { busId: '', busName: '', busNumber: '' });
+      }
+      setRefreshTrigger(prev => prev + 1);
+    }
+  };
+
+  const handleReassignBus = async (participantId, busId) => {
+    if (!busId) {
+      await db.updateParticipant(participantId, { busId: '', busName: '', busNumber: '' });
+    } else {
+      const bus = buses.find(b => b.id === busId);
+      if (bus) {
+        await db.updateParticipant(participantId, {
+          busId: bus.id,
+          busName: bus.name,
+          busNumber: bus.busNumber
+        });
+      }
+    }
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const autoAllocateBuses = async () => {
+    if (!buses || buses.length === 0) {
+      alert("Please add at least one bus with seating capacity before running auto-allocation.");
+      return;
+    }
+
+    const organisedDevotees = participants.filter(p => p.travelMode === 'organised');
+    if (organisedDevotees.length === 0) {
+      alert("No devotees found with 'Organised' travel mode. Auto-allocation only applies to devotees using organizer transport.");
+      return;
+    }
+
+    // Sort by group size descending (larger families first for optimal bin-packing)
+    const sorted = [...organisedDevotees].sort((a, b) => {
+      const aCount = (a.familyMembers && a.familyMembers.length) || a.membersCount || 1;
+      const bCount = (b.familyMembers && b.familyMembers.length) || b.membersCount || 1;
+      return bCount - aCount;
+    });
+
+    const tracker = buses.map(b => ({
+      ...b,
+      remaining: parseInt(b.capacity) || 35,
+      allocated: []
+    }));
+
+    const updates = [];
+    let unallocatedCount = 0;
+
+    for (const devotee of sorted) {
+      const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
+      
+      // Best fit: find a bus that has enough remaining capacity
+      const suitable = tracker
+        .filter(b => b.remaining >= devoteePax)
+        .sort((a, b) => a.remaining - b.remaining);
+
+      if (suitable.length > 0) {
+        const chosen = suitable[0];
+        chosen.remaining -= devoteePax;
+        chosen.allocated.push(devotee);
+        updates.push({
+          id: devotee.id,
+          busId: chosen.id,
+          busName: chosen.name,
+          busNumber: chosen.busNumber
+        });
+      } else {
+        // Find bus with most space
+        const largest = [...tracker].sort((a, b) => b.remaining - a.remaining)[0];
+        if (largest && largest.remaining > 0) {
+          largest.remaining -= devoteePax;
+          largest.allocated.push(devotee);
+          updates.push({
+            id: devotee.id,
+            busId: largest.id,
+            busName: largest.name,
+            busNumber: largest.busNumber
+          });
+        } else {
+          unallocatedCount++;
+          updates.push({
+            id: devotee.id,
+            busId: '',
+            busName: '',
+            busNumber: ''
+          });
+        }
+      }
+    }
+
+    for (const u of updates) {
+      await db.updateParticipant(u.id, {
+        busId: u.busId,
+        busName: u.busName,
+        busNumber: u.busNumber
+      });
+    }
+
+    setBusAllocationApproved(false);
+    setRefreshTrigger(prev => prev + 1);
+
+    if (unallocatedCount > 0) {
+      alert(`Auto-allocation complete! ${updates.length - unallocatedCount} devotees placed. Notice: ${unallocatedCount} devotees could not fit within the current total bus capacity. Please add another bus or increase capacity.`);
+    } else {
+      alert(`🎉 Auto-allocation successful! All ${sorted.length} devotee groups have been placed into ${buses.length} buses keeping all family members intact! Review assignments below and click 'Approve & Publish' when ready.`);
+    }
+  };
+
+  const sendBusWhatsApp = (participant, bus) => {
+    if (!participant || !participant.phone || !bus) return;
+    const phone = participant.phone.replace(/[^0-9]/g, '');
+    const cleanPhone = phone.startsWith('91') && phone.length === 12 ? phone : (phone.length === 10 ? '91' + phone : phone);
+    const totalPax = (participant.familyMembers && participant.familyMembers.length) || participant.membersCount || 1;
+    const memberNames = participant.familyMembers && participant.familyMembers.length > 0 
+      ? participant.familyMembers.map(m => m.name).join(', ') 
+      : participant.name;
+
+    const text = `🚌 *Hare Krishna ${participant.name}!* \n\nHere are your official *Bus Travel Details* for *${selectedYatra.name}*:\n\n*Bus Allocated:* ${bus.name}\n*Vehicle Reg. No:* ${bus.busNumber || 'To be shared'}\n*Route:* ${bus.route || selectedYatra.destination}\n*Boarding Point:* ${bus.boardingPoint || 'Main Gathering Gate'}\n*Departure Time:* ${bus.departureTime || '06:00 AM'}\n*Reserved Seats:* ${totalPax} Seat(s) (${memberNames})\n\n👤 *Bus Coordinator:* ${bus.coordinatorName || 'Organizer'} (${bus.coordinatorPhone || ''})\n👨‍✈️ *Driver:* ${bus.driverName || 'Driver'} (${bus.driverPhone || ''})\n\n${bus.notes ? `*Important Note:* ${bus.notes}\n\n` : ''}You can also view this bus pass anytime on your devotee portal:\n👉 ${window.location.href.split('#')[0]}#/login\n\nHaribol! Have a divine and comfortable journey! 🙏`;
+
+    window.open(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(text)}`, '_blank');
+  };
+
+  // --- Hotel Room Logistics Handlers ---
+  const handleAddRoom = async (e) => {
+    e.preventDefault();
+    const finalSelectedHotel = hotels.find(h => h.finalSelected);
+    const hotelName = newRoom.hotelName || (finalSelectedHotel ? finalSelectedHotel.name : (hotels[0]?.name || 'Primary Hotel'));
+    if (editingRoomId) {
+      await db.updateRoom(editingRoomId, { ...newRoom, hotelName });
+    } else {
+      const id = 'rm_' + Math.random().toString(36).substring(2, 9);
+      await db.addRoom({ ...newRoom, id, yatraId: selectedYatra.id, hotelName });
+    }
+    setIsAddRoomOpen(false);
+    setEditingRoomId(null);
+    setNewRoom({ roomNumber: '', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', hotelName: '', extraMattressCost: 500, notes: '' });
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleDeleteRoom = async (roomId) => {
+    if (window.confirm("Delete this room? Devotees assigned to this room will become unallocated.")) {
+      await db.deleteRoom(roomId);
+      const affected = participants.filter(p => p.roomId === roomId);
+      for (const p of affected) {
+        await db.updateParticipant(p.id, { roomId: '', roomNumber: '', hotelName: '' });
+      }
+      setRefreshTrigger(prev => prev + 1);
+    }
+  };
+
+  const handleReassignRoom = async (participantId, roomId) => {
+    if (!roomId) {
+      await db.updateParticipant(participantId, { roomId: '', roomNumber: '', hotelName: '' });
+    } else {
+      const rm = rooms.find(r => r.id === roomId);
+      if (rm) {
+        await db.updateParticipant(participantId, {
+          roomId: rm.id,
+          roomNumber: rm.roomNumber,
+          hotelName: rm.hotelName
+        });
+      }
+    }
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const autoAllocateRooms = async () => {
+    if (!rooms || rooms.length === 0) {
+      alert("Please add room inventory for the hotel before running auto-allocation.");
+      return;
+    }
+
+    const devotees = participants.filter(p => p.status === 'confirmed' || p.status === 'interested');
+    if (devotees.length === 0) {
+      alert("No participants found to allocate rooms for.");
+      return;
+    }
+
+    const roomTracker = rooms.map(r => ({
+      ...r,
+      baseCapacity: parseInt(r.capacity) || 2,
+      remaining: parseInt(r.capacity) || 2,
+      allocated: []
+    }));
+
+    const families = devotees.filter(p => p.type === 'family');
+    const individuals = devotees.filter(p => p.type !== 'family');
+    const updates = [];
+    let unallocatedCount = 0;
+
+    // 1. Allocate Families first into dedicated rooms
+    for (const fam of families) {
+      const famSize = (fam.familyMembers && fam.familyMembers.length) || fam.membersCount || 1;
+      
+      const emptyRooms = roomTracker
+        .filter(r => r.allocated.length === 0)
+        .sort((a, b) => Math.abs(a.baseCapacity - famSize) - Math.abs(b.baseCapacity - famSize));
+
+      if (emptyRooms.length > 0) {
+        const chosen = emptyRooms[0];
+        chosen.remaining -= famSize;
+        chosen.allocated.push(fam);
+        updates.push({
+          id: fam.id,
+          roomId: chosen.id,
+          roomNumber: chosen.roomNumber,
+          hotelName: chosen.hotelName
+        });
+      } else {
+        const anyRoom = roomTracker.find(r => r.remaining >= famSize);
+        if (anyRoom) {
+          anyRoom.remaining -= famSize;
+          anyRoom.allocated.push(fam);
+          updates.push({
+            id: fam.id,
+            roomId: anyRoom.id,
+            roomNumber: anyRoom.roomNumber,
+            hotelName: anyRoom.hotelName
+          });
+        } else {
+          unallocatedCount++;
+          updates.push({
+            id: fam.id,
+            roomId: '',
+            roomNumber: '',
+            hotelName: ''
+          });
+        }
+      }
+    }
+
+    // 2. Allocate Individuals into remaining rooms
+    for (const ind of individuals) {
+      const suitable = roomTracker.find(r => r.remaining > 0);
+      if (suitable) {
+        suitable.remaining -= 1;
+        suitable.allocated.push(ind);
+        updates.push({
+          id: ind.id,
+          roomId: suitable.id,
+          roomNumber: suitable.roomNumber,
+          hotelName: suitable.hotelName
+        });
+      } else {
+        unallocatedCount++;
+        updates.push({
+          id: ind.id,
+          roomId: '',
+          roomNumber: '',
+          hotelName: ''
+        });
+      }
+    }
+
+    for (const u of updates) {
+      await db.updateParticipant(u.id, {
+        roomId: u.roomId,
+        roomNumber: u.roomNumber,
+        hotelName: u.hotelName
+      });
+    }
+
+    setRoomAllocationApproved(false);
+    setRefreshTrigger(prev => prev + 1);
+
+    if (unallocatedCount > 0) {
+      alert(`Room allocation completed! ${updates.length - unallocatedCount} devotees placed. Notice: ${unallocatedCount} devotees could not be accommodated. Please add more rooms.`);
+    } else {
+      alert(`🎉 Room allocation successful! All ${devotees.length} devotees have been allocated rooms. Review assignments below and click 'Approve & Publish' when ready.`);
+    }
+  };
+
+  const sendRoomWhatsApp = (participant, room, hotel) => {
+    if (!participant || !participant.phone || !room) return;
+    const phone = participant.phone.replace(/[^0-9]/g, '');
+    const cleanPhone = phone.startsWith('91') && phone.length === 12 ? phone : (phone.length === 10 ? '91' + phone : phone);
+    const memberNames = participant.familyMembers && participant.familyMembers.length > 0 
+      ? participant.familyMembers.map(m => m.name).join(', ') 
+      : participant.name;
+
+    const text = `🏨 *Hare Krishna ${participant.name}!* \n\nHere are your official *Hotel Room & Stay Details* for *${selectedYatra.name}*:\n\n*Hotel:* ${hotel?.name || room.hotelName || 'Yatra Hotel'}\n*Room Number:* ${room.roomNumber} (${room.roomType || 'Standard Room'}, ${room.floor || 'Floor 1'})\n*Allocated For:* ${memberNames}\n*Hotel Address:* ${hotel?.address || selectedYatra.destination}\n${hotel?.gmapsLink ? `*Google Maps Link:* ${hotel.gmapsLink}\n` : ''}👤 *Hotel Contact:* ${hotel?.contactPerson || 'Reception'} (${hotel?.phone || ''})\n\nYou can also check your room details anytime in your devotee portal:\n👉 ${window.location.href.split('#')[0]}#/login\n\nHaribol! 🙏`;
+
+    window.open(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(text)}`, '_blank');
   };
 
   const handleAddExpense = async (e) => {
@@ -1218,6 +1540,14 @@ export default function App() {
             {/* TABBED MENU */}
             <div className="tab-container">
               <button className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}><Compass size={16} /> Overview</button>
+              <button className={`tab-btn ${activeTab === 'bus_allocation' ? 'active' : ''}`} onClick={() => setActiveTab('bus_allocation')} style={{ position: 'relative' }}>
+                <Bus size={16} /> Bus Allocation
+                {selectedYatra.status === 'confirmed' && <span style={{ width: 7, height: 7, backgroundColor: 'var(--success)', borderRadius: '50%', position: 'absolute', top: 6, right: 6 }} />}
+              </button>
+              <button className={`tab-btn ${activeTab === 'room_allocation' ? 'active' : ''}`} onClick={() => setActiveTab('room_allocation')} style={{ position: 'relative' }}>
+                <Bed size={16} /> Room Allocation
+                {selectedYatra.status === 'confirmed' && <span style={{ width: 7, height: 7, backgroundColor: 'var(--success)', borderRadius: '50%', position: 'absolute', top: 6, right: 6 }} />}
+              </button>
               <button className={`tab-btn ${activeTab === 'hotels' ? 'active' : ''}`} onClick={() => setActiveTab('hotels')}><Hotel size={16} /> Hotels Research</button>
               <button className={`tab-btn ${activeTab === 'participants' ? 'active' : ''}`} onClick={() => setActiveTab('participants')}><Users size={16} /> Participants</button>
               <button className={`tab-btn ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}><CreditCard size={16} /> Payments</button>
@@ -1540,6 +1870,659 @@ export default function App() {
                 </div>
               );
             })()}
+
+            {/* ======================================= */}
+            {/* TAB: BUS ALLOCATION (STAGE 3 LOGISTICS) */}
+            {/* ======================================= */}
+            {activeTab === 'bus_allocation' && (
+              <div>
+                {/* Header & Actions */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <h3 style={{ margin: 0 }}>🚌 Bus Fleet Logistics & Seat Allocation</h3>
+                      <span className={`badge ${busAllocationApproved ? 'badge-confirmed' : 'badge-interested'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                        {busAllocationApproved ? <Check size={13} /> : <AlertTriangle size={13} />}
+                        {busAllocationApproved ? 'Layout Approved & Published' : 'Draft Layout (Unpublished)'}
+                      </span>
+                    </div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                      Stage 3 Confirmed Logistics: Input bus coaches, auto-allocate devotees opting for <strong>Organizer Arrangements</strong> (keeps all family members together), review/edit layout, and trigger WhatsApp passes.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button 
+                      className="btn btn-primary" 
+                      onClick={() => {
+                        setEditingBusId(null);
+                        setNewBus({ name: `Bus ${buses.length + 1}`, busNumber: '', route: `${selectedYatra.destination} Route`, capacity: 35, coordinatorName: '', coordinatorPhone: '', driverName: '', driverPhone: '', departureTime: '06:00 AM (Day 1)', boardingPoint: '', notes: '' });
+                        setIsAddBusOpen(true);
+                      }}
+                    >
+                      <Plus size={16} /> Add Bus Coach
+                    </button>
+                    <button 
+                      className="btn btn-outline" 
+                      style={{ borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
+                      onClick={autoAllocateBuses}
+                      title="Optimally assigns devotees into buses keeping all family members in the same coach"
+                    >
+                      <Shuffle size={16} /> Auto-Allocate Devotees
+                    </button>
+                    <button 
+                      className={`btn ${busAllocationApproved ? 'btn-outline' : 'btn-primary'}`} 
+                      style={{ backgroundColor: busAllocationApproved ? 'transparent' : 'var(--success)', borderColor: 'var(--success)', color: busAllocationApproved ? 'var(--success)' : 'white' }}
+                      onClick={() => {
+                        setBusAllocationApproved(true);
+                        alert("🎉 Bus Allocation Layout Approved & Published!\nDevotees can now access their verified bus pass in the Devotee Portal.");
+                      }}
+                    >
+                      <CheckCircle size={16} /> {busAllocationApproved ? 'Layout Approved' : 'Approve & Publish'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Fleet Overview KPIs */}
+                {(() => {
+                  const organisedDevotees = participants.filter(p => p.travelMode === 'organised');
+                  const totalOrganisedPax = organisedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                  const totalFleetCapacity = buses.reduce((sum, b) => sum + (parseInt(b.capacity) || 0), 0);
+                  const allocatedDevotees = organisedDevotees.filter(p => p.busId);
+                  const totalAllocatedPax = allocatedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                  const unallocatedPax = totalOrganisedPax - totalAllocatedPax;
+                  const selfTravelCount = participants.filter(p => p.travelMode === 'self').length;
+
+                  return (
+                    <div className="grid-cols-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--primary)' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Fleet Capacity</span>
+                        <h3 style={{ margin: '0.25rem 0', color: 'var(--primary)' }}>{totalFleetCapacity} Seats</h3>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Across {buses.length} active coaches</span>
+                      </div>
+                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--warning)' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Organiser Travel Devotees</span>
+                        <h3 style={{ margin: '0.25rem 0', color: 'var(--warning)' }}>{totalOrganisedPax} Devotees</h3>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>From {organisedDevotees.length} booking groups</span>
+                      </div>
+                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--success)' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Allocated / Remaining Seats</span>
+                        <h3 style={{ margin: '0.25rem 0', color: 'var(--success)' }}>{totalAllocatedPax} / {totalFleetCapacity}</h3>
+                        <span style={{ fontSize: '0.75rem', color: totalFleetCapacity - totalAllocatedPax >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                          {totalFleetCapacity - totalAllocatedPax} seats available
+                        </span>
+                      </div>
+                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #6366f1' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Self-Arranged Travel</span>
+                        <h3 style={{ margin: '0.25rem 0', color: '#6366f1' }}>{selfTravelCount} Devotees</h3>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Exempt from bus seating</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Fleet Coaches List */}
+                {buses.length === 0 ? (
+                  <div className="card" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+                    <Bus size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} />
+                    <h4>No Bus Coaches Added Yet</h4>
+                    <p style={{ maxWidth: '480px', margin: '0.5rem auto 1.5rem' }}>
+                      Add your tour buses (e.g. Bus 1 with 35 seats, Bus 2 with 30 seats) along with coordinators and routes. Then use <strong>Auto-Allocate</strong> to seat devotees with families intact.
+                    </p>
+                    <button className="btn btn-primary" onClick={() => {
+                      setEditingBusId(null);
+                      setNewBus({ name: 'Bus 1 (AC Coach)', busNumber: '', route: `${selectedYatra.destination} Route`, capacity: 35, coordinatorName: '', coordinatorPhone: '', driverName: '', driverPhone: '', departureTime: '06:00 AM (Day 1)', boardingPoint: '', notes: '' });
+                      setIsAddBusOpen(true);
+                    }}>
+                      <Plus size={16} /> Add First Bus Coach
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                    {buses.map(bus => {
+                      const assignedDevotees = participants.filter(p => p.busId === bus.id);
+                      const totalOccupiedSeats = assignedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                      const cap = parseInt(bus.capacity) || 35;
+                      const occupancyPercent = Math.min(100, Math.round((totalOccupiedSeats / cap) * 100));
+                      const isOverCapacity = totalOccupiedSeats > cap;
+
+                      return (
+                        <div key={bus.id} className="card" style={{ border: isOverCapacity ? '1.5px solid var(--danger)' : '1px solid var(--border)', overflow: 'hidden' }}>
+                          {/* Bus Header */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                              <div style={{ width: '42px', height: '42px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--primary-light)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                <Bus size={22} />
+                              </div>
+                              <div>
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                  <h4 style={{ margin: 0 }}>{bus.name}</h4>
+                                  {bus.busNumber && <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>{bus.busNumber}</span>}
+                                  {isOverCapacity && <span className="badge badge-danger">Capacity Exceeded!</span>}
+                                </div>
+                                <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                                  <span>🛣️ {bus.route || 'Tour Route'}</span>
+                                  {bus.boardingPoint && <span>📍 Boarding: {bus.boardingPoint}</span>}
+                                  {bus.departureTime && <span>⏰ Dep: {bus.departureTime}</span>}
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Occupancy Indicator & Action Buttons */}
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                              <div style={{ textAlign: 'right', minWidth: '150px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                                  <span style={{ color: 'var(--text-muted)' }}>Occupancy</span>
+                                  <strong>{totalOccupiedSeats} / {cap} Seats ({occupancyPercent}%)</strong>
+                                </div>
+                                <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg)', borderRadius: '4px', overflow: 'hidden' }}>
+                                  <div style={{ 
+                                    width: `${occupancyPercent}%`, 
+                                    height: '100%', 
+                                    backgroundColor: isOverCapacity ? 'var(--danger)' : occupancyPercent > 85 ? 'var(--warning)' : 'var(--success)',
+                                    transition: 'width 0.3s' 
+                                  }} />
+                                </div>
+                              </div>
+                              <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                <button 
+                                  className="btn btn-outline" 
+                                  style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem' }}
+                                  onClick={() => {
+                                    setEditingBusId(bus.id);
+                                    setNewBus({ ...bus });
+                                    setIsAddBusOpen(true);
+                                  }}
+                                  title="Edit Bus Details"
+                                >
+                                  <Edit2 size={13} /> Edit
+                                </button>
+                                <button 
+                                  className="btn btn-outline" 
+                                  style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', color: 'var(--danger)', borderColor: 'var(--border)' }}
+                                  onClick={() => handleDeleteBus(bus.id)}
+                                  title="Delete Bus"
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+
+                          {/* Coordinator & Crew info */}
+                          <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap', padding: '0.75rem 0', fontSize: '0.8rem', color: 'var(--text)', borderBottom: '1px solid var(--border)', backgroundColor: 'var(--bg)', margin: '0 -1.5rem', paddingLeft: '1.5rem', paddingRight: '1.5rem' }}>
+                            <span>👤 <strong>Bus Coordinator:</strong> {bus.coordinatorName ? `${bus.coordinatorName} (${bus.coordinatorPhone || 'No phone'})` : 'Not Assigned'}</span>
+                            <span>👨‍✈️ <strong>Driver:</strong> {bus.driverName ? `${bus.driverName} (${bus.driverPhone || 'No phone'})` : 'Not Assigned'}</span>
+                            {bus.notes && <span style={{ color: 'var(--text-muted)' }}>ℹ️ {bus.notes}</span>}
+                          </div>
+
+                          {/* Allocated Devotees List */}
+                          <div style={{ marginTop: '1rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                              <span style={{ fontSize: '0.85rem', fontWeight: 600, color: 'var(--text)' }}>
+                                Allocated Devotees & Families ({assignedDevotees.length} Groups • {totalOccupiedSeats} Seats)
+                              </span>
+                              {assignedDevotees.length > 0 && (
+                                <button 
+                                  className="btn btn-outline" 
+                                  style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                                  onClick={() => {
+                                    if (window.confirm(`Broadcast bus passes on WhatsApp to all ${assignedDevotees.length} devotees in ${bus.name}?`)) {
+                                      assignedDevotees.forEach((d, idx) => {
+                                        setTimeout(() => sendBusWhatsApp(d, bus), idx * 600);
+                                      });
+                                    }
+                                  }}
+                                >
+                                  <MessageSquare size={12} /> Broadcast WhatsApp to Bus
+                                </button>
+                              )}
+                            </div>
+
+                            {assignedDevotees.length === 0 ? (
+                              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: '0.5rem 0' }}>
+                                No devotees allocated to this coach yet. Click 'Auto-Allocate Devotees' above or assign devotees below.
+                              </p>
+                            ) : (
+                              <div className="table-container" style={{ margin: 0 }}>
+                                <table style={{ fontSize: '0.85rem' }}>
+                                  <thead>
+                                    <tr>
+                                      <th>Devotee / Family</th>
+                                      <th>Seats</th>
+                                      <th>Family Members Included</th>
+                                      <th>Phone</th>
+                                      <th>Reassign Bus</th>
+                                      <th>Actions</th>
+                                    </tr>
+                                  </thead>
+                                  <tbody>
+                                    {assignedDevotees.map(devotee => {
+                                      const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
+                                      return (
+                                        <tr key={devotee.id}>
+                                          <td>
+                                            <strong>{devotee.name}</strong>
+                                            {devotee.type === 'family' && (
+                                              <span className="badge" style={{ marginLeft: '0.4rem', fontSize: '0.7rem', backgroundColor: 'var(--warning-light)', color: 'var(--warning)' }}>
+                                                Family
+                                              </span>
+                                            )}
+                                          </td>
+                                          <td>
+                                            <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary)', fontWeight: 600 }}>
+                                              {devoteePax} Seat{devoteePax > 1 ? 's' : ''}
+                                            </span>
+                                          </td>
+                                          <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem', maxWidth: '300px' }}>
+                                            {devotee.familyMembers && devotee.familyMembers.length > 0 
+                                              ? devotee.familyMembers.map(m => m.name).join(', ') 
+                                              : devotee.name}
+                                          </td>
+                                          <td>
+                                            <a href={`tel:${devotee.phone}`} style={{ color: 'var(--text)', textDecoration: 'none' }}>
+                                              {devotee.phone}
+                                            </a>
+                                          </td>
+                                          <td>
+                                            <select 
+                                              className="form-control" 
+                                              style={{ fontSize: '0.75rem', padding: '0.25rem 0.5rem', width: 'auto' }}
+                                              value={devotee.busId || ''}
+                                              onChange={(e) => handleReassignBus(devotee.id, e.target.value)}
+                                            >
+                                              <option value="">-- Unallocate --</option>
+                                              {buses.map(b => (
+                                                <option key={b.id} value={b.id}>{b.name}</option>
+                                              ))}
+                                            </select>
+                                          </td>
+                                          <td>
+                                            <button 
+                                              className="btn btn-outline" 
+                                              style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', borderColor: '#25D366', color: '#25D366' }}
+                                              onClick={() => sendBusWhatsApp(devotee, bus)}
+                                              title="Send WhatsApp Bus Pass to Devotee"
+                                            >
+                                              <MessageSquare size={12} /> WhatsApp Pass
+                                            </button>
+                                          </td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody>
+                                </table>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Unallocated Organiser Devotees (if any) */}
+                {(() => {
+                  const unallocated = participants.filter(p => p.travelMode === 'organised' && !p.busId);
+                  if (unallocated.length === 0) return null;
+                  return (
+                    <div className="card" style={{ marginTop: '2rem', border: '1.5px dashed var(--warning)', backgroundColor: 'var(--warning-light)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                        <AlertTriangle size={18} color="var(--warning)" />
+                        <h4 style={{ margin: 0, color: 'var(--warning)' }}>Unallocated Organiser Devotees ({unallocated.length} Groups)</h4>
+                      </div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text)', marginBottom: '1rem' }}>
+                        These devotees opted for Organizer arrangements but have not yet been assigned to a bus coach (or could not fit in the existing total capacity).
+                      </p>
+                      <div className="table-container" style={{ margin: 0 }}>
+                        <table style={{ fontSize: '0.85rem', backgroundColor: 'var(--card-bg)' }}>
+                          <thead>
+                            <tr>
+                              <th>Devotee Name</th>
+                              <th>Group Size</th>
+                              <th>Members</th>
+                              <th>Assign to Bus</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {unallocated.map(devotee => {
+                              const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
+                              return (
+                                <tr key={devotee.id}>
+                                  <td><strong>{devotee.name}</strong> ({devotee.phone})</td>
+                                  <td><span className="badge">{devoteePax} Seat(s)</span></td>
+                                  <td style={{ color: 'var(--text-muted)' }}>
+                                    {devotee.familyMembers && devotee.familyMembers.length > 0 
+                                      ? devotee.familyMembers.map(m => m.name).join(', ') 
+                                      : devotee.name}
+                                  </td>
+                                  <td>
+                                    <select 
+                                      className="form-control" 
+                                      style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                                      value=""
+                                      onChange={(e) => handleReassignBus(devotee.id, e.target.value)}
+                                    >
+                                      <option value="" disabled>-- Select Bus --</option>
+                                      {buses.map(b => (
+                                        <option key={b.id} value={b.id}>{b.name} ({b.capacity} seats)</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Self-Arranged Devotees Reference */}
+                <div className="card" style={{ marginTop: '2rem' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                    <h4 style={{ margin: 0 }}>🚗 Devotees on Self-Arranged Travel ({participants.filter(p => p.travelMode === 'self').length})</h4>
+                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Traveling via own car, train, or flight</span>
+                  </div>
+                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                    These devotees manage their own transit directly to the dham/hotel and do not require organizer bus seat allocation.
+                  </p>
+                  <div className="table-container" style={{ margin: 0 }}>
+                    <table style={{ fontSize: '0.85rem' }}>
+                      <thead>
+                        <tr>
+                          <th>Devotee</th>
+                          <th>Members</th>
+                          <th>Transit Mode</th>
+                          <th>Stations / Route</th>
+                          <th>Remarks</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {participants.filter(p => p.travelMode === 'self').map(p => (
+                          <tr key={p.id}>
+                            <td><strong>{p.name}</strong> ({p.phone})</td>
+                            <td>{(p.familyMembers && p.familyMembers.length) || p.membersCount || 1} Person(s)</td>
+                            <td><span className="badge" style={{ textTransform: 'capitalize' }}>{p.travelType || 'Self'}</span></td>
+                            <td style={{ color: 'var(--text-muted)' }}>{p.boardingStation ? `${p.boardingStation} ➔ ${p.droppingStation || selectedYatra.destination}` : 'Direct'}</td>
+                            <td style={{ color: 'var(--text-muted)' }}>{p.remarks || '-'}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            )}
+
+            {/* ======================================= */}
+            {/* TAB: HOTEL ROOM ALLOCATION (STAGE 3) */}
+            {/* ======================================= */}
+            {activeTab === 'room_allocation' && (
+              <div>
+                {/* Header & Actions */}
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                      <h3 style={{ margin: 0 }}>🏨 Hotel Room Allocation & Key Management</h3>
+                      <span className={`badge ${roomAllocationApproved ? 'badge-confirmed' : 'badge-interested'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                        {roomAllocationApproved ? <Check size={13} /> : <AlertTriangle size={13} />}
+                        {roomAllocationApproved ? 'Room Layout Approved' : 'Draft Room Layout'}
+                      </span>
+                    </div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                      Stage 3 Logistics: Input room inventory, auto-allocate families into dedicated rooms and individuals into comfortable shared rooms, and send WhatsApp room check-in passes.
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <button 
+                      className="btn btn-primary" 
+                      onClick={() => {
+                        setEditingRoomId(null);
+                        const primaryHotel = hotels.find(h => h.finalSelected) || hotels[0];
+                        setNewRoom({ roomNumber: '', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', hotelName: primaryHotel ? primaryHotel.name : 'Primary Hotel', extraMattressCost: 500, notes: '' });
+                        setIsAddRoomOpen(true);
+                      }}
+                    >
+                      <Plus size={16} /> Add Room Inventory
+                    </button>
+                    <button 
+                      className="btn btn-outline" 
+                      style={{ borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
+                      onClick={autoAllocateRooms}
+                      title="Allocates dedicated family rooms for families and pairs individuals into shared rooms"
+                    >
+                      <Shuffle size={16} /> Auto-Allocate Rooms
+                    </button>
+                    <button 
+                      className={`btn ${roomAllocationApproved ? 'btn-outline' : 'btn-primary'}`} 
+                      style={{ backgroundColor: roomAllocationApproved ? 'transparent' : 'var(--success)', borderColor: 'var(--success)', color: roomAllocationApproved ? 'var(--success)' : 'white' }}
+                      onClick={() => {
+                        setRoomAllocationApproved(true);
+                        alert("🎉 Hotel Room Allocation Approved & Published!\nDevotees can now view their official room pass in their Devotee Portal.");
+                      }}
+                    >
+                      <CheckCircle size={16} /> {roomAllocationApproved ? 'Layout Approved' : 'Approve & Publish'}
+                    </button>
+                  </div>
+                </div>
+
+                {/* KPI Stat Row */}
+                {(() => {
+                  const confirmedDevotees = participants.filter(p => p.status === 'confirmed' || p.status === 'interested');
+                  const totalPax = confirmedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                  const totalBedCapacity = rooms.reduce((sum, r) => sum + (parseInt(r.capacity) || 0), 0);
+                  const allocatedDevotees = confirmedDevotees.filter(p => p.roomId);
+                  const totalAllocatedPax = allocatedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+
+                  return (
+                    <div className="grid-cols-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--primary)' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Rooms Registered</span>
+                        <h3 style={{ margin: '0.25rem 0', color: 'var(--primary)' }}>{rooms.length} Rooms</h3>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total {totalBedCapacity} bed slots</span>
+                      </div>
+                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--warning)' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Devotees Requiring Stay</span>
+                        <h3 style={{ margin: '0.25rem 0', color: 'var(--warning)' }}>{totalPax} Devotees</h3>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Across {confirmedDevotees.length} bookings</span>
+                      </div>
+                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--success)' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Allocated Devotees</span>
+                        <h3 style={{ margin: '0.25rem 0', color: 'var(--success)' }}>{totalAllocatedPax} Devotees</h3>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>In {rooms.filter(r => participants.some(p => p.roomId === r.id)).length} occupied rooms</span>
+                      </div>
+                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #8b5cf6' }}>
+                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Vacant Rooms</span>
+                        <h3 style={{ margin: '0.25rem 0', color: '#8b5cf6' }}>{rooms.filter(r => !participants.some(p => p.roomId === r.id)).length} Available</h3>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ready for immediate check-in</span>
+                      </div>
+                    </div>
+                  );
+                })()}
+
+                {/* Rooms Grid */}
+                {rooms.length === 0 ? (
+                  <div className="card" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+                    <Bed size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} />
+                    <h4>No Hotel Rooms Added Yet</h4>
+                    <p style={{ maxWidth: '480px', margin: '0.5rem auto 1.5rem' }}>
+                      Add your booked hotel room inventory (e.g. Room 101, 102, 201) and run auto-allocation to place families together into dedicated rooms.
+                    </p>
+                    <button className="btn btn-primary" onClick={() => {
+                      setEditingRoomId(null);
+                      const primaryHotel = hotels.find(h => h.finalSelected) || hotels[0];
+                      setNewRoom({ roomNumber: '101', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', hotelName: primaryHotel ? primaryHotel.name : 'Primary Hotel', extraMattressCost: 500, notes: '' });
+                      setIsAddRoomOpen(true);
+                    }}>
+                      <Plus size={16} /> Add First Room
+                    </button>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
+                    {rooms.map(room => {
+                      const occupants = participants.filter(p => p.roomId === room.id);
+                      const occupantPax = occupants.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                      const roomCap = parseInt(room.capacity) || 2;
+                      const isFull = occupantPax >= roomCap;
+                      const hotelObj = hotels.find(h => h.name === room.hotelName) || hotels[0];
+
+                      return (
+                        <div key={room.id} className="card" style={{ padding: '1.25rem', border: isFull ? '1.5px solid var(--border)' : '1px solid var(--border)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                          <div>
+                            {/* Room Header */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                              <div>
+                                <h4 style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                                  <Bed size={16} color="var(--primary)" /> Room {room.roomNumber}
+                                </h4>
+                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.15rem' }}>
+                                  {room.floor || 'Floor'} • {room.roomType || 'Standard'}
+                                </span>
+                              </div>
+                              <span className={`badge ${occupantPax === 0 ? 'badge-interested' : isFull ? 'badge-confirmed' : 'badge-warning'}`}>
+                                {occupantPax === 0 ? 'Vacant' : `${occupantPax} / ${roomCap} Beds`}
+                              </span>
+                            </div>
+
+                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0.75rem' }}>
+                              🏨 {room.hotelName || 'Yatra Hotel'}
+                            </p>
+
+                            {/* Occupants */}
+                            <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', minHeight: '80px', marginBottom: '0.75rem' }}>
+                              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '0.35rem' }}>
+                                Assigned Devotees:
+                              </span>
+                              {occupants.length === 0 ? (
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+                                  No occupants assigned yet.
+                                </p>
+                              ) : (
+                                occupants.map(occ => {
+                                  const occPax = (occ.familyMembers && occ.familyMembers.length) || occ.membersCount || 1;
+                                  return (
+                                    <div key={occ.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', fontSize: '0.8rem' }}>
+                                      <div>
+                                        <strong>{occ.name}</strong> ({occPax} pax)
+                                        {occ.familyMembers && occ.familyMembers.length > 0 && (
+                                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                            {occ.familyMembers.map(m => m.name).join(', ')}
+                                          </div>
+                                        )}
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                        <button 
+                                          className="btn btn-outline" 
+                                          style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem', borderColor: '#25D366', color: '#25D366' }}
+                                          onClick={() => sendRoomWhatsApp(occ, room, hotelObj)}
+                                          title="Send WhatsApp Room Pass"
+                                        >
+                                          <MessageSquare size={11} /> Pass
+                                        </button>
+                                        <button 
+                                          className="btn btn-outline" 
+                                          style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem', color: 'var(--danger)', borderColor: 'var(--border)' }}
+                                          onClick={() => handleReassignRoom(occ.id, '')}
+                                          title="Unassign from Room"
+                                        >
+                                          <X size={11} />
+                                        </button>
+                                      </div>
+                                    </div>
+                                  );
+                                })
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Footer with Edit / Delete */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid var(--border)', fontSize: '0.75rem' }}>
+                            <span style={{ color: 'var(--text-muted)' }}>
+                              Extra mattress: ₹{room.extraMattressCost || 500}
+                            </span>
+                            <div style={{ display: 'flex', gap: '0.35rem' }}>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                                onClick={() => {
+                                  setEditingRoomId(room.id);
+                                  setNewRoom({ ...room });
+                                  setIsAddRoomOpen(true);
+                                }}
+                              >
+                                <Edit2 size={12} /> Edit
+                              </button>
+                              <button 
+                                className="btn btn-outline" 
+                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: 'var(--danger)' }}
+                                onClick={() => handleDeleteRoom(room.id)}
+                              >
+                                <Trash2 size={12} />
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Unallocated Devotees for Room */}
+                {(() => {
+                  const unallocated = participants.filter(p => !p.roomId && (p.status === 'confirmed' || p.status === 'interested'));
+                  if (unallocated.length === 0) return null;
+                  return (
+                    <div className="card" style={{ marginTop: '2rem', border: '1.5px dashed var(--warning)', backgroundColor: 'var(--warning-light)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                        <AlertTriangle size={18} color="var(--warning)" />
+                        <h4 style={{ margin: 0, color: 'var(--warning)' }}>Unallocated Devotees ({unallocated.length} Groups)</h4>
+                      </div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text)', marginBottom: '1rem' }}>
+                        The following devotees need a room assignment. Select a room to assign them manually or click 'Auto-Allocate Rooms'.
+                      </p>
+                      <div className="table-container" style={{ margin: 0 }}>
+                        <table style={{ fontSize: '0.85rem', backgroundColor: 'var(--card-bg)' }}>
+                          <thead>
+                            <tr>
+                              <th>Devotee Name</th>
+                              <th>Group Size</th>
+                              <th>Type</th>
+                              <th>Assign to Room</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {unallocated.map(devotee => {
+                              const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
+                              return (
+                                <tr key={devotee.id}>
+                                  <td><strong>{devotee.name}</strong> ({devotee.phone})</td>
+                                  <td><span className="badge">{devoteePax} Person(s)</span></td>
+                                  <td style={{ textTransform: 'capitalize' }}>{devotee.type}</td>
+                                  <td>
+                                    <select 
+                                      className="form-control" 
+                                      style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                                      value=""
+                                      onChange={(e) => handleReassignRoom(devotee.id, e.target.value)}
+                                    >
+                                      <option value="" disabled>-- Assign Room --</option>
+                                      {rooms.map(r => (
+                                        <option key={r.id} value={r.id}>Room {r.roomNumber} ({r.roomType}, {r.capacity} beds)</option>
+                                      ))}
+                                    </select>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
 
             {/* ======================================= */}
             {/* TAB: HOTELS RESEARCH */}
@@ -3227,6 +4210,177 @@ export default function App() {
 
             <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.25fr', gap: '2rem' }}>
               <div>
+                {/* DEVOTEE PASSES: BUS ALLOCATION & HOTEL ROOM */}
+                {(() => {
+                  const currentDevotee = (participants && participants.find(p => p.id === myParticipantData.id)) || myParticipantData;
+                  const myBus = buses.find(b => b.id === currentDevotee.busId);
+                  const myRoom = rooms.find(r => r.id === currentDevotee.roomId);
+                  const myHotel = hotels.find(h => h.name === (myRoom?.hotelName || currentDevotee.hotelName)) || hotels.find(h => h.finalSelected) || hotels[0];
+                  const totalPax = (currentDevotee.familyMembers && currentDevotee.familyMembers.length) || currentDevotee.membersCount || 1;
+
+                  return (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', marginBottom: '2rem' }}>
+                      {/* BUS TRAVEL PASS */}
+                      {currentDevotee.travelMode === 'self' ? (
+                        <div className="card" style={{ borderLeft: '4px solid #6366f1', backgroundColor: 'var(--bg)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <span style={{ fontSize: '1.5rem' }}>🚗</span>
+                            <div>
+                              <h4 style={{ margin: 0 }}>Self-Arranged Travel Mode</h4>
+                              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0.2rem 0 0' }}>
+                                You have opted to travel independently by {currentDevotee.travelType || 'your own vehicle / rail'}. Please ensure you reach the yatra destination on time!
+                              </p>
+                              {currentDevotee.boardingStation && (
+                                <span style={{ fontSize: '0.8rem', color: 'var(--text)', display: 'inline-block', marginTop: '0.25rem' }}>
+                                  Transit Route: {currentDevotee.boardingStation} ➔ {currentDevotee.droppingStation || selectedYatra.destination}
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : myBus ? (
+                        <div className="card" style={{ border: '2px solid var(--primary)', backgroundColor: 'var(--card-bg)', position: 'relative', overflow: 'hidden' }}>
+                          <div style={{ position: 'absolute', top: 0, right: 0, backgroundColor: 'var(--primary)', color: 'white', padding: '0.25rem 0.85rem', borderBottomLeftRadius: 'var(--radius-sm)', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <Bus size={13} /> OFFICIAL BUS PASS
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', marginTop: '0.5rem' }}>
+                            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: 'var(--primary-light)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <Bus size={24} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <h3 style={{ margin: 0, color: 'var(--primary)' }}>{myBus.name}</h3>
+                                {myBus.busNumber && <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>{myBus.busNumber}</span>}
+                                <span className="badge badge-confirmed">{totalPax} Reserved Seat{totalPax > 1 ? 's' : ''}</span>
+                              </div>
+                              <p style={{ fontSize: '0.85rem', color: 'var(--text)', margin: '0.4rem 0' }}>
+                                <strong>Route:</strong> {myBus.route || selectedYatra.destination}
+                              </p>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '0.75rem', backgroundColor: 'var(--bg)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', marginTop: '0.5rem', fontSize: '0.85rem' }}>
+                                <div>
+                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', display: 'block' }}>BOARDING LOCATION</span>
+                                  <strong>📍 {myBus.boardingPoint || 'Main Tour Assembly Point'}</strong>
+                                </div>
+                                <div>
+                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', display: 'block' }}>DEPARTURE TIME</span>
+                                  <strong>⏰ {myBus.departureTime || '06:00 AM (Day 1)'}</strong>
+                                </div>
+                                <div>
+                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', display: 'block' }}>BUS COORDINATOR</span>
+                                  <strong>👤 {myBus.coordinatorName || 'Organizer'}</strong>
+                                  {myBus.coordinatorPhone && (
+                                    <div style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                      <a href={`tel:${myBus.coordinatorPhone}`} style={{ color: 'var(--primary)', textDecoration: 'none' }}>📞 {myBus.coordinatorPhone}</a>
+                                    </div>
+                                  )}
+                                </div>
+                                <div>
+                                  <span style={{ color: 'var(--text-muted)', fontSize: '0.75rem', display: 'block' }}>DRIVER DETAILS</span>
+                                  <strong>👨‍✈️ {myBus.driverName || 'Tour Driver'}</strong>
+                                  {myBus.driverPhone && (
+                                    <div style={{ fontSize: '0.8rem', marginTop: '0.15rem' }}>
+                                      <a href={`tel:${myBus.driverPhone}`} style={{ color: 'var(--primary)', textDecoration: 'none' }}>📞 {myBus.driverPhone}</a>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+                              {currentDevotee.familyMembers && currentDevotee.familyMembers.length > 0 && (
+                                <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                                  <strong>Seated with you:</strong> {currentDevotee.familyMembers.map(m => m.name).join(', ')}
+                                </div>
+                              )}
+                              {myBus.notes && (
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.5rem 0 0', fontStyle: 'italic' }}>
+                                  ℹ️ {myBus.notes}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="card" style={{ borderLeft: '4px solid var(--warning)', backgroundColor: 'var(--warning-light)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <Bus size={22} color="var(--warning)" />
+                            <div>
+                              <h4 style={{ margin: 0, color: 'var(--warning)' }}>Bus Seat Allocation in Progress</h4>
+                              <p style={{ fontSize: '0.85rem', color: 'var(--text)', margin: '0.2rem 0 0' }}>
+                                You have opted for Organizer Bus Travel. The administrator is finalizing coach seating layouts. Your bus coach number, route, and boarding time will appear here shortly!
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+
+                      {/* HOTEL ROOM STAY PASS */}
+                      {myRoom ? (
+                        <div className="card" style={{ border: '2px solid var(--success)', backgroundColor: 'var(--card-bg)', position: 'relative', overflow: 'hidden' }}>
+                          <div style={{ position: 'absolute', top: 0, right: 0, backgroundColor: 'var(--success)', color: 'white', padding: '0.25rem 0.85rem', borderBottomLeftRadius: 'var(--radius-sm)', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                            <Bed size={13} /> HOTEL ROOM PASS
+                          </div>
+                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', marginTop: '0.5rem' }}>
+                            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: 'var(--success-light)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                              <Bed size={24} />
+                            </div>
+                            <div style={{ flex: 1 }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                <h3 style={{ margin: 0, color: 'var(--success)' }}>Room {myRoom.roomNumber}</h3>
+                                <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>{myRoom.roomType || 'Double Bed'}</span>
+                                <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>{myRoom.floor || 'Ground Floor'}</span>
+                              </div>
+                              <p style={{ fontSize: '0.85rem', color: 'var(--text)', margin: '0.4rem 0' }}>
+                                <strong>Hotel:</strong> {myRoom.hotelName || myHotel?.name || 'Yatra Hotel Accommodation'}
+                              </p>
+                              {myHotel?.address && (
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0' }}>
+                                  📍 {myHotel.address}
+                                </p>
+                              )}
+                              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                {myHotel?.gmapsLink && (
+                                  <a 
+                                    href={myHotel.gmapsLink} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    className="btn btn-outline" 
+                                    style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                                  >
+                                    <MapPin size={13} /> View on Google Maps
+                                  </a>
+                                )}
+                                {myHotel?.phone && (
+                                  <a 
+                                    href={`tel:${myHotel.phone}`} 
+                                    style={{ fontSize: '0.8rem', color: 'var(--text)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                                  >
+                                    <Phone size={13} /> Hotel Reception: {myHotel.phone}
+                                  </a>
+                                )}
+                              </div>
+                              {myRoom.notes && (
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.5rem 0 0', fontStyle: 'italic' }}>
+                                  ℹ️ {myRoom.notes}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="card" style={{ borderLeft: '4px solid var(--border)', backgroundColor: 'var(--bg)' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                            <Bed size={22} style={{ color: 'var(--text-muted)' }} />
+                            <div>
+                              <h4 style={{ margin: 0, color: 'var(--text)' }}>Hotel Room Key Allocation</h4>
+                              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0.2rem 0 0' }}>
+                                Room numbers will be issued upon arrival at the hotel reception or once the administrator finalizes the room check-in manifest.
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 {/* MY DETAILS & TRAVEL NOTES */}
                 <div className="card" style={{ marginBottom: '2rem' }}>
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -3932,6 +5086,272 @@ export default function App() {
                 }} />
               </div>
               <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>Upload to Vault</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ADD / EDIT BUS COACH */}
+      {isAddBusOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3>{editingBusId ? 'Edit Bus Coach Details' : 'Add Bus Coach to Fleet'}</h3>
+              <button className="modal-close" onClick={() => setIsAddBusOpen(false)}>×</button>
+            </div>
+            <form onSubmit={handleAddBus}>
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Bus Coach Name *</label>
+                  <input 
+                    type="text" 
+                    required 
+                    className="form-control" 
+                    placeholder="e.g. Bus 1 (AC Video Coach)" 
+                    value={newBus.name} 
+                    onChange={(e) => setNewBus({ ...newBus, name: e.target.value })} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Vehicle Reg. Number</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. MH 02 AB 1234" 
+                    value={newBus.busNumber} 
+                    onChange={(e) => setNewBus({ ...newBus, busNumber: e.target.value })} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Seating Capacity *</label>
+                  <input 
+                    type="number" 
+                    required 
+                    min="1" 
+                    max="100" 
+                    className="form-control" 
+                    placeholder="35" 
+                    value={newBus.capacity} 
+                    onChange={(e) => setNewBus({ ...newBus, capacity: parseInt(e.target.value) || 0 })} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Route</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Mumbai -> Mathura -> Vrindavan" 
+                    value={newBus.route} 
+                    onChange={(e) => setNewBus({ ...newBus, route: e.target.value })} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Boarding Point</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Platform 1 Main Gate, Mumbai Central" 
+                    value={newBus.boardingPoint} 
+                    onChange={(e) => setNewBus({ ...newBus, boardingPoint: e.target.value })} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Departure Date & Time</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. 06:00 AM (Day 1)" 
+                    value={newBus.departureTime} 
+                    onChange={(e) => setNewBus({ ...newBus, departureTime: e.target.value })} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Bus Coordinator Name</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Syamasundara Das" 
+                    value={newBus.coordinatorName} 
+                    onChange={(e) => setNewBus({ ...newBus, coordinatorName: e.target.value })} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Coordinator Phone Number</label>
+                  <input 
+                    type="tel" 
+                    className="form-control" 
+                    placeholder="e.g. 9812345678" 
+                    value={newBus.coordinatorPhone} 
+                    onChange={(e) => setNewBus({ ...newBus, coordinatorPhone: e.target.value })} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Driver Name</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Raju Bhai" 
+                    value={newBus.driverName} 
+                    onChange={(e) => setNewBus({ ...newBus, driverName: e.target.value })} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Driver Phone Number</label>
+                  <input 
+                    type="tel" 
+                    className="form-control" 
+                    placeholder="e.g. 9898765432" 
+                    value={newBus.driverPhone} 
+                    onChange={(e) => setNewBus({ ...newBus, driverPhone: e.target.value })} 
+                  />
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Important Instructions / Notes for Passengers</label>
+                <textarea 
+                  className="form-control" 
+                  rows={2} 
+                  placeholder="e.g. AC coach, water bottles provided. Please arrive 20 minutes before departure." 
+                  value={newBus.notes} 
+                  onChange={(e) => setNewBus({ ...newBus, notes: e.target.value })} 
+                />
+              </div>
+
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>
+                {editingBusId ? 'Save Bus Changes' : 'Add Bus Coach to Fleet'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ADD / EDIT HOTEL ROOM */}
+      {isAddRoomOpen && (
+        <div className="modal-overlay">
+          <div className="modal-content">
+            <div className="modal-header">
+              <h3>{editingRoomId ? 'Edit Room Details' : 'Add Hotel Room Inventory'}</h3>
+              <button className="modal-close" onClick={() => setIsAddRoomOpen(false)}>×</button>
+            </div>
+            <form onSubmit={handleAddRoom}>
+              <div className="form-group">
+                <label>Hotel Name</label>
+                {hotels.length > 0 ? (
+                  <select 
+                    className="form-control" 
+                    value={newRoom.hotelName} 
+                    onChange={(e) => setNewRoom({ ...newRoom, hotelName: e.target.value })}
+                  >
+                    {hotels.map(h => (
+                      <option key={h.id} value={h.name}>{h.name} {h.finalSelected ? '(Final Selected)' : ''}</option>
+                    ))}
+                  </select>
+                ) : (
+                  <input 
+                    type="text" 
+                    required 
+                    className="form-control" 
+                    placeholder="e.g. MVT Guesthouse" 
+                    value={newRoom.hotelName} 
+                    onChange={(e) => setNewRoom({ ...newRoom, hotelName: e.target.value })} 
+                  />
+                )}
+              </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Room Number / Name *</label>
+                  <input 
+                    type="text" 
+                    required 
+                    className="form-control" 
+                    placeholder="e.g. 101, 102, Villa A" 
+                    value={newRoom.roomNumber} 
+                    onChange={(e) => setNewRoom({ ...newRoom, roomNumber: e.target.value })} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Floor / Wing</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Ground Floor, 1st Floor" 
+                    value={newRoom.floor} 
+                    onChange={(e) => setNewRoom({ ...newRoom, floor: e.target.value })} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Room Type</label>
+                  <select 
+                    className="form-control" 
+                    value={newRoom.roomType} 
+                    onChange={(e) => setNewRoom({ ...newRoom, roomType: e.target.value })}
+                  >
+                    <option value="Double Bed">Double Bed (2 Pax)</option>
+                    <option value="Triple Bed">Triple Bed (3 Pax)</option>
+                    <option value="Four Bed / Family Suite">Four Bed / Family Suite (4 Pax)</option>
+                    <option value="Deluxe Suite">Deluxe Suite</option>
+                    <option value="Single Room">Single Room (1 Pax)</option>
+                    <option value="Dormitory Bed">Dormitory Bed</option>
+                  </select>
+                </div>
+                <div className="form-group">
+                  <label>Standard Capacity (Beds) *</label>
+                  <input 
+                    type="number" 
+                    required 
+                    min="1" 
+                    max="10" 
+                    className="form-control" 
+                    placeholder="2" 
+                    value={newRoom.capacity} 
+                    onChange={(e) => setNewRoom({ ...newRoom, capacity: parseInt(e.target.value) || 2 })} 
+                  />
+                </div>
+              </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Extra Mattress Allowed / Cost (₹)</label>
+                  <input 
+                    type="number" 
+                    className="form-control" 
+                    placeholder="500" 
+                    value={newRoom.extraMattressCost} 
+                    onChange={(e) => setNewRoom({ ...newRoom, extraMattressCost: parseInt(e.target.value) || 0 })} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Special Amenities / Notes</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Attached Geyser, Balcony, Ground Floor" 
+                    value={newRoom.notes} 
+                    onChange={(e) => setNewRoom({ ...newRoom, notes: e.target.value })} 
+                  />
+                </div>
+              </div>
+
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>
+                {editingRoomId ? 'Save Room Changes' : 'Add Room to Inventory'}
+              </button>
             </form>
           </div>
         </div>
