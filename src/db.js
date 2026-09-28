@@ -4,8 +4,8 @@ import { getFirestore, doc, getDoc, setDoc, collection, getDocs, addDoc, updateD
 // Default Demo Data to populate when db is empty
 const DEMO_DATA = {
   users: [
-    { id: 'super_admin_1', email: 'rohit.wadhwani83@gmail.com', role: 'super_admin', name: 'Rohit Wadhwani', phone: '+919876543210' },
-    { id: 'admin_1', email: 'admin@yatra.com', role: 'admin', name: 'Krishna Das', phone: '+919999988888' }
+    { id: 'super_admin_1', email: 'rohit.wadhwani83@gmail.com', role: 'super_admin', name: 'Rohit Wadhwani', phone: '+919876543210', password: 'admin123', mustChangePassword: false },
+    { id: 'admin_1', email: 'admin@yatra.com', role: 'admin', name: 'Krishna Das', phone: '+919999988888', password: 'admin123', mustChangePassword: false }
   ],
   yatras: [
     {
@@ -532,6 +532,26 @@ class Database {
           }
         }
       }
+
+      // Ensure user records have password & mustChangePassword
+      const usersRaw = localStorage.getItem('yatra_mgr_users');
+      if (usersRaw) {
+        const users = JSON.parse(usersRaw);
+        let uChanged = false;
+        users.forEach(u => {
+          if (!u.password) {
+            u.password = 'admin123';
+            uChanged = true;
+          }
+          if (u.mustChangePassword === undefined) {
+            u.mustChangePassword = false;
+            uChanged = true;
+          }
+        });
+        if (uChanged) {
+          localStorage.setItem('yatra_mgr_users', JSON.stringify(users));
+        }
+      }
     } catch (e) {
       console.warn("Storage migration notice", e);
     }
@@ -658,6 +678,7 @@ class Database {
   // --- Specific API Wrappers ---
   async getUsers() { return this.getCollection('users'); }
   async addUser(user) { return this.addDocument('users', user); }
+  async updateUser(id, updates) { return this.updateDocument('users', id, updates); }
   async deleteUser(id) { return this.deleteDocument('users', id); }
 
   async getYatras() { return this.getCollection('yatras'); }

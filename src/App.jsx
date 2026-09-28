@@ -5,7 +5,8 @@ import {
   Check, X, LogOut, ArrowLeft, Eye, RefreshCw, AlertTriangle, QrCode, 
   ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink,
   Sparkles, UserCheck, Lock, Clock, ArrowRight,
-  Bus, Bed, Shuffle
+  Bus, Bed, Shuffle,
+  Key, EyeOff, Copy, ShieldCheck
 } from 'lucide-react';
 import db from './db';
 import JSZip from 'jszip';
@@ -49,13 +50,50 @@ export default function App() {
   // Login Form
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+  const [showLoginPassword, setShowLoginPassword] = useState(false);
   const [loginPhone, setLoginPhone] = useState('');
   const [loginRole, setLoginRole] = useState('admin'); // 'admin' | 'super_admin' | 'participant'
   const [loginError, setLoginError] = useState('');
 
+  // Forced First-Time Login Password Change
+  const [isFirstLoginOpen, setIsFirstLoginOpen] = useState(false);
+  const [firstLoginUser, setFirstLoginUser] = useState(null);
+  const [newFirstPassword, setNewFirstPassword] = useState('');
+  const [confirmFirstPassword, setConfirmFirstPassword] = useState('');
+  const [showFirstPassword, setShowFirstPassword] = useState(false);
+  const [firstPasswordError, setFirstPasswordError] = useState('');
+
+  // Forgot Password Module
+  const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
+  const [forgotPasswordStatus, setForgotPasswordStatus] = useState('idle'); // 'idle' | 'success' | 'error'
+  const [forgotPasswordMsg, setForgotPasswordMsg] = useState('');
+  const [generatedResetLink, setGeneratedResetLink] = useState('');
+  const [copiedResetLink, setCopiedResetLink] = useState(false);
+
+  // Reset Password Screen (via token link)
+  const [resetTokenUser, setResetTokenUser] = useState(null);
+  const [resetTokenStatus, setResetTokenStatus] = useState('checking'); // 'checking' | 'valid' | 'invalid'
+  const [newResetPassword, setNewResetPassword] = useState('');
+  const [confirmResetPassword, setConfirmResetPassword] = useState('');
+  const [showResetPassword, setShowResetPassword] = useState(false);
+  const [resetPasswordError, setResetPasswordError] = useState('');
+
+  // Change Password Modal (Anytime while logged in)
+  const [isChangePasswordOpen, setIsChangePasswordOpen] = useState(false);
+  const [currentChangePassword, setCurrentChangePassword] = useState('');
+  const [newChangePassword, setNewChangePassword] = useState('');
+  const [confirmChangePassword, setConfirmChangePassword] = useState('');
+  const [showChangePassword, setShowChangePassword] = useState(false);
+  const [changePasswordError, setChangePasswordError] = useState('');
+
   // Admin Management State
   const [systemUsers, setSystemUsers] = useState([]);
+  const [newAdminName, setNewAdminName] = useState('');
   const [newAdminEmail, setNewAdminEmail] = useState('');
+  const [newAdminPhone, setNewAdminPhone] = useState('');
+  const [newAdminTempPassword, setNewAdminTempPassword] = useState('YatraAdmin@2026');
+  const [createdAdminSuccess, setCreatedAdminSuccess] = useState(null);
+  const [copiedAdminCreds, setCopiedAdminCreds] = useState(false);
 
   // Modals
   const [isCreateYatraOpen, setIsCreateYatraOpen] = useState(false);
@@ -244,6 +282,21 @@ export default function App() {
             if (found) setSelectedYatra(found);
           }
         });
+      } else if (path === 'reset-password' && id) {
+        setResetTokenStatus('checking');
+        setResetPasswordError('');
+        setNewResetPassword('');
+        setConfirmResetPassword('');
+        db.getUsers().then(users => {
+          const found = users.find(u => u.resetToken === id);
+          if (found && found.resetTokenExpiry && new Date() < new Date(found.resetTokenExpiry)) {
+            setResetTokenUser(found);
+            setResetTokenStatus('valid');
+          } else {
+            setResetTokenUser(null);
+            setResetTokenStatus('invalid');
+          }
+        });
       }
     };
 
@@ -298,28 +351,224 @@ export default function App() {
         return;
       }
 
-      if (loginRole === 'super_admin' && loginEmail.toLowerCase() === 'rohit.wadhwani83@gmail.com' && loginPassword === 'admin123') {
-        setCurrentUser({ email: loginEmail, role: 'super_admin', name: 'Rohit Wadhwani (Super)' });
-        navigateTo('dashboard');
-      } else if (loginRole === 'admin') {
-        db.getUsers().then(users => {
-          // Check if the email exists in the users table or is the demo admin
-          const matchedAdmin = users.find(u => u.email === loginEmail.toLowerCase() && u.role === 'admin');
-          if ((matchedAdmin || loginEmail.toLowerCase() === 'admin@yatra.com') && loginPassword === 'admin123') {
-            setCurrentUser({ 
-              email: loginEmail, 
-              role: 'admin', 
-              name: matchedAdmin ? matchedAdmin.name : 'Krishna Das (Admin)' 
-            });
-            navigateTo('dashboard');
+      const cleanEmail = loginEmail.trim().toLowerCase();
+      db.getUsers().then(users => {
+        if (loginRole === 'super_admin') {
+          const matchedSuper = users.find(u => u.email.toLowerCase() === cleanEmail && u.role === 'super_admin') ||
+            (cleanEmail === 'rohit.wadhwani83@gmail.com' ? { id: 'super_admin_1', email: 'rohit.wadhwani83@gmail.com', role: 'super_admin', name: 'Rohit Wadhwani (Super)', password: 'admin123', mustChangePassword: false } : null);
+
+          const expectedPwd = matchedSuper?.password || 'admin123';
+          if (matchedSuper && loginPassword === expectedPwd) {
+            if (matchedSuper.mustChangePassword) {
+              setFirstLoginUser(matchedSuper);
+              setNewFirstPassword('');
+              setConfirmFirstPassword('');
+              setFirstPasswordError('');
+              setIsFirstLoginOpen(true);
+            } else {
+              setCurrentUser({ email: matchedSuper.email, role: 'super_admin', name: matchedSuper.name, id: matchedSuper.id });
+              navigateTo('dashboard');
+            }
           } else {
-            setLoginError('Invalid email, password, or role combination.');
+            setLoginError('Invalid super admin credentials.');
           }
-        });
-      } else {
-        setLoginError('Invalid email, password, or role combination.');
-      }
+        } else if (loginRole === 'admin') {
+          const matchedAdmin = users.find(u => u.email.toLowerCase() === cleanEmail && u.role === 'admin') ||
+            (cleanEmail === 'admin@yatra.com' ? { id: 'admin_1', email: 'admin@yatra.com', role: 'admin', name: 'Krishna Das (Admin)', password: 'admin123', mustChangePassword: false } : null);
+
+          const expectedPwd = matchedAdmin?.password || 'admin123';
+          if (matchedAdmin && loginPassword === expectedPwd) {
+            if (matchedAdmin.mustChangePassword) {
+              setFirstLoginUser(matchedAdmin);
+              setNewFirstPassword('');
+              setConfirmFirstPassword('');
+              setFirstPasswordError('');
+              setIsFirstLoginOpen(true);
+            } else {
+              setCurrentUser({ 
+                email: matchedAdmin.email, 
+                role: 'admin', 
+                name: matchedAdmin.name || 'Yatra Admin',
+                id: matchedAdmin.id,
+                phone: matchedAdmin.phone || ''
+              });
+              navigateTo('dashboard');
+            }
+          } else {
+            setLoginError('Invalid email or password.');
+          }
+        } else {
+          setLoginError('Invalid email, password, or role combination.');
+        }
+      });
     }
+  };
+
+  // --- Forced First-Time Login Password Change ---
+  const handleFirstLoginPasswordChange = async (e) => {
+    e.preventDefault();
+    setFirstPasswordError('');
+
+    if (!newFirstPassword || newFirstPassword.length < 6) {
+      setFirstPasswordError('Password must be at least 6 characters long.');
+      return;
+    }
+    if (newFirstPassword !== confirmFirstPassword) {
+      setFirstPasswordError('New password and confirmation password do not match.');
+      return;
+    }
+    if (newFirstPassword === 'admin123' || newFirstPassword === 'YatraAdmin@2026') {
+      setFirstPasswordError('Please choose your own unique secret password instead of the default temporary password.');
+      return;
+    }
+
+    try {
+      if (firstLoginUser.id) {
+        await db.updateUser(firstLoginUser.id, {
+          password: newFirstPassword,
+          mustChangePassword: false,
+          passwordUpdatedAt: new Date().toISOString()
+        });
+      }
+      setCurrentUser({
+        email: firstLoginUser.email,
+        role: firstLoginUser.role,
+        name: firstLoginUser.name,
+        id: firstLoginUser.id,
+        phone: firstLoginUser.phone || ''
+      });
+      setIsFirstLoginOpen(false);
+      setNewFirstPassword('');
+      setConfirmFirstPassword('');
+      navigateTo('dashboard');
+      alert(`🎉 Password set successfully!\nWelcome, ${firstLoginUser.name}. You are now signed in to the Yatra Management dashboard.`);
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err) {
+      console.error(err);
+      setFirstPasswordError('Failed to save new password. Please try again.');
+    }
+  };
+
+  // --- Forgot Password Module ---
+  const handleForgotPasswordSubmit = async (e) => {
+    e.preventDefault();
+    setForgotPasswordStatus('idle');
+    setForgotPasswordMsg('');
+
+    const targetEmail = forgotPasswordEmail.trim().toLowerCase();
+    if (!targetEmail) return;
+
+    const users = await db.getUsers();
+    const matchedUser = users.find(u => u.email.toLowerCase() === targetEmail && (u.role === 'admin' || u.role === 'super_admin')) ||
+      (targetEmail === 'rohit.wadhwani83@gmail.com' ? { id: 'super_admin_1', email: targetEmail, name: 'Rohit Wadhwani (Super)', role: 'super_admin' } : null) ||
+      (targetEmail === 'admin@yatra.com' ? { id: 'admin_1', email: targetEmail, name: 'Krishna Das (Admin)', role: 'admin' } : null);
+
+    if (!matchedUser) {
+      setForgotPasswordStatus('error');
+      setForgotPasswordMsg(`No administrator account found with email: ${targetEmail}. Please check spelling or contact Super Admin.`);
+      return;
+    }
+
+    const token = 'rst_' + Math.random().toString(36).substring(2, 10) + Date.now().toString(36);
+    const expiry = new Date(Date.now() + 60 * 60 * 1000).toISOString(); // 1 hour validity
+
+    if (matchedUser.id) {
+      await db.updateUser(matchedUser.id, {
+        resetToken: token,
+        resetTokenExpiry: expiry
+      });
+    }
+
+    const resetLink = `${window.location.origin}${window.location.pathname}#/reset-password/${token}`;
+    setGeneratedResetLink(resetLink);
+    setForgotPasswordStatus('success');
+    setForgotPasswordMsg(`Password reset link generated for ${matchedUser.name} (${targetEmail}).`);
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  // --- Reset Password Screen Submission ---
+  const handleResetPasswordSubmit = async (e) => {
+    e.preventDefault();
+    setResetPasswordError('');
+
+    if (!newResetPassword || newResetPassword.length < 6) {
+      setResetPasswordError('Password must be at least 6 characters long.');
+      return;
+    }
+    if (newResetPassword !== confirmResetPassword) {
+      setResetPasswordError('Passwords do not match.');
+      return;
+    }
+
+    try {
+      if (resetTokenUser?.id) {
+        await db.updateUser(resetTokenUser.id, {
+          password: newResetPassword,
+          mustChangePassword: false,
+          resetToken: null,
+          resetTokenExpiry: null,
+          passwordUpdatedAt: new Date().toISOString()
+        });
+      }
+      setCurrentUser({
+        email: resetTokenUser.email,
+        role: resetTokenUser.role,
+        name: resetTokenUser.name,
+        id: resetTokenUser.id,
+        phone: resetTokenUser.phone || ''
+      });
+      setNewResetPassword('');
+      setConfirmResetPassword('');
+      setResetTokenUser(null);
+      setResetTokenStatus('checking');
+      navigateTo('dashboard');
+      alert(`🎉 Password reset successfully! You are now logged in as ${resetTokenUser.name}.`);
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err) {
+      console.error(err);
+      setResetPasswordError('Failed to reset password. Please try again.');
+    }
+  };
+
+  // --- Change Password (Anytime from Profile / Header) ---
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    setChangePasswordError('');
+
+    if (!newChangePassword || newChangePassword.length < 6) {
+      setChangePasswordError('New password must be at least 6 characters long.');
+      return;
+    }
+    if (newChangePassword !== confirmChangePassword) {
+      setChangePasswordError('New password and confirm password do not match.');
+      return;
+    }
+
+    const users = await db.getUsers();
+    const userInDb = users.find(u => u.email.toLowerCase() === currentUser.email.toLowerCase()) ||
+      (currentUser.email.toLowerCase() === 'rohit.wadhwani83@gmail.com' ? { id: 'super_admin_1', password: 'admin123' } : null) ||
+      (currentUser.email.toLowerCase() === 'admin@yatra.com' ? { id: 'admin_1', password: 'admin123' } : null);
+
+    const expectedCurrent = userInDb?.password || 'admin123';
+    if (currentChangePassword !== expectedCurrent) {
+      setChangePasswordError('Current password entered is incorrect.');
+      return;
+    }
+
+    if (userInDb?.id) {
+      await db.updateUser(userInDb.id, {
+        password: newChangePassword,
+        mustChangePassword: false,
+        passwordUpdatedAt: new Date().toISOString()
+      });
+    }
+
+    setIsChangePasswordOpen(false);
+    setCurrentChangePassword('');
+    setNewChangePassword('');
+    setConfirmChangePassword('');
+    alert('🎉 Your password has been successfully updated!');
+    setRefreshTrigger(prev => prev + 1);
   };
 
   const handleLogout = () => {
@@ -1428,27 +1677,57 @@ export default function App() {
     document.body.removeChild(link);
   };
 
-  // --- Admin Management ---
+  // --- Admin Management (Super Admin) ---
   const handleAddAdmin = async (e) => {
     e.preventDefault();
     if (!newAdminEmail.trim()) return;
-    
-    // Check if user already exists
-    if (systemUsers.some(u => u.email === newAdminEmail.trim().toLowerCase())) {
-      alert("An admin with this email already exists.");
+
+    const email = newAdminEmail.trim().toLowerCase();
+    if (systemUsers.some(u => u.email.toLowerCase() === email)) {
+      alert("An administrator with this email already exists.");
       return;
     }
 
-    await db.addUser({
-      email: newAdminEmail.trim().toLowerCase(),
+    const tempPassword = newAdminTempPassword.trim() || 'YatraAdmin@2026';
+    const adminRecord = {
+      email,
       role: 'admin',
-      name: 'Yatra Manager',
-      phone: ''
+      name: newAdminName.trim() || 'Yatra Administrator',
+      phone: newAdminPhone.trim() || '',
+      password: tempPassword,
+      mustChangePassword: true,
+      createdAt: new Date().toISOString()
+    };
+
+    await db.addUser(adminRecord);
+    setCreatedAdminSuccess({
+      ...adminRecord,
+      loginUrl: `${window.location.origin}${window.location.pathname}#/login`
     });
     setNewAdminEmail('');
+    setNewAdminName('');
+    setNewAdminPhone('');
+    setNewAdminTempPassword('YatraAdmin@2026');
     setRefreshTrigger(prev => prev + 1);
   };
-  
+
+  const handleResetAdminPassword = async (adminUser) => {
+    const tempPassword = 'YatraAdmin@' + Math.floor(1000 + Math.random() * 9000);
+    if (window.confirm(`Reset password for ${adminUser.name} (${adminUser.email}) to temporary password: ${tempPassword}?\n\nThe admin will be forced to change this to their own secret password upon first login.`)) {
+      await db.updateUser(adminUser.id, {
+        password: tempPassword,
+        mustChangePassword: true,
+        passwordUpdatedAt: new Date().toISOString()
+      });
+      setCreatedAdminSuccess({
+        ...adminUser,
+        password: tempPassword,
+        loginUrl: `${window.location.origin}${window.location.pathname}#/login`
+      });
+      setRefreshTrigger(prev => prev + 1);
+    }
+  };
+
   const handleDeleteAdmin = async (id) => {
     if (window.confirm("Are you sure you want to completely remove this admin's access?")) {
       await db.deleteUser(id);
@@ -1528,14 +1807,30 @@ export default function App() {
           {currentUser && (
             <>
               {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
-                <button
-                  className="btn btn-outline"
-                  style={{ padding: '0.5rem' }}
-                  title="Refresh Data"
-                  onClick={() => setRefreshTrigger(prev => prev + 1)}
-                >
-                  <RefreshCw size={18} />
-                </button>
+                <>
+                  <button 
+                    className="btn btn-outline" 
+                    style={{ padding: '0.45rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }} 
+                    title="Change My Password"
+                    onClick={() => {
+                      setChangePasswordError('');
+                      setCurrentChangePassword('');
+                      setNewChangePassword('');
+                      setConfirmChangePassword('');
+                      setIsChangePasswordOpen(true);
+                    }}
+                  >
+                    <Key size={14} /> Password
+                  </button>
+                  <button
+                    className="btn btn-outline"
+                    style={{ padding: '0.5rem' }}
+                    title="Refresh Data"
+                    onClick={() => setRefreshTrigger(prev => prev + 1)}
+                  >
+                    <RefreshCw size={18} />
+                  </button>
+                </>
               )}
               {currentUser.role === 'super_admin' && (
                 <button className="btn btn-outline" style={{ padding: '0.5rem' }} onClick={() => setIsSettingsOpen(true)}>
@@ -1635,14 +1930,40 @@ export default function App() {
                       />
                     </div>
                     <div className="form-group">
-                      <label>Password</label>
-                      <input 
-                        type="password" 
-                        className="form-control" 
-                        autoComplete="new-password"
-                        value={loginPassword}
-                        onChange={(e) => setLoginPassword(e.target.value)}
-                      />
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                        <label style={{ margin: 0 }}>Password</label>
+                        <button 
+                          type="button" 
+                          onClick={() => {
+                            setForgotPasswordEmail(loginEmail || '');
+                            setForgotPasswordStatus('idle');
+                            setForgotPasswordMsg('');
+                            setGeneratedResetLink('');
+                            navigateTo('forgot-password');
+                          }}
+                          style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.8rem', padding: 0, fontWeight: 500 }}
+                        >
+                          Forgot Password?
+                        </button>
+                      </div>
+                      <div style={{ position: 'relative' }}>
+                        <input 
+                          type={showLoginPassword ? "text" : "password"} 
+                          className="form-control" 
+                          autoComplete="new-password"
+                          style={{ paddingRight: '2.5rem' }}
+                          value={loginPassword}
+                          onChange={(e) => setLoginPassword(e.target.value)}
+                        />
+                        <button 
+                          type="button" 
+                          onClick={() => setShowLoginPassword(!showLoginPassword)}
+                          style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+                          title={showLoginPassword ? "Hide password" : "Show password"}
+                        >
+                          {showLoginPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                        </button>
+                      </div>
                     </div>
                   </>
                 )}
@@ -1651,6 +1972,217 @@ export default function App() {
                   {loginRole === 'participant' ? 'Find My Registration' : 'Sign In'}
                 </button>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================= */}
+        {/* VIEW: FORGOT PASSWORD */}
+        {/* ======================================= */}
+        {currentRoute.path === 'forgot-password' && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+            <div className="card" style={{ width: '100%', maxWidth: '440px', padding: '2.5rem' }}>
+              <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+                <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'hsla(38, 92%, 50%, 0.12)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', marginBottom: '0.75rem' }}>
+                  <Key size={30} />
+                </div>
+                <h2>Reset Admin Password</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+                  Enter your registered administrator email to generate a secure reset link.
+                </p>
+              </div>
+
+              {forgotPasswordStatus === 'error' && (
+                <div style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', border: '1px solid hsla(350,80%,55%,0.2)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                  <span>{forgotPasswordMsg}</span>
+                </div>
+              )}
+
+              {forgotPasswordStatus === 'success' ? (
+                <div>
+                  <div style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', border: '1px solid hsla(142,70%,45%,0.2)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.88rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
+                    <CheckCircle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div>
+                      <strong>Account Verified!</strong>
+                      <div>{forgotPasswordMsg}</div>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>Password Reset Link (Valid for 1 hour)</label>
+                    <div style={{ display: 'flex', gap: '0.5rem' }}>
+                      <input 
+                        type="text" 
+                        readOnly 
+                        className="form-control" 
+                        value={generatedResetLink} 
+                        style={{ fontFamily: 'monospace', fontSize: '0.8rem', backgroundColor: 'var(--bg)' }}
+                        onClick={(e) => e.target.select()}
+                      />
+                      <button 
+                        type="button" 
+                        className="btn btn-outline" 
+                        style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                        onClick={() => {
+                          navigator.clipboard.writeText(generatedResetLink);
+                          setCopiedResetLink(true);
+                          setTimeout(() => setCopiedResetLink(false), 2500);
+                        }}
+                      >
+                        {copiedResetLink ? <CheckCircle size={15} color="var(--success)" /> : <Copy size={15} />}
+                        {copiedResetLink ? 'Copied!' : 'Copy'}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginTop: '1.5rem' }}>
+                    <button 
+                      type="button" 
+                      className="btn btn-primary" 
+                      style={{ width: '100%', padding: '0.75rem' }}
+                      onClick={() => {
+                        const hashPart = generatedResetLink.split('#')[1] || '';
+                        window.location.hash = hashPart;
+                      }}
+                    >
+                      Open Password Reset Screen Now
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn btn-outline" 
+                      style={{ width: '100%' }}
+                      onClick={() => navigateTo('login')}
+                    >
+                      Return to Sign In
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleForgotPasswordSubmit}>
+                  <div className="form-group">
+                    <label>Registered Admin Email Address</label>
+                    <input 
+                      type="email" 
+                      required 
+                      className="form-control" 
+                      placeholder="e.g. admin@yatramanage.com"
+                      value={forgotPasswordEmail}
+                      onChange={(e) => setForgotPasswordEmail(e.target.value)}
+                    />
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
+                    Generate Password Reset Link
+                  </button>
+
+                  <div style={{ textAlign: 'center', marginTop: '1.25rem' }}>
+                    <button 
+                      type="button" 
+                      onClick={() => navigateTo('login')}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                      ← Back to Sign In
+                    </button>
+                  </div>
+                </form>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* ======================================= */}
+        {/* VIEW: RESET PASSWORD FORM */}
+        {/* ======================================= */}
+        {currentRoute.path === 'reset-password' && (
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
+            <div className="card" style={{ width: '100%', maxWidth: '440px', padding: '2.5rem' }}>
+              <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
+                <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'hsla(38, 92%, 50%, 0.12)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', marginBottom: '0.75rem' }}>
+                  <ShieldCheck size={30} />
+                </div>
+                <h2>Create New Password</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>
+                  {resetTokenUser ? `Setting up secure password for ${resetTokenUser.name || resetTokenUser.email}` : 'Secure Password Recovery'}
+                </p>
+              </div>
+
+              {resetTokenStatus === 'invalid' ? (
+                <div style={{ textAlign: 'center' }}>
+                  <div style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', border: '1px solid hsla(350,80%,55%,0.2)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem', fontSize: '0.9rem' }}>
+                    <AlertTriangle size={24} style={{ margin: '0 auto 0.5rem', display: 'block' }} />
+                    <strong>Invalid or Expired Reset Link</strong>
+                    <div style={{ marginTop: '0.25rem', fontSize: '0.82rem' }}>This password reset link is invalid or has expired (links expire after 1 hour). Please request a new one.</div>
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                    <button type="button" className="btn btn-primary" onClick={() => navigateTo('forgot-password')} style={{ width: '100%' }}>
+                      Request New Reset Link
+                    </button>
+                    <button type="button" className="btn btn-outline" onClick={() => navigateTo('login')} style={{ width: '100%' }}>
+                      Back to Sign In
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <form onSubmit={handleResetPasswordSubmit}>
+                  {resetPasswordError && (
+                    <div style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', border: '1px solid hsla(350,80%,55%,0.2)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                      <span>{resetPasswordError}</span>
+                    </div>
+                  )}
+
+                  <div className="form-group">
+                    <label>New Password</label>
+                    <div style={{ position: 'relative' }}>
+                      <input 
+                        type={showResetPassword ? "text" : "password"} 
+                        required
+                        className="form-control" 
+                        autoComplete="new-password"
+                        style={{ paddingRight: '2.5rem' }}
+                        placeholder="At least 6 characters"
+                        value={newResetPassword}
+                        onChange={(e) => setNewResetPassword(e.target.value)}
+                      />
+                      <button 
+                        type="button" 
+                        onClick={() => setShowResetPassword(!showResetPassword)}
+                        style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0, display: 'flex', alignItems: 'center' }}
+                      >
+                        {showResetPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label>Confirm New Password</label>
+                    <input 
+                      type={showResetPassword ? "text" : "password"} 
+                      required
+                      className="form-control" 
+                      autoComplete="new-password"
+                      placeholder="Repeat your new password"
+                      value={confirmResetPassword}
+                      onChange={(e) => setConfirmResetPassword(e.target.value)}
+                    />
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
+                    Save Password & Sign In
+                  </button>
+
+                  <div style={{ textAlign: 'center', marginTop: '1.25rem' }}>
+                    <button 
+                      type="button" 
+                      onClick={() => navigateTo('login')}
+                      style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '0.85rem' }}
+                    >
+                      ← Cancel and Return to Sign In
+                    </button>
+                  </div>
+                </form>
+              )}
             </div>
           </div>
         )}
@@ -6297,19 +6829,102 @@ export default function App() {
 
             <div style={{ marginBottom: '1rem' }}>
               <h3>Manage Admin Access</h3>
-              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Invite secondary administrators who can manage yatras, verify payments, and export reports.</p>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Invite secondary administrators with temporary passwords. They will be required to create their own password on first login.</p>
             </div>
+
+            {/* Created Admin Credentials Banner */}
+            {createdAdminSuccess && (
+              <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid hsla(142,70%,45%,0.3)', borderRadius: 'var(--radius-sm)', padding: '1rem', marginBottom: '1.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: 'var(--success)', fontWeight: 600 }}>
+                    <ShieldCheck size={18} />
+                    <span>Administrator Account Ready</span>
+                  </div>
+                  <button 
+                    type="button" 
+                    onClick={() => setCreatedAdminSuccess(null)}
+                    style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', fontSize: '1.1rem' }}
+                  >×</button>
+                </div>
+                <div style={{ fontSize: '0.85rem', marginBottom: '0.75rem', color: 'var(--text-main)' }}>
+                  Share these temporary credentials with <strong>{createdAdminSuccess.name}</strong>. They will be prompted to set their own secret password when logging in:
+                </div>
+                <div style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.75rem', fontFamily: 'monospace', fontSize: '0.82rem', marginBottom: '0.75rem' }}>
+                  <div><strong>Email:</strong> {createdAdminSuccess.email}</div>
+                  <div><strong>Temporary Password:</strong> <span style={{ color: 'var(--primary)', fontWeight: 700 }}>{createdAdminSuccess.password}</span></div>
+                  <div><strong>Requirement:</strong> Forced password change on first login</div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <button 
+                    type="button" 
+                    className="btn btn-primary" 
+                    style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem' }}
+                    onClick={() => {
+                      const text = `Hare Krishna ${createdAdminSuccess.name},\n\nYou have been added as an Administrator for Spiritual Yatra Management System.\n\nLogin URL: ${createdAdminSuccess.loginUrl}\nEmail: ${createdAdminSuccess.email}\nTemporary Password: ${createdAdminSuccess.password}\n\n*Note: You will be prompted to choose your personal secret password on your first login.*`;
+                      navigator.clipboard.writeText(text);
+                      setCopiedAdminCreds(true);
+                      setTimeout(() => setCopiedAdminCreds(false), 2500);
+                    }}
+                  >
+                    {copiedAdminCreds ? <CheckCircle size={14} /> : <Copy size={14} />}
+                    {copiedAdminCreds ? 'Copied Invitation!' : 'Copy Credentials'}
+                  </button>
+                  {createdAdminSuccess.phone && (
+                    <a 
+                      href={`https://wa.me/91${createdAdminSuccess.phone.replace(/[^0-9]/g, '').slice(-10)}?text=${encodeURIComponent(`Hare Krishna ${createdAdminSuccess.name},\n\nYou have been added as an Administrator for Spiritual Yatra Management System.\n\nLogin URL: ${createdAdminSuccess.loginUrl}\nEmail: ${createdAdminSuccess.email}\nTemporary Password: ${createdAdminSuccess.password}\n\n*Note: You will be prompted to choose your personal secret password on your first login.*`)}`}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="btn btn-outline" 
+                      style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem', display: 'flex', alignItems: 'center', gap: '0.35rem', borderColor: '#25D366', color: '#25D366' }}
+                    >
+                      <MessageSquare size={14} /> Share via WhatsApp
+                    </a>
+                  )}
+                </div>
+              </div>
+            )}
             
             <div style={{ marginBottom: '1.5rem' }}>
+              <strong style={{ fontSize: '0.88rem', display: 'block', marginBottom: '0.5rem' }}>Configured Administrators:</strong>
               {systemUsers.filter(u => u.role === 'admin').map(user => (
                 <div key={user.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.75rem', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', marginBottom: '0.5rem', border: '1px solid var(--border)' }}>
                   <div>
-                    <strong>{user.email}</strong>
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Role: Admin</div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <strong>{user.name || user.email}</strong>
+                      {user.mustChangePassword ? (
+                        <span className="badge" style={{ backgroundColor: 'var(--warning-light)', color: 'var(--warning)', fontSize: '0.7rem' }}>
+                          Pending 1st Login Setup
+                        </span>
+                      ) : (
+                        <span className="badge" style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', fontSize: '0.7rem' }}>
+                          Password Active
+                        </span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                      {user.email} {user.phone && `• +91 ${user.phone}`}
+                    </div>
                   </div>
-                  <button className="btn btn-danger btn-icon" onClick={() => handleDeleteAdmin(user.id)}>
-                    <Trash2 size={16} />
-                  </button>
+                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                    <button 
+                      type="button" 
+                      className="btn btn-outline" 
+                      style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                      title="Reset Admin Password to New Temporary Password"
+                      onClick={() => handleResetAdminPassword(user)}
+                    >
+                      <RefreshCw size={13} /> Reset Pass
+                    </button>
+                    <button 
+                      type="button" 
+                      className="btn btn-danger btn-icon" 
+                      style={{ padding: '0.35rem' }}
+                      title="Delete Admin"
+                      onClick={() => handleDeleteAdmin(user.id)}
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
                 </div>
               ))}
               {systemUsers.filter(u => u.role === 'admin').length === 0 && (
@@ -6319,13 +6934,233 @@ export default function App() {
               )}
             </div>
 
-            <form onSubmit={handleAddAdmin}>
-              <div className="form-group" style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start' }}>
-                <input type="email" required className="form-control" placeholder="Enter new admin email..." value={newAdminEmail} onChange={(e) => setNewAdminEmail(e.target.value)} style={{ flex: 1 }} />
-                <button type="submit" className="btn btn-outline">Add Admin</button>
+            <form onSubmit={handleAddAdmin} style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+              <strong style={{ fontSize: '0.88rem', display: 'block', marginBottom: '0.75rem' }}>Invite New Administrator</strong>
+              
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Full Name</label>
+                  <input 
+                    type="text" 
+                    required 
+                    className="form-control" 
+                    placeholder="e.g. Ramesh Prabhu" 
+                    value={newAdminName} 
+                    onChange={(e) => setNewAdminName(e.target.value)} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Email Address</label>
+                  <input 
+                    type="email" 
+                    required 
+                    className="form-control" 
+                    placeholder="ramesh@yatra.com" 
+                    value={newAdminEmail} 
+                    onChange={(e) => setNewAdminEmail(e.target.value)} 
+                  />
+                </div>
               </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Mobile Number (for WhatsApp invite)</label>
+                  <input 
+                    type="tel" 
+                    className="form-control" 
+                    placeholder="9876543210" 
+                    value={newAdminPhone} 
+                    onChange={(e) => setNewAdminPhone(e.target.value)} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>Initial Temporary Password</label>
+                  <div style={{ display: 'flex', gap: '0.35rem' }}>
+                    <input 
+                      type="text" 
+                      required 
+                      className="form-control" 
+                      value={newAdminTempPassword} 
+                      onChange={(e) => setNewAdminTempPassword(e.target.value)} 
+                    />
+                    <button 
+                      type="button" 
+                      className="btn btn-outline" 
+                      style={{ flexShrink: 0, padding: '0.45rem 0.6rem' }}
+                      title="Generate random password"
+                      onClick={() => setNewAdminTempPassword('Yatra@' + Math.floor(1000 + Math.random() * 9000))}
+                    >
+                      <RefreshCw size={14} />
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>
+                ℹ️ The admin will be prompted to replace this temporary password with their own secret password when they first log in.
+              </div>
+
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', padding: '0.65rem' }}>
+                <Plus size={16} /> Add Administrator
+              </button>
             </form>
 
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: FORCED FIRST LOGIN PASSWORD CHANGE */}
+      {isFirstLoginOpen && firstLoginUser && (
+        <div className="modal-overlay" style={{ zIndex: 9999 }}>
+          <div className="modal-content" style={{ maxWidth: '440px' }}>
+            <div style={{ textAlign: 'center', marginBottom: '1.5rem' }}>
+              <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'hsla(38, 92%, 50%, 0.12)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', marginBottom: '0.75rem' }}>
+                <Key size={30} />
+              </div>
+              <h3>Set Your Password</h3>
+              <p style={{ fontSize: '0.88rem', color: 'var(--text-muted)' }}>
+                Hare Krishna, <strong>{firstLoginUser.name || firstLoginUser.email}</strong>!<br />
+                As a new administrator, please choose your personal secret password before entering the Yatra Command Center.
+              </p>
+            </div>
+
+            {firstPasswordError && (
+              <div style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', border: '1px solid hsla(350,80%,55%,0.2)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                <span>{firstPasswordError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleFirstLoginPasswordChange}>
+              <div className="form-group">
+                <label>New Secret Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input 
+                    type={showFirstPassword ? "text" : "password"} 
+                    required 
+                    className="form-control" 
+                    placeholder="At least 6 characters"
+                    value={newFirstPassword} 
+                    onChange={(e) => setNewFirstPassword(e.target.value)} 
+                    style={{ paddingRight: '2.5rem' }}
+                  />
+                  <button 
+                    type="button" 
+                    onClick={() => setShowFirstPassword(!showFirstPassword)} 
+                    style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }}
+                  >
+                    {showFirstPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Confirm Secret Password</label>
+                <input 
+                  type={showFirstPassword ? "text" : "password"} 
+                  required 
+                  className="form-control" 
+                  placeholder="Repeat new password"
+                  value={confirmFirstPassword} 
+                  onChange={(e) => setConfirmFirstPassword(e.target.value)} 
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1, padding: '0.75rem' }}>
+                  Save & Enter Dashboard
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-outline" 
+                  onClick={() => {
+                    setIsFirstLoginOpen(false);
+                    setFirstLoginUser(null);
+                    setLoginPassword('');
+                  }}
+                >
+                  Cancel
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: SELF CHANGE PASSWORD ANYTIME */}
+      {isChangePasswordOpen && currentUser && (
+        <div className="modal-overlay">
+          <div className="modal-content" style={{ maxWidth: '440px' }}>
+            <div className="modal-header">
+              <h3 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Key size={20} color="var(--primary)" /> Change My Password
+              </h3>
+              <button className="modal-close" onClick={() => setIsChangePasswordOpen(false)}>×</button>
+            </div>
+
+            {changePasswordError && (
+              <div style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', border: '1px solid hsla(350,80%,55%,0.2)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                <AlertTriangle size={16} style={{ flexShrink: 0 }} />
+                <span>{changePasswordError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleChangePassword}>
+              <div className="form-group">
+                <label>Current Password</label>
+                <input 
+                  type="password" 
+                  required 
+                  className="form-control" 
+                  placeholder="Enter current password"
+                  value={currentChangePassword} 
+                  onChange={(e) => setCurrentChangePassword(e.target.value)} 
+                />
+              </div>
+
+              <div className="form-group">
+                <label>New Password</label>
+                <div style={{ position: 'relative' }}>
+                  <input 
+                    type={showChangePassword ? "text" : "password"} 
+                    required 
+                    className="form-control" 
+                    placeholder="At least 6 characters"
+                    value={newChangePassword} 
+                    onChange={(e) => setNewChangePassword(e.target.value)} 
+                    style={{ paddingRight: '2.5rem' }}
+                  />
+                  <button 
+                    type="button" 
+                    onClick={() => setShowChangePassword(!showChangePassword)} 
+                    style={{ position: 'absolute', right: '0.75rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', padding: 0 }}
+                  >
+                    {showChangePassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Confirm New Password</label>
+                <input 
+                  type={showChangePassword ? "text" : "password"} 
+                  required 
+                  className="form-control" 
+                  placeholder="Repeat new password"
+                  value={confirmChangePassword} 
+                  onChange={(e) => setConfirmChangePassword(e.target.value)} 
+                />
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.5rem' }}>
+                <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
+                  Update Password
+                </button>
+                <button type="button" className="btn btn-outline" onClick={() => setIsChangePasswordOpen(false)}>
+                  Cancel
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
