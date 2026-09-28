@@ -67,7 +67,7 @@ const DEMO_DATA = {
       notes: 'Good rooms, requires auto-rickshaw to temple.',
       contacted: true,
       shortlisted: true,
-      finalSelected: false,
+      finalSelected: true,
       quoteImageUrl: ''
     }
   ],
@@ -432,7 +432,11 @@ const DEMO_DATA = {
     { id: 'rm_202', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '202', roomType: 'Family Suite', capacity: 4, floor: '1st Floor', extraMattressCost: 500 },
     { id: 'rm_203', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '203', roomType: 'Triple Bed', capacity: 3, floor: '1st Floor', extraMattressCost: 500 },
     { id: 'rm_204', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '204', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', extraMattressCost: 500 },
-    { id: 'rm_205', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '205', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', extraMattressCost: 500 }
+    { id: 'rm_205', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '205', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', extraMattressCost: 500 },
+    { id: 'rm_kb_101', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '101', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', extraMattressCost: 400 },
+    { id: 'rm_kb_102', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '102', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', extraMattressCost: 400 },
+    { id: 'rm_kb_201', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '201', roomType: 'Triple Bed', capacity: 3, floor: '1st Floor', extraMattressCost: 400 },
+    { id: 'rm_kb_202', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '202', roomType: 'Family Suite', capacity: 4, floor: '1st Floor', extraMattressCost: 400 }
   ]
 };
 

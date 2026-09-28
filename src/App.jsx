@@ -71,7 +71,22 @@ export default function App() {
   const [newBus, setNewBus] = useState({ name: '', busNumber: '', route: '', capacity: 35, coordinatorName: '', coordinatorPhone: '', driverName: '', driverPhone: '', departureTime: '06:00 AM', boardingPoint: '', notes: '' });
   const [isAddRoomOpen, setIsAddRoomOpen] = useState(false);
   const [editingRoomId, setEditingRoomId] = useState(null);
-  const [newRoom, setNewRoom] = useState({ roomNumber: '', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', hotelName: '', extraMattressCost: 500, notes: '' });
+  const [selectedHotelFilter, setSelectedHotelFilter] = useState('all');
+  const [newRoom, setNewRoom] = useState({ 
+    roomNumber: '', 
+    roomType: 'Double Bed', 
+    capacity: 2, 
+    floor: 'Ground Floor', 
+    hotelName: '', 
+    hotelId: '', 
+    extraMattressCost: 500, 
+    notes: '',
+    isCustomHotel: false,
+    customHotelName: '',
+    customHotelAddress: '',
+    customHotelContact: '',
+    customHotelPhone: ''
+  });
 
   // Form states for adding items
   const defaultDeadline = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
@@ -561,17 +576,58 @@ export default function App() {
   // --- Hotel Room Logistics Handlers ---
   const handleAddRoom = async (e) => {
     e.preventDefault();
-    const finalSelectedHotel = hotels.find(h => h.finalSelected);
-    const hotelName = newRoom.hotelName || (finalSelectedHotel ? finalSelectedHotel.name : (hotels[0]?.name || 'Primary Hotel'));
+    let hotelName = newRoom.hotelName;
+    let hotelId = newRoom.hotelId;
+
+    if (newRoom.isCustomHotel && newRoom.customHotelName) {
+      hotelName = newRoom.customHotelName;
+      // Auto-register this hotel in hotels collection if not already existing
+      const existing = hotels.find(h => h.name.toLowerCase() === hotelName.toLowerCase());
+      if (existing) {
+        hotelId = existing.id;
+      } else {
+        hotelId = 'h_' + Math.random().toString(36).substring(2, 9);
+        await db.addHotel({
+          id: hotelId,
+          yatraId: selectedYatra.id,
+          name: hotelName,
+          address: newRoom.customHotelAddress || selectedYatra.destination,
+          gmapsLink: '',
+          bookingLink: '',
+          contactPerson: newRoom.customHotelContact || '',
+          phone: newRoom.customHotelPhone || '',
+          roomsAvailable: 10,
+          roomPrice: 2000,
+          extraMattressCost: newRoom.extraMattressCost || 500,
+          distanceFromTemple: '',
+          notes: 'Added from Room Inventory',
+          contacted: true,
+          shortlisted: true,
+          finalSelected: true,
+          quoteImageUrl: ''
+        });
+      }
+    } else {
+      const match = hotels.find(h => h.id === hotelId || h.name === hotelName);
+      if (match) {
+        hotelId = match.id;
+        hotelName = match.name;
+      } else if (!hotelName) {
+        const firstBooked = hotels.find(h => h.finalSelected) || hotels[0];
+        hotelName = firstBooked ? firstBooked.name : 'Primary Hotel';
+        hotelId = firstBooked ? firstBooked.id : '';
+      }
+    }
+
     if (editingRoomId) {
-      await db.updateRoom(editingRoomId, { ...newRoom, hotelName });
+      await db.updateRoom(editingRoomId, { ...newRoom, hotelName, hotelId });
     } else {
       const id = 'rm_' + Math.random().toString(36).substring(2, 9);
-      await db.addRoom({ ...newRoom, id, yatraId: selectedYatra.id, hotelName });
+      await db.addRoom({ ...newRoom, id, yatraId: selectedYatra.id, hotelName, hotelId });
     }
     setIsAddRoomOpen(false);
     setEditingRoomId(null);
-    setNewRoom({ roomNumber: '', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', hotelName: '', extraMattressCost: 500, notes: '' });
+    setNewRoom({ roomNumber: '', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', hotelName: '', hotelId: '', extraMattressCost: 500, notes: '', isCustomHotel: false, customHotelName: '', customHotelAddress: '', customHotelContact: '', customHotelPhone: '' });
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -580,7 +636,7 @@ export default function App() {
       await db.deleteRoom(roomId);
       const affected = participants.filter(p => p.roomId === roomId);
       for (const p of affected) {
-        await db.updateParticipant(p.id, { roomId: '', roomNumber: '', hotelName: '' });
+        await db.updateParticipant(p.id, { roomId: '', roomNumber: '', hotelName: '', hotelId: '' });
       }
       setRefreshTrigger(prev => prev + 1);
     }
@@ -588,14 +644,15 @@ export default function App() {
 
   const handleReassignRoom = async (participantId, roomId) => {
     if (!roomId) {
-      await db.updateParticipant(participantId, { roomId: '', roomNumber: '', hotelName: '' });
+      await db.updateParticipant(participantId, { roomId: '', roomNumber: '', hotelName: '', hotelId: '' });
     } else {
       const rm = rooms.find(r => r.id === roomId);
       if (rm) {
         await db.updateParticipant(participantId, {
           roomId: rm.id,
           roomNumber: rm.roomNumber,
-          hotelName: rm.hotelName
+          hotelName: rm.hotelName,
+          hotelId: rm.hotelId || ''
         });
       }
     }
@@ -604,7 +661,7 @@ export default function App() {
 
   const autoAllocateRooms = async () => {
     if (!rooms || rooms.length === 0) {
-      alert("Please add room inventory for the hotel before running auto-allocation.");
+      alert("Please add room inventory for your booked hotels before running auto-allocation.");
       return;
     }
 
@@ -626,7 +683,7 @@ export default function App() {
     const updates = [];
     let unallocatedCount = 0;
 
-    // 1. Allocate Families first into dedicated rooms
+    // 1. Allocate Families first into dedicated rooms across booked hotels
     for (const fam of families) {
       const famSize = (fam.familyMembers && fam.familyMembers.length) || fam.membersCount || 1;
       
@@ -642,7 +699,8 @@ export default function App() {
           id: fam.id,
           roomId: chosen.id,
           roomNumber: chosen.roomNumber,
-          hotelName: chosen.hotelName
+          hotelName: chosen.hotelName,
+          hotelId: chosen.hotelId || ''
         });
       } else {
         const anyRoom = roomTracker.find(r => r.remaining >= famSize);
@@ -653,7 +711,8 @@ export default function App() {
             id: fam.id,
             roomId: anyRoom.id,
             roomNumber: anyRoom.roomNumber,
-            hotelName: anyRoom.hotelName
+            hotelName: anyRoom.hotelName,
+            hotelId: anyRoom.hotelId || ''
           });
         } else {
           unallocatedCount++;
@@ -661,13 +720,14 @@ export default function App() {
             id: fam.id,
             roomId: '',
             roomNumber: '',
-            hotelName: ''
+            hotelName: '',
+            hotelId: ''
           });
         }
       }
     }
 
-    // 2. Allocate Individuals into remaining rooms
+    // 2. Allocate Individuals into remaining rooms across booked hotels
     for (const ind of individuals) {
       const suitable = roomTracker.find(r => r.remaining > 0);
       if (suitable) {
@@ -677,7 +737,8 @@ export default function App() {
           id: ind.id,
           roomId: suitable.id,
           roomNumber: suitable.roomNumber,
-          hotelName: suitable.hotelName
+          hotelName: suitable.hotelName,
+          hotelId: suitable.hotelId || ''
         });
       } else {
         unallocatedCount++;
@@ -685,7 +746,8 @@ export default function App() {
           id: ind.id,
           roomId: '',
           roomNumber: '',
-          hotelName: ''
+          hotelName: '',
+          hotelId: ''
         });
       }
     }
@@ -694,7 +756,8 @@ export default function App() {
       await db.updateParticipant(u.id, {
         roomId: u.roomId,
         roomNumber: u.roomNumber,
-        hotelName: u.hotelName
+        hotelName: u.hotelName,
+        hotelId: u.hotelId
       });
     }
 
@@ -702,9 +765,9 @@ export default function App() {
     setRefreshTrigger(prev => prev + 1);
 
     if (unallocatedCount > 0) {
-      alert(`Room allocation completed! ${updates.length - unallocatedCount} devotees placed. Notice: ${unallocatedCount} devotees could not be accommodated. Please add more rooms.`);
+      alert(`Room allocation completed! ${updates.length - unallocatedCount} devotees placed across booked hotels. Notice: ${unallocatedCount} devotees could not be accommodated. Please add more rooms across your booked hotels or guesthouses.`);
     } else {
-      alert(`🎉 Room allocation successful! All ${devotees.length} devotees have been allocated rooms. Review assignments below and click 'Approve & Publish' when ready.`);
+      alert(`🎉 Room allocation successful! All ${devotees.length} devotees have been allocated rooms across your booked accommodations. Review assignments below and click 'Approve & Publish' when ready.`);
     }
   };
 
@@ -715,8 +778,9 @@ export default function App() {
     const memberNames = participant.familyMembers && participant.familyMembers.length > 0 
       ? participant.familyMembers.map(m => m.name).join(', ') 
       : participant.name;
+    const hotelObj = hotel || hotels.find(h => h.id === room.hotelId || h.name === room.hotelName) || {};
 
-    const text = `🏨 *Hare Krishna ${participant.name}!* \n\nHere are your official *Hotel Room & Stay Details* for *${selectedYatra.name}*:\n\n*Hotel:* ${hotel?.name || room.hotelName || 'Yatra Hotel'}\n*Room Number:* ${room.roomNumber} (${room.roomType || 'Standard Room'}, ${room.floor || 'Floor 1'})\n*Allocated For:* ${memberNames}\n*Hotel Address:* ${hotel?.address || selectedYatra.destination}\n${hotel?.gmapsLink ? `*Google Maps Link:* ${hotel.gmapsLink}\n` : ''}👤 *Hotel Contact:* ${hotel?.contactPerson || 'Reception'} (${hotel?.phone || ''})\n\nYou can also check your room details anytime in your devotee portal:\n👉 ${window.location.href.split('#')[0]}#/login\n\nHaribol! 🙏`;
+    const text = `🏨 *Hare Krishna ${participant.name}!* \n\nHere are your official *Hotel Room & Stay Details* for *${selectedYatra.name}*:\n\n*Hotel / Guesthouse:* ${hotelObj.name || room.hotelName || 'Yatra Hotel'}\n*Room Number:* ${room.roomNumber} (${room.roomType || 'Standard Room'}, ${room.floor || 'Floor 1'})\n*Allocated For:* ${memberNames}\n*Hotel Address:* ${hotelObj.address || selectedYatra.destination}\n${hotelObj.gmapsLink ? `*Google Maps Link:* ${hotelObj.gmapsLink}\n` : ''}👤 *Hotel Reception/Contact:* ${hotelObj.contactPerson || 'Reception'} (${hotelObj.phone || ''})\n\nYou can also check your room pass anytime in your devotee portal:\n👉 ${window.location.href.split('#')[0]}#/login\n\nHaribol! 🙏`;
 
     window.open(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(text)}`, '_blank');
   };
@@ -1593,7 +1657,7 @@ export default function App() {
               // Logistics & Accommodations
               const organisedTravelCount = participants.filter(p => p.travelMode === 'organised').reduce((s, p) => s + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
               const selfTravelCount = participants.filter(p => p.travelMode === 'self').reduce((s, p) => s + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
-              const selectedHotel = hotels.find(h => h.finalSelected);
+              const bookedHotels = hotels.filter(h => h.finalSelected);
 
               return (
                 <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
@@ -1816,24 +1880,35 @@ export default function App() {
 
                     {/* HOTEL RESEARCH STATUS */}
                     <div className="card">
-                      <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                        <Hotel size={16} style={{ color: 'var(--primary)' }} /> Accommodations
-                      </h4>
-                      {selectedHotel ? (
-                        <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid hsla(142,70%,45%,0.3)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ Final Selected Hotel</span>
-                          <div style={{ fontWeight: 'bold', fontSize: '0.95rem', marginTop: '0.2rem' }}>{selectedHotel.name}</div>
-                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>📍 {selectedHotel.address}</div>
-                          <div style={{ fontSize: '0.78rem', marginTop: '0.35rem' }}>
-                            <strong>📞 Contact:</strong> {selectedHotel.contactPerson} ({selectedHotel.phone})
-                          </div>
-                          <div style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>
-                            <strong>Rooms:</strong> {selectedHotel.roomsAvailable} | <strong>Price:</strong> ₹{selectedHotel.roomPrice}/night
-                          </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                        <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', margin: 0 }}>
+                          <Hotel size={16} style={{ color: 'var(--primary)' }} /> Accommodations
+                        </h4>
+                        {bookedHotels.length > 0 && (
+                          <span className="badge badge-confirmed" style={{ fontSize: '0.75rem' }}>
+                            {bookedHotels.length} Booked
+                          </span>
+                        )}
+                      </div>
+                      {bookedHotels.length > 0 ? (
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                          {bookedHotels.map(h => (
+                            <div key={h.id} style={{ backgroundColor: 'var(--success-light)', border: '1px solid hsla(142,70%,45%,0.3)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
+                              <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ Booked for Yatra</span>
+                              <div style={{ fontWeight: 'bold', fontSize: '0.95rem', marginTop: '0.2rem' }}>{h.name}</div>
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>📍 {h.address}</div>
+                              <div style={{ fontSize: '0.78rem', marginTop: '0.35rem' }}>
+                                <strong>📞 Contact:</strong> {h.contactPerson} ({h.phone})
+                              </div>
+                              <div style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>
+                                <strong>Rooms:</strong> {h.roomsAvailable} | <strong>Price:</strong> ₹{h.roomPrice}/night
+                              </div>
+                            </div>
+                          ))}
                         </div>
                       ) : (
                         <div style={{ backgroundColor: 'var(--bg)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
-                          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0 0 0.5rem 0' }}>No final hotel selected yet.</p>
+                          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0 0 0.5rem 0' }}>No hotels marked as booked yet.</p>
                           <button className="btn btn-outline" style={{ fontSize: '0.78rem', padding: '0.35rem 0.6rem' }} onClick={() => setActiveTab('hotels')}>
                             View {hotels.length} Evaluated Hotels
                           </button>
@@ -2258,271 +2333,452 @@ export default function App() {
             {/* ======================================= */}
             {/* TAB: HOTEL ROOM ALLOCATION (STAGE 3) */}
             {/* ======================================= */}
-            {activeTab === 'room_allocation' && (
-              <div>
-                {/* Header & Actions */}
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
-                  <div>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                      <h3 style={{ margin: 0 }}>🏨 Hotel Room Allocation & Key Management</h3>
-                      <span className={`badge ${roomAllocationApproved ? 'badge-confirmed' : 'badge-interested'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                        {roomAllocationApproved ? <Check size={13} /> : <AlertTriangle size={13} />}
-                        {roomAllocationApproved ? 'Room Layout Approved' : 'Draft Room Layout'}
-                      </span>
+            {activeTab === 'room_allocation' && (() => {
+              const bookedHotels = hotels.filter(h => h.finalSelected);
+              const distinctHotels = Array.from(new Set([
+                ...bookedHotels.map(h => h.name),
+                ...rooms.map(r => r.hotelName),
+                ...hotels.map(h => h.name)
+              ].filter(Boolean)));
+
+              const confirmedDevotees = participants.filter(p => p.status === 'confirmed' || p.status === 'interested');
+              const totalPax = confirmedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+              const totalBedCapacity = rooms.reduce((sum, r) => sum + (parseInt(r.capacity) || 0), 0);
+              const allocatedDevotees = confirmedDevotees.filter(p => p.roomId);
+              const totalAllocatedPax = allocatedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+
+              const displayedRooms = selectedHotelFilter === 'all' 
+                ? rooms 
+                : rooms.filter(r => r.hotelName === selectedHotelFilter);
+
+              return (
+                <div>
+                  {/* Header & Actions */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.5rem' }}>
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                        <h3 style={{ margin: 0 }}>🏨 Hotel & Guesthouse Room Allocation</h3>
+                        <span className={`badge ${roomAllocationApproved ? 'badge-confirmed' : 'badge-interested'}`} style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                          {roomAllocationApproved ? <Check size={13} /> : <AlertTriangle size={13} />}
+                          {roomAllocationApproved ? 'Room Layout Approved' : 'Draft Room Layout'}
+                        </span>
+                      </div>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                        Stage 3 Confirmed Logistics: Manage inventory across multiple booked hotels & guesthouses. Auto-allocate families into dedicated rooms and individuals into shared twin/triple rooms.
+                      </p>
                     </div>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                      Stage 3 Logistics: Input room inventory, auto-allocate families into dedicated rooms and individuals into comfortable shared rooms, and send WhatsApp room check-in passes.
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <button 
-                      className="btn btn-primary" 
-                      onClick={() => {
-                        setEditingRoomId(null);
-                        const primaryHotel = hotels.find(h => h.finalSelected) || hotels[0];
-                        setNewRoom({ roomNumber: '', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', hotelName: primaryHotel ? primaryHotel.name : 'Primary Hotel', extraMattressCost: 500, notes: '' });
-                        setIsAddRoomOpen(true);
-                      }}
-                    >
-                      <Plus size={16} /> Add Room Inventory
-                    </button>
-                    <button 
-                      className="btn btn-outline" 
-                      style={{ borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
-                      onClick={autoAllocateRooms}
-                      title="Allocates dedicated family rooms for families and pairs individuals into shared rooms"
-                    >
-                      <Shuffle size={16} /> Auto-Allocate Rooms
-                    </button>
-                    <button 
-                      className={`btn ${roomAllocationApproved ? 'btn-outline' : 'btn-primary'}`} 
-                      style={{ backgroundColor: roomAllocationApproved ? 'transparent' : 'var(--success)', borderColor: 'var(--success)', color: roomAllocationApproved ? 'var(--success)' : 'white' }}
-                      onClick={() => {
-                        setRoomAllocationApproved(true);
-                        alert("🎉 Hotel Room Allocation Approved & Published!\nDevotees can now view their official room pass in their Devotee Portal.");
-                      }}
-                    >
-                      <CheckCircle size={16} /> {roomAllocationApproved ? 'Layout Approved' : 'Approve & Publish'}
-                    </button>
-                  </div>
-                </div>
-
-                {/* KPI Stat Row */}
-                {(() => {
-                  const confirmedDevotees = participants.filter(p => p.status === 'confirmed' || p.status === 'interested');
-                  const totalPax = confirmedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
-                  const totalBedCapacity = rooms.reduce((sum, r) => sum + (parseInt(r.capacity) || 0), 0);
-                  const allocatedDevotees = confirmedDevotees.filter(p => p.roomId);
-                  const totalAllocatedPax = allocatedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
-
-                  return (
-                    <div className="grid-cols-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
-                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--primary)' }}>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Rooms Registered</span>
-                        <h3 style={{ margin: '0.25rem 0', color: 'var(--primary)' }}>{rooms.length} Rooms</h3>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Total {totalBedCapacity} bed slots</span>
-                      </div>
-                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--warning)' }}>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Devotees Requiring Stay</span>
-                        <h3 style={{ margin: '0.25rem 0', color: 'var(--warning)' }}>{totalPax} Devotees</h3>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Across {confirmedDevotees.length} bookings</span>
-                      </div>
-                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--success)' }}>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Allocated Devotees</span>
-                        <h3 style={{ margin: '0.25rem 0', color: 'var(--success)' }}>{totalAllocatedPax} Devotees</h3>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>In {rooms.filter(r => participants.some(p => p.roomId === r.id)).length} occupied rooms</span>
-                      </div>
-                      <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #8b5cf6' }}>
-                        <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Vacant Rooms</span>
-                        <h3 style={{ margin: '0.25rem 0', color: '#8b5cf6' }}>{rooms.filter(r => !participants.some(p => p.roomId === r.id)).length} Available</h3>
-                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ready for immediate check-in</span>
-                      </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button 
+                        className="btn btn-primary" 
+                        onClick={() => {
+                          setEditingRoomId(null);
+                          const defaultHotel = (selectedHotelFilter !== 'all' ? selectedHotelFilter : (bookedHotels[0]?.name || hotels[0]?.name)) || '';
+                          setNewRoom({ 
+                            roomNumber: '', 
+                            roomType: 'Double Bed', 
+                            capacity: 2, 
+                            floor: 'Ground Floor', 
+                            hotelName: defaultHotel, 
+                            hotelId: hotels.find(h => h.name === defaultHotel)?.id || '',
+                            extraMattressCost: 500, 
+                            notes: '',
+                            isCustomHotel: false,
+                            customHotelName: '',
+                            customHotelAddress: '',
+                            customHotelContact: '',
+                            customHotelPhone: ''
+                          });
+                          setIsAddRoomOpen(true);
+                        }}
+                      >
+                        <Plus size={16} /> Add Room Inventory
+                      </button>
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
+                        onClick={autoAllocateRooms}
+                        title="Intelligently places families together into dedicated rooms and pairs individuals across all booked hotels"
+                      >
+                        <Shuffle size={16} /> Auto-Allocate Rooms
+                      </button>
+                      <button 
+                        className={`btn ${roomAllocationApproved ? 'btn-outline' : 'btn-primary'}`} 
+                        style={{ backgroundColor: roomAllocationApproved ? 'transparent' : 'var(--success)', borderColor: 'var(--success)', color: roomAllocationApproved ? 'var(--success)' : 'white' }}
+                        onClick={() => {
+                          setRoomAllocationApproved(true);
+                          alert("🎉 Hotel Room Allocation Approved & Published!\nDevotees can now view their official room pass in their Devotee Portal.");
+                        }}
+                      >
+                        <CheckCircle size={16} /> {roomAllocationApproved ? 'Layout Approved' : 'Approve & Publish'}
+                      </button>
                     </div>
-                  );
-                })()}
-
-                {/* Rooms Grid */}
-                {rooms.length === 0 ? (
-                  <div className="card" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
-                    <Bed size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} />
-                    <h4>No Hotel Rooms Added Yet</h4>
-                    <p style={{ maxWidth: '480px', margin: '0.5rem auto 1.5rem' }}>
-                      Add your booked hotel room inventory (e.g. Room 101, 102, 201) and run auto-allocation to place families together into dedicated rooms.
-                    </p>
-                    <button className="btn btn-primary" onClick={() => {
-                      setEditingRoomId(null);
-                      const primaryHotel = hotels.find(h => h.finalSelected) || hotels[0];
-                      setNewRoom({ roomNumber: '101', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', hotelName: primaryHotel ? primaryHotel.name : 'Primary Hotel', extraMattressCost: 500, notes: '' });
-                      setIsAddRoomOpen(true);
-                    }}>
-                      <Plus size={16} /> Add First Room
-                    </button>
                   </div>
-                ) : (
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
-                    {rooms.map(room => {
-                      const occupants = participants.filter(p => p.roomId === room.id);
-                      const occupantPax = occupants.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
-                      const roomCap = parseInt(room.capacity) || 2;
-                      const isFull = occupantPax >= roomCap;
-                      const hotelObj = hotels.find(h => h.name === room.hotelName) || hotels[0];
 
+                  {/* Multi-Hotel Quick Filter Switcher */}
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '1.25rem', overflowX: 'auto', paddingBottom: '0.25rem' }}>
+                    <span style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>Filter Accommodations:</span>
+                    <button
+                      className={`btn ${selectedHotelFilter === 'all' ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', borderRadius: '20px', whiteSpace: 'nowrap' }}
+                      onClick={() => setSelectedHotelFilter('all')}
+                    >
+                      All Accommodations ({rooms.length} Rooms • {totalBedCapacity} Beds)
+                    </button>
+                    {distinctHotels.map(hName => {
+                      const hRooms = rooms.filter(r => r.hotelName === hName);
+                      const isBooked = hotels.some(h => h.name === hName && h.finalSelected);
                       return (
-                        <div key={room.id} className="card" style={{ padding: '1.25rem', border: isFull ? '1.5px solid var(--border)' : '1px solid var(--border)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
-                          <div>
-                            {/* Room Header */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
-                              <div>
-                                <h4 style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                                  <Bed size={16} color="var(--primary)" /> Room {room.roomNumber}
-                                </h4>
-                                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.15rem' }}>
-                                  {room.floor || 'Floor'} • {room.roomType || 'Standard'}
-                                </span>
-                              </div>
-                              <span className={`badge ${occupantPax === 0 ? 'badge-interested' : isFull ? 'badge-confirmed' : 'badge-warning'}`}>
-                                {occupantPax === 0 ? 'Vacant' : `${occupantPax} / ${roomCap} Beds`}
-                              </span>
-                            </div>
-
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.25rem 0 0.75rem' }}>
-                              🏨 {room.hotelName || 'Yatra Hotel'}
-                            </p>
-
-                            {/* Occupants */}
-                            <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', minHeight: '80px', marginBottom: '0.75rem' }}>
-                              <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '0.35rem' }}>
-                                Assigned Devotees:
-                              </span>
-                              {occupants.length === 0 ? (
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
-                                  No occupants assigned yet.
-                                </p>
-                              ) : (
-                                occupants.map(occ => {
-                                  const occPax = (occ.familyMembers && occ.familyMembers.length) || occ.membersCount || 1;
-                                  return (
-                                    <div key={occ.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', fontSize: '0.8rem' }}>
-                                      <div>
-                                        <strong>{occ.name}</strong> ({occPax} pax)
-                                        {occ.familyMembers && occ.familyMembers.length > 0 && (
-                                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                                            {occ.familyMembers.map(m => m.name).join(', ')}
-                                          </div>
-                                        )}
-                                      </div>
-                                      <div style={{ display: 'flex', gap: '0.25rem' }}>
-                                        <button 
-                                          className="btn btn-outline" 
-                                          style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem', borderColor: '#25D366', color: '#25D366' }}
-                                          onClick={() => sendRoomWhatsApp(occ, room, hotelObj)}
-                                          title="Send WhatsApp Room Pass"
-                                        >
-                                          <MessageSquare size={11} /> Pass
-                                        </button>
-                                        <button 
-                                          className="btn btn-outline" 
-                                          style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem', color: 'var(--danger)', borderColor: 'var(--border)' }}
-                                          onClick={() => handleReassignRoom(occ.id, '')}
-                                          title="Unassign from Room"
-                                        >
-                                          <X size={11} />
-                                        </button>
-                                      </div>
-                                    </div>
-                                  );
-                                })
-                              )}
-                            </div>
-                          </div>
-
-                          {/* Footer with Edit / Delete */}
-                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid var(--border)', fontSize: '0.75rem' }}>
-                            <span style={{ color: 'var(--text-muted)' }}>
-                              Extra mattress: ₹{room.extraMattressCost || 500}
-                            </span>
-                            <div style={{ display: 'flex', gap: '0.35rem' }}>
-                              <button 
-                                className="btn btn-outline" 
-                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
-                                onClick={() => {
-                                  setEditingRoomId(room.id);
-                                  setNewRoom({ ...room });
-                                  setIsAddRoomOpen(true);
-                                }}
-                              >
-                                <Edit2 size={12} /> Edit
-                              </button>
-                              <button 
-                                className="btn btn-outline" 
-                                style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: 'var(--danger)' }}
-                                onClick={() => handleDeleteRoom(room.id)}
-                              >
-                                <Trash2 size={12} />
-                              </button>
-                            </div>
-                          </div>
-                        </div>
+                        <button
+                          key={hName}
+                          className={`btn ${selectedHotelFilter === hName ? 'btn-primary' : 'btn-outline'}`}
+                          style={{ 
+                            fontSize: '0.8rem', 
+                            padding: '0.35rem 0.75rem', 
+                            borderRadius: '20px', 
+                            whiteSpace: 'nowrap',
+                            borderWidth: isBooked ? '1.5px' : '1px'
+                          }}
+                          onClick={() => setSelectedHotelFilter(hName)}
+                        >
+                          🏨 {hName} ({hRooms.length} Rooms){isBooked ? ' ✓' : ''}
+                        </button>
                       );
                     })}
                   </div>
-                )}
 
-                {/* Unallocated Devotees for Room */}
-                {(() => {
-                  const unallocated = participants.filter(p => !p.roomId && (p.status === 'confirmed' || p.status === 'interested'));
-                  if (unallocated.length === 0) return null;
-                  return (
-                    <div className="card" style={{ marginTop: '2rem', border: '1.5px dashed var(--warning)', backgroundColor: 'var(--warning-light)' }}>
-                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                        <AlertTriangle size={18} color="var(--warning)" />
-                        <h4 style={{ margin: 0, color: 'var(--warning)' }}>Unallocated Devotees ({unallocated.length} Groups)</h4>
-                      </div>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--text)', marginBottom: '1rem' }}>
-                        The following devotees need a room assignment. Select a room to assign them manually or click 'Auto-Allocate Rooms'.
-                      </p>
-                      <div className="table-container" style={{ margin: 0 }}>
-                        <table style={{ fontSize: '0.85rem', backgroundColor: 'var(--card-bg)' }}>
-                          <thead>
-                            <tr>
-                              <th>Devotee Name</th>
-                              <th>Group Size</th>
-                              <th>Type</th>
-                              <th>Assign to Room</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {unallocated.map(devotee => {
-                              const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
-                              return (
-                                <tr key={devotee.id}>
-                                  <td><strong>{devotee.name}</strong> ({devotee.phone})</td>
-                                  <td><span className="badge">{devoteePax} Person(s)</span></td>
-                                  <td style={{ textTransform: 'capitalize' }}>{devotee.type}</td>
-                                  <td>
-                                    <select 
-                                      className="form-control" 
-                                      style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
-                                      value=""
-                                      onChange={(e) => handleReassignRoom(devotee.id, e.target.value)}
-                                    >
-                                      <option value="" disabled>-- Assign Room --</option>
-                                      {rooms.map(r => (
-                                        <option key={r.id} value={r.id}>Room {r.roomNumber} ({r.roomType}, {r.capacity} beds)</option>
-                                      ))}
-                                    </select>
-                                  </td>
-                                </tr>
-                              );
-                            })}
-                          </tbody>
-                        </table>
-                      </div>
+                  {/* Overall KPIs */}
+                  <div className="grid-cols-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
+                    <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--primary)' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Booked Hotels / Guesthouses</span>
+                      <h3 style={{ margin: '0.25rem 0', color: 'var(--primary)' }}>{distinctHotels.length} Accommodations</h3>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{rooms.length} total rooms registered</span>
                     </div>
-                  );
-                })()}
-              </div>
-            )}
+                    <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--warning)' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Devotees Requiring Stay</span>
+                      <h3 style={{ margin: '0.25rem 0', color: 'var(--warning)' }}>{totalPax} Devotees</h3>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Across {confirmedDevotees.length} booking groups</span>
+                    </div>
+                    <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--success)' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Allocated Devotees</span>
+                      <h3 style={{ margin: '0.25rem 0', color: 'var(--success)' }}>{totalAllocatedPax} / {totalBedCapacity} Beds</h3>
+                      <span style={{ fontSize: '0.75rem', color: totalBedCapacity - totalAllocatedPax >= 0 ? 'var(--success)' : 'var(--danger)' }}>
+                        {totalBedCapacity - totalAllocatedPax} beds available
+                      </span>
+                    </div>
+                    <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #8b5cf6' }}>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Vacant Rooms</span>
+                      <h3 style={{ margin: '0.25rem 0', color: '#8b5cf6' }}>{rooms.filter(r => !participants.some(p => p.roomId === r.id)).length} Rooms</h3>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ready for immediate check-in</span>
+                    </div>
+                  </div>
+
+                  {/* Rooms Grouped by Hotel */}
+                  {rooms.length === 0 ? (
+                    <div className="card" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+                      <Bed size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} />
+                      <h4>No Hotel Rooms Added Yet</h4>
+                      <p style={{ maxWidth: '480px', margin: '0.5rem auto 1.5rem' }}>
+                        Add room inventory for each of your booked hotels or guesthouses (e.g. MVT Guesthouse, Krishna Balaram Residency). Then run <strong>Auto-Allocate</strong> to seat families and individuals into comfortable rooms.
+                      </p>
+                      <button className="btn btn-primary" onClick={() => {
+                        setEditingRoomId(null);
+                        const defaultHotel = bookedHotels[0]?.name || hotels[0]?.name || 'Primary Hotel';
+                        setNewRoom({ 
+                          roomNumber: '101', 
+                          roomType: 'Double Bed', 
+                          capacity: 2, 
+                          floor: '1st Floor', 
+                          hotelName: defaultHotel, 
+                          hotelId: hotels.find(h => h.name === defaultHotel)?.id || '',
+                          extraMattressCost: 500, 
+                          notes: '',
+                          isCustomHotel: false,
+                          customHotelName: '',
+                          customHotelAddress: '',
+                          customHotelContact: '',
+                          customHotelPhone: ''
+                        });
+                        setIsAddRoomOpen(true);
+                      }}>
+                        <Plus size={16} /> Add First Room
+                      </button>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '2rem' }}>
+                      {(selectedHotelFilter === 'all' ? distinctHotels : [selectedHotelFilter]).map(hotelName => {
+                        const hotelRooms = rooms.filter(r => r.hotelName === hotelName);
+                        if (hotelRooms.length === 0 && selectedHotelFilter === 'all') return null;
+                        
+                        const hotelObj = hotels.find(h => h.name === hotelName) || {};
+                        const hotelBedCapacity = hotelRooms.reduce((sum, r) => sum + (parseInt(r.capacity) || 0), 0);
+                        const hotelOccupants = participants.filter(p => hotelRooms.some(r => r.id === p.roomId));
+                        const hotelOccupiedBeds = hotelOccupants.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                        const occupancyPercent = hotelBedCapacity > 0 ? Math.min(100, Math.round((hotelOccupiedBeds / hotelBedCapacity) * 100)) : 0;
+
+                        return (
+                          <div key={hotelName} className="card" style={{ padding: '1.25rem', border: '1px solid var(--border)' }}>
+                            {/* Hotel Header Banner */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', paddingBottom: '1rem', borderBottom: '1px solid var(--border)', marginBottom: '1.25rem' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                                <div style={{ width: '42px', height: '42px', borderRadius: 'var(--radius-sm)', backgroundColor: 'var(--primary-light)', color: 'var(--primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                                  <Hotel size={22} />
+                                </div>
+                                <div>
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                    <h4 style={{ margin: 0 }}>{hotelName}</h4>
+                                    {hotelObj.finalSelected && (
+                                      <span className="badge badge-confirmed" style={{ fontSize: '0.7rem' }}>✓ Booked for Yatra</span>
+                                    )}
+                                    <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>
+                                      {hotelRooms.length} Room{hotelRooms.length > 1 ? 's' : ''} ({hotelBedCapacity} Beds)
+                                    </span>
+                                  </div>
+                                  <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem', flexWrap: 'wrap' }}>
+                                    {hotelObj.address && <span>📍 {hotelObj.address}</span>}
+                                    {hotelObj.phone && <span>📞 Reception: {hotelObj.phone}</span>}
+                                    {hotelObj.contactPerson && <span>👤 Contact: {hotelObj.contactPerson}</span>}
+                                    {hotelObj.gmapsLink && (
+                                      <a href={hotelObj.gmapsLink} target="_blank" rel="noopener noreferrer" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.2rem', color: 'var(--primary)', textDecoration: 'none' }}>
+                                        <MapPin size={11} /> Google Maps
+                                      </a>
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Hotel Occupancy Bar & Quick Add */}
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
+                                <div style={{ textAlign: 'right', minWidth: '150px' }}>
+                                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.25rem' }}>
+                                    <span style={{ color: 'var(--text-muted)' }}>Hotel Beds</span>
+                                    <strong>{hotelOccupiedBeds} / {hotelBedCapacity} ({occupancyPercent}%)</strong>
+                                  </div>
+                                  <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg)', borderRadius: '4px', overflow: 'hidden' }}>
+                                    <div style={{ 
+                                      width: `${occupancyPercent}%`, 
+                                      height: '100%', 
+                                      backgroundColor: occupancyPercent > 90 ? 'var(--warning)' : 'var(--success)',
+                                      transition: 'width 0.3s' 
+                                    }} />
+                                  </div>
+                                </div>
+
+                                <button 
+                                  className="btn btn-outline" 
+                                  style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem' }}
+                                  onClick={() => {
+                                    setEditingRoomId(null);
+                                    setNewRoom({ 
+                                      roomNumber: '', 
+                                      roomType: 'Double Bed', 
+                                      capacity: 2, 
+                                      floor: 'Ground Floor', 
+                                      hotelName: hotelName, 
+                                      hotelId: hotelObj.id || '',
+                                      extraMattressCost: 500, 
+                                      notes: '',
+                                      isCustomHotel: false,
+                                      customHotelName: '',
+                                      customHotelAddress: '',
+                                      customHotelContact: '',
+                                      customHotelPhone: ''
+                                    });
+                                    setIsAddRoomOpen(true);
+                                  }}
+                                >
+                                  <Plus size={13} /> Add Room Here
+                                </button>
+                              </div>
+                            </div>
+
+                            {/* Hotel Rooms Grid */}
+                            {hotelRooms.length === 0 ? (
+                              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: '0.5rem 0' }}>
+                                No rooms registered under {hotelName} yet. Click '+ Add Room Here' to add inventory.
+                              </p>
+                            ) : (
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
+                                {hotelRooms.map(room => {
+                                  const occupants = participants.filter(p => p.roomId === room.id);
+                                  const occupantPax = occupants.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                                  const roomCap = parseInt(room.capacity) || 2;
+                                  const isFull = occupantPax >= roomCap;
+
+                                  return (
+                                    <div key={room.id} style={{ border: isFull ? '1.5px solid var(--border)' : '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '1rem', backgroundColor: 'var(--card-bg)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                      <div>
+                                        {/* Room Header */}
+                                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                                          <div>
+                                            <h4 style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                                              <Bed size={16} color="var(--primary)" /> Room {room.roomNumber}
+                                            </h4>
+                                            <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.15rem' }}>
+                                              {room.floor || 'Floor'} • {room.roomType || 'Standard'}
+                                            </span>
+                                          </div>
+                                          <span className={`badge ${occupantPax === 0 ? 'badge-interested' : isFull ? 'badge-confirmed' : 'badge-warning'}`}>
+                                            {occupantPax === 0 ? 'Vacant' : `${occupantPax} / ${roomCap} Beds`}
+                                          </span>
+                                        </div>
+
+                                        {/* Occupants */}
+                                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', minHeight: '75px', marginBottom: '0.75rem' }}>
+                                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '0.35rem' }}>
+                                            Assigned Devotees:
+                                          </span>
+                                          {occupants.length === 0 ? (
+                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
+                                              No occupants assigned yet.
+                                            </p>
+                                          ) : (
+                                            occupants.map(occ => {
+                                              const occPax = (occ.familyMembers && occ.familyMembers.length) || occ.membersCount || 1;
+                                              return (
+                                                <div key={occ.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', fontSize: '0.8rem' }}>
+                                                  <div>
+                                                    <strong>{occ.name}</strong> ({occPax} pax)
+                                                    {occ.familyMembers && occ.familyMembers.length > 0 && (
+                                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                                        {occ.familyMembers.map(m => m.name).join(', ')}
+                                                      </div>
+                                                    )}
+                                                  </div>
+                                                  <div style={{ display: 'flex', gap: '0.25rem' }}>
+                                                    <button 
+                                                      className="btn btn-outline" 
+                                                      style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem', borderColor: '#25D366', color: '#25D366' }}
+                                                      onClick={() => sendRoomWhatsApp(occ, room, hotelObj)}
+                                                      title="Send WhatsApp Room Pass"
+                                                    >
+                                                      <MessageSquare size={11} /> Pass
+                                                    </button>
+                                                    <button 
+                                                      className="btn btn-outline" 
+                                                      style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem', color: 'var(--danger)', borderColor: 'var(--border)' }}
+                                                      onClick={() => handleReassignRoom(occ.id, '')}
+                                                      title="Unassign from Room"
+                                                    >
+                                                      <X size={11} />
+                                                    </button>
+                                                  </div>
+                                                </div>
+                                              );
+                                            })
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {/* Footer with Edit / Delete */}
+                                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid var(--border)', fontSize: '0.75rem' }}>
+                                        <span style={{ color: 'var(--text-muted)' }}>
+                                          Extra mattress: ₹{room.extraMattressCost || 500}
+                                        </span>
+                                        <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                          <button 
+                                            className="btn btn-outline" 
+                                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+                                            onClick={() => {
+                                              setEditingRoomId(room.id);
+                                              setNewRoom({ 
+                                                ...room,
+                                                isCustomHotel: false,
+                                                customHotelName: '',
+                                                customHotelAddress: '',
+                                                customHotelContact: '',
+                                                customHotelPhone: ''
+                                              });
+                                              setIsAddRoomOpen(true);
+                                            }}
+                                          >
+                                            <Edit2 size={12} /> Edit
+                                          </button>
+                                          <button 
+                                            className="btn btn-outline" 
+                                            style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: 'var(--danger)' }}
+                                            onClick={() => handleDeleteRoom(room.id)}
+                                          >
+                                            <Trash2 size={12} />
+                                          </button>
+                                        </div>
+                                      </div>
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+
+                  {/* Unallocated Devotees for Room */}
+                  {(() => {
+                    const unallocated = participants.filter(p => !p.roomId && (p.status === 'confirmed' || p.status === 'interested'));
+                    if (unallocated.length === 0) return null;
+                    return (
+                      <div className="card" style={{ marginTop: '2rem', border: '1.5px dashed var(--warning)', backgroundColor: 'var(--warning-light)' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                          <AlertTriangle size={18} color="var(--warning)" />
+                          <h4 style={{ margin: 0, color: 'var(--warning)' }}>Unallocated Devotees ({unallocated.length} Groups)</h4>
+                        </div>
+                        <p style={{ fontSize: '0.85rem', color: 'var(--text)', marginBottom: '1rem' }}>
+                          The following devotees need a room assignment. Select a room across your booked accommodations to assign them manually or click 'Auto-Allocate Rooms'.
+                        </p>
+                        <div className="table-container" style={{ margin: 0 }}>
+                          <table style={{ fontSize: '0.85rem', backgroundColor: 'var(--card-bg)' }}>
+                            <thead>
+                              <tr>
+                                <th>Devotee Name</th>
+                                <th>Group Size</th>
+                                <th>Type</th>
+                                <th>Assign to Room & Hotel</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {unallocated.map(devotee => {
+                                const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
+                                return (
+                                  <tr key={devotee.id}>
+                                    <td><strong>{devotee.name}</strong> ({devotee.phone})</td>
+                                    <td><span className="badge">{devoteePax} Person(s)</span></td>
+                                    <td style={{ textTransform: 'capitalize' }}>{devotee.type}</td>
+                                    <td>
+                                      <select 
+                                        className="form-control" 
+                                        style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                                        value=""
+                                        onChange={(e) => handleReassignRoom(devotee.id, e.target.value)}
+                                      >
+                                        <option value="" disabled>-- Assign to Room --</option>
+                                        {distinctHotels.map(hName => {
+                                          const hRooms = rooms.filter(r => r.hotelName === hName);
+                                          if (hRooms.length === 0) return null;
+                                          return (
+                                            <optgroup key={hName} label={`🏨 ${hName}`}>
+                                              {hRooms.map(r => (
+                                                <option key={r.id} value={r.id}>
+                                                  Room {r.roomNumber} ({r.roomType}, {r.capacity} beds)
+                                                </option>
+                                              ))}
+                                            </optgroup>
+                                          );
+                                        })}
+                                      </select>
+                                    </td>
+                                  </tr>
+                                );
+                              })}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    );
+                  })()}
+                </div>
+              );
+            })()}
 
             {/* ======================================= */}
             {/* TAB: HOTELS RESEARCH */}
@@ -2580,14 +2836,14 @@ export default function App() {
                                 <span style={{ fontSize: '0.8rem' }}>Shortlisted</span>
                               </label>
                               <label className="checkbox-group">
-                                <input type="checkbox" checked={hotel.finalSelected} onChange={(e) => {
-                                  // Set all other hotels of this yatra to finalSelected = false
-                                  hotels.forEach(h => {
-                                    if (h.id !== hotel.id && h.finalSelected) toggleHotelField(h.id, 'finalSelected', false);
-                                  });
-                                  toggleHotelField(hotel.id, 'finalSelected', e.target.checked);
-                                }} />
-                                <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: 'var(--success)' }}>Final Selected</span>
+                                <input 
+                                  type="checkbox" 
+                                  checked={hotel.finalSelected} 
+                                  onChange={(e) => toggleHotelField(hotel.id, 'finalSelected', e.target.checked)} 
+                                />
+                                <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: hotel.finalSelected ? 'var(--success)' : 'var(--text-muted)' }}>
+                                  {hotel.finalSelected ? '✓ Booked for Yatra' : 'Booked for Yatra'}
+                                </span>
                               </label>
                             </div>
                           </td>
@@ -5248,26 +5504,91 @@ export default function App() {
             </div>
             <form onSubmit={handleAddRoom}>
               <div className="form-group">
-                <label>Hotel Name</label>
-                {hotels.length > 0 ? (
+                <label>Hotel / Guesthouse *</label>
+                <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.5rem' }}>
+                  <button 
+                    type="button" 
+                    className={`btn ${!newRoom.isCustomHotel ? 'btn-primary' : 'btn-outline'}`}
+                    style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem' }}
+                    onClick={() => setNewRoom({ ...newRoom, isCustomHotel: false })}
+                  >
+                    Select Booked / Evaluated Hotel
+                  </button>
+                  <button 
+                    type="button" 
+                    className={`btn ${newRoom.isCustomHotel ? 'btn-primary' : 'btn-outline'}`}
+                    style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem' }}
+                    onClick={() => setNewRoom({ ...newRoom, isCustomHotel: true })}
+                  >
+                    + Add New Hotel / Guesthouse
+                  </button>
+                </div>
+
+                {!newRoom.isCustomHotel ? (
                   <select 
                     className="form-control" 
                     value={newRoom.hotelName} 
-                    onChange={(e) => setNewRoom({ ...newRoom, hotelName: e.target.value })}
+                    onChange={(e) => {
+                      const selectedH = hotels.find(h => h.name === e.target.value);
+                      setNewRoom({ 
+                        ...newRoom, 
+                        hotelName: e.target.value,
+                        hotelId: selectedH ? selectedH.id : ''
+                      });
+                    }}
                   >
-                    {hotels.map(h => (
-                      <option key={h.id} value={h.name}>{h.name} {h.finalSelected ? '(Final Selected)' : ''}</option>
-                    ))}
+                    <optgroup label="Booked Accommodations">
+                      {hotels.filter(h => h.finalSelected).map(h => (
+                        <option key={h.id} value={h.name}>✓ {h.name} (Booked)</option>
+                      ))}
+                    </optgroup>
+                    {hotels.some(h => !h.finalSelected) && (
+                      <optgroup label="Other Evaluated Hotels">
+                        {hotels.filter(h => !h.finalSelected).map(h => (
+                          <option key={h.id} value={h.name}>{h.name}</option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {hotels.length === 0 && (
+                      <option value="Primary Hotel">Primary Hotel</option>
+                    )}
                   </select>
                 ) : (
-                  <input 
-                    type="text" 
-                    required 
-                    className="form-control" 
-                    placeholder="e.g. MVT Guesthouse" 
-                    value={newRoom.hotelName} 
-                    onChange={(e) => setNewRoom({ ...newRoom, hotelName: e.target.value })} 
-                  />
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                    <div>
+                      <label style={{ fontSize: '0.75rem', fontWeight: 600 }}>New Hotel / Guesthouse Name *</label>
+                      <input 
+                        type="text" 
+                        required 
+                        className="form-control" 
+                        placeholder="e.g. Radha Raman Dharamshala" 
+                        value={newRoom.customHotelName || ''} 
+                        onChange={(e) => setNewRoom({ ...newRoom, customHotelName: e.target.value })} 
+                      />
+                    </div>
+                    <div className="grid-cols-2">
+                      <div>
+                        <label style={{ fontSize: '0.75rem' }}>Address / Landmark</label>
+                        <input 
+                          type="text" 
+                          className="form-control" 
+                          placeholder="e.g. Near Bankey Bihari Temple" 
+                          value={newRoom.customHotelAddress || ''} 
+                          onChange={(e) => setNewRoom({ ...newRoom, customHotelAddress: e.target.value })} 
+                        />
+                      </div>
+                      <div>
+                        <label style={{ fontSize: '0.75rem' }}>Contact Person & Phone</label>
+                        <input 
+                          type="text" 
+                          className="form-control" 
+                          placeholder="e.g. Manager (+91 9812345678)" 
+                          value={newRoom.customHotelPhone || ''} 
+                          onChange={(e) => setNewRoom({ ...newRoom, customHotelPhone: e.target.value })} 
+                        />
+                      </div>
+                    </div>
+                  </div>
                 )}
               </div>
 
