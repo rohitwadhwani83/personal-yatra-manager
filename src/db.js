@@ -78,13 +78,21 @@ const DEMO_DATA = {
       name: 'Ramesh Sharma',
       phone: '9876543210',
       email: 'ramesh@gmail.com',
-      city: 'Mumbai',
+      location: 'Mumbai',
       type: 'family',
       familyName: 'Sharma Family',
       membersCount: 4,
+      familyMembers: [
+        { name: 'Ramesh Sharma', relation: 'Self', age: 45, phone: '9876543210' },
+        { name: 'Sunita Sharma', relation: 'Spouse', age: 42, phone: '9876543211' },
+        { name: 'Amit Sharma', relation: 'Son', age: 18, phone: '' },
+        { name: 'Neha Sharma', relation: 'Daughter', age: 14, phone: '' }
+      ],
       memberDetails: 'Ramesh (45), Sunita (42), Amit (18), Neha (14)',
-      specialRequirements: 'Ground floor room required for elders.',
-      medicalNotes: 'Mother has joint pain, cannot walk long distances.',
+      travelMode: 'self',
+      travelType: 'rail',
+      boardingStation: 'Mumbai Central',
+      droppingStation: 'Mathura',
       remarks: 'First yatra with us.',
       status: 'confirmed',
       paymentStatus: 'completed'
@@ -95,13 +103,18 @@ const DEMO_DATA = {
       name: 'Aditi Patel',
       phone: '9123456789',
       email: 'aditi.patel@yahoo.com',
-      city: 'Ahmedabad',
+      location: 'Ahmedabad',
       type: 'individual',
       familyName: '',
       membersCount: 1,
+      familyMembers: [
+        { name: 'Aditi Patel', relation: 'Self', age: 28, phone: '9123456789' }
+      ],
       memberDetails: 'Aditi (28)',
-      specialRequirements: 'Pure sattvic diet without onion/garlic.',
-      medicalNotes: 'None',
+      travelMode: 'organised',
+      travelType: '',
+      boardingStation: '',
+      droppingStation: '',
       remarks: 'Active volunteer.',
       status: 'confirmed',
       paymentStatus: 'completed'
@@ -112,16 +125,87 @@ const DEMO_DATA = {
       name: 'Sanjay Gupta',
       phone: '8765432109',
       email: 'sanjay.g@rediff.com',
-      city: 'Delhi',
+      location: 'Delhi',
       type: 'family',
       familyName: 'Gupta Family',
       membersCount: 3,
+      familyMembers: [
+        { name: 'Sanjay Gupta', relation: 'Self', age: 50, phone: '8765432109' },
+        { name: 'Rekha Gupta', relation: 'Spouse', age: 46, phone: '' },
+        { name: 'Divya Gupta', relation: 'Daughter', age: 21, phone: '' }
+      ],
       memberDetails: 'Sanjay (50), Rekha (46), Divya (21)',
-      specialRequirements: 'None',
-      medicalNotes: 'Father is diabetic.',
+      travelMode: 'self',
+      travelType: 'road',
+      boardingStation: '',
+      droppingStation: '',
       remarks: 'Interested in registration.',
       status: 'interested',
       paymentStatus: 'pending'
+    }
+  ],
+  devotee_profiles: [
+    {
+      id: 'devotee_9876543210',
+      cleanPhone: '9876543210',
+      phone: '9876543210',
+      name: 'Ramesh Sharma',
+      email: 'ramesh@gmail.com',
+      location: 'Mumbai',
+      type: 'family',
+      familyName: 'Sharma Family',
+      membersCount: 4,
+      familyMembers: [
+        { name: 'Ramesh Sharma', relation: 'Self', age: 45, phone: '9876543210' },
+        { name: 'Sunita Sharma', relation: 'Spouse', age: 42, phone: '9876543211' },
+        { name: 'Amit Sharma', relation: 'Son', age: 18, phone: '' },
+        { name: 'Neha Sharma', relation: 'Daughter', age: 14, phone: '' }
+      ],
+      travelMode: 'self',
+      travelType: 'rail',
+      boardingStation: 'Mumbai Central',
+      droppingStation: 'Mathura',
+      remarks: 'First yatra with us.'
+    },
+    {
+      id: 'devotee_9123456789',
+      cleanPhone: '9123456789',
+      phone: '9123456789',
+      name: 'Aditi Patel',
+      email: 'aditi.patel@yahoo.com',
+      location: 'Ahmedabad',
+      type: 'individual',
+      familyName: '',
+      membersCount: 1,
+      familyMembers: [
+        { name: 'Aditi Patel', relation: 'Self', age: 28, phone: '9123456789' }
+      ],
+      travelMode: 'organised',
+      travelType: '',
+      boardingStation: '',
+      droppingStation: '',
+      remarks: 'Active volunteer.'
+    },
+    {
+      id: 'devotee_8765432109',
+      cleanPhone: '8765432109',
+      phone: '8765432109',
+      name: 'Sanjay Gupta',
+      email: 'sanjay.g@rediff.com',
+      location: 'Delhi',
+      type: 'family',
+      familyName: 'Gupta Family',
+      membersCount: 3,
+      familyMembers: [
+        { name: 'Sanjay Gupta', relation: 'Self', age: 50, phone: '8765432109' },
+        { name: 'Rekha Gupta', relation: 'Spouse', age: 46, phone: '' },
+        { name: 'Divya Gupta', relation: 'Daughter', age: 21, phone: '' }
+      ],
+      travelMode: 'self',
+      travelType: 'road',
+      boardingStation: '',
+      droppingStation: '',
+      remarks: 'Interested in registration.'
     }
   ],
   payments: [
@@ -430,6 +514,88 @@ class Database {
   }
   async addDocumentRecord(docRec) { return this.addDocument('documents', docRec); }
   async deleteDocumentRecord(id) { return this.deleteDocument('documents', id); }
+
+  // --- Devotee Profiles Retention Methods ---
+  async getDevoteeProfiles() {
+    return this.getCollection('devotee_profiles');
+  }
+
+  async saveDevoteeProfile(profile) {
+    if (!profile || !profile.phone) return null;
+    const cleanPhone = profile.phone.replace(/[^0-9]/g, '').slice(-10);
+    if (!cleanPhone || cleanPhone.length < 10) return null;
+
+    const profileData = {
+      id: `devotee_${cleanPhone}`,
+      phone: profile.phone,
+      cleanPhone: cleanPhone,
+      name: profile.name || '',
+      email: profile.email || '',
+      location: profile.location || '',
+      type: profile.type || 'individual',
+      familyName: profile.familyName || '',
+      membersCount: profile.membersCount || (profile.familyMembers ? profile.familyMembers.length : 1),
+      familyMembers: profile.familyMembers || [],
+      travelMode: profile.travelMode || 'organised',
+      travelType: profile.travelType || '',
+      boardingStation: profile.boardingStation || '',
+      droppingStation: profile.droppingStation || '',
+      remarks: profile.remarks || '',
+      updatedAt: new Date().toISOString()
+    };
+
+    return this.setDocument('devotee_profiles', profileData.id, profileData);
+  }
+
+  async findDevoteeByPhone(phone) {
+    if (!phone) return null;
+    const clean = phone.replace(/[^0-9]/g, '').slice(-10);
+    if (!clean || clean.length < 10) return null;
+
+    // 1. First check explicit devotee_profiles
+    const profiles = await this.getCollection('devotee_profiles');
+    const existing = profiles.find(p => {
+      const pClean = (p.cleanPhone || p.phone || '').replace(/[^0-9]/g, '').slice(-10);
+      return pClean === clean;
+    });
+    if (existing) return existing;
+
+    // 2. Fallback: Search all participants across any past Yatras
+    const participants = await this.getCollection('participants');
+    const matching = participants.filter(p => {
+      const pClean = (p.phone || '').replace(/[^0-9]/g, '').slice(-10);
+      return pClean === clean;
+    });
+
+    if (matching.length > 0) {
+      // Pick the most complete record (prefer ones with familyMembers)
+      const best = [...matching].sort((a, b) => {
+        const aCount = (a.familyMembers && a.familyMembers.length) || 0;
+        const bCount = (b.familyMembers && b.familyMembers.length) || 0;
+        return bCount - aCount;
+      })[0];
+
+      return {
+        id: `devotee_${clean}`,
+        phone: best.phone,
+        cleanPhone: clean,
+        name: best.name || '',
+        email: best.email || '',
+        location: best.location || '',
+        type: best.type || (best.familyMembers && best.familyMembers.length > 1 ? 'family' : 'individual'),
+        familyName: best.familyName || '',
+        membersCount: best.membersCount || (best.familyMembers ? best.familyMembers.length : 1),
+        familyMembers: best.familyMembers || [],
+        travelMode: best.travelMode || 'organised',
+        travelType: best.travelType || '',
+        boardingStation: best.boardingStation || '',
+        droppingStation: best.droppingStation || '',
+        remarks: best.remarks || ''
+      };
+    }
+
+    return null;
+  }
 
   // Sync Local Storage Data to Firestore (called when connecting Firebase)
   async syncLocalToFirestore() {

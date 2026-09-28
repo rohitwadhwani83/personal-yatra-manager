@@ -3,7 +3,8 @@ import {
   Compass, Hotel, Users, CheckCircle, CreditCard, Receipt, Image as ImageIcon, 
   FileText, BarChart2, MessageSquare, Plus, Trash2, Edit2, Search, Download, 
   Check, X, LogOut, ArrowLeft, Eye, RefreshCw, AlertTriangle, QrCode, 
-  ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink
+  ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink,
+  Sparkles, UserCheck
 } from 'lucide-react';
 import db from './db';
 import JSZip from 'jszip';
@@ -63,9 +64,9 @@ export default function App() {
 
   // Form states for adding items
   const defaultDeadline = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const [newYatra, setNewYatra] = useState({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
+  const [newYatra, setNewYatra] = useState({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, pricePerPerson: '', customQrImageUrl: '', upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
   const [newHotel, setNewHotel] = useState({ name: '', address: '', gmapsLink: '', bookingLink: '', contactPerson: '', phone: '', roomsAvailable: 10, roomPrice: 2000, extraMattressCost: 500, distanceFromTemple: '', notes: '', contacted: false, shortlisted: false, finalSelected: false, quoteImageUrl: '' });
-  const [newParticipant, setNewParticipant] = useState({ name: '', phone: '', email: '', city: '', type: 'individual', familyName: '', membersCount: 1, memberDetails: '', specialRequirements: '', medicalNotes: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
+  const [newParticipant, setNewParticipant] = useState({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
   const [newExpense, setNewExpense] = useState({ date: new Date().toISOString().split('T')[0], category: 'hotel', amount: '', paidBy: '', remarks: '', appliesTo: 'everyone', targetIds: [], billImageUrl: '' });
   const [newDocument, setNewDocument] = useState({ name: '', fileUrl: '', type: 'pdf' });
   
@@ -75,16 +76,33 @@ export default function App() {
   
   // Public payment page states
   const [publicPayAmount, setPublicPayAmount] = useState('');
+  const [publicPayMethod, setPublicPayMethod] = useState('upi');
   const [publicPayRef, setPublicPayRef] = useState('');
   const [publicPayDate, setPublicPayDate] = useState(new Date().toISOString().split('T')[0]);
   const [publicPayScreenshot, setPublicPayScreenshot] = useState('');
   const [publicPayStatus, setPublicPayStatus] = useState(null); // 'success' | null
+  const [paymentParticipant, setPaymentParticipant] = useState(null);
+  const [familyConfirmed, setFamilyConfirmed] = useState(false);
 
   // Participant Portal lookup state
   const [myParticipantData, setMyParticipantData] = useState(null);
   const [editProfileData, setEditProfileData] = useState(null);
   const [myPhotos, setMyPhotos] = useState([]);
   const [myNotes, setMyNotes] = useState(null);
+
+  // New Task Form state (for upgraded To-Do Checklist)
+  const [newTaskForm, setNewTaskForm] = useState({ text: '', details: '', date: '' });
+  const [isAddTaskOpen, setIsAddTaskOpen] = useState(false);
+
+  // Participants Tab Enhanced UI States
+  const [participantViewMode, setParticipantViewMode] = useState('table'); // 'table' | 'cards'
+  const [participantFilter, setParticipantFilter] = useState('all'); // 'all' | 'confirmed' | 'interested' | 'partially_paid' | 'completed'
+  const [expandedParticipantId, setExpandedParticipantId] = useState(null);
+
+  // Devotee Profile Auto-fill States
+  const [autoFilledDevotee, setAutoFilledDevotee] = useState(null);
+  const [adminAutoFilledDevotee, setAdminAutoFilledDevotee] = useState(null);
+  const [isSearchingPhone, setIsSearchingPhone] = useState(false);
 
   // General state triggers
   const [refreshTrigger, setRefreshTrigger] = useState(0);
@@ -157,9 +175,42 @@ export default function App() {
           if (found) setSelectedYatra(found);
         });
       } else if (path === 'payment' && id) {
-        db.getYatras().then(allYatras => {
-          const found = allYatras.find(y => y.id === id);
-          if (found) setSelectedYatra(found);
+        Promise.all([db.getCollection('participants'), db.getYatras()]).then(([allParts, allYatras]) => {
+          const foundPart = allParts.find(p => p.id === id);
+          if (foundPart) {
+            setPaymentParticipant(foundPart);
+            const foundYatra = allYatras.find(y => y.id === foundPart.yatraId);
+            if (foundYatra) {
+              setSelectedYatra(foundYatra);
+              db.getPayments(foundPart.yatraId).then(allPays => {
+                const verifiedPaid = allPays
+                  .filter(pay => pay.participantId === foundPart.id && pay.status === 'verified')
+                  .reduce((sum, pay) => sum + pay.amountPaid, 0);
+                
+                let total = 0;
+                if (foundPart.customPrice && parseFloat(foundPart.customPrice) > 0) {
+                  total = parseFloat(foundPart.customPrice);
+                } else if (foundYatra.pricePerPerson) {
+                  let billable = 1;
+                  if (foundPart.type === 'family') {
+                    if (foundPart.familyMembers && Array.isArray(foundPart.familyMembers) && foundPart.familyMembers.length > 0) {
+                      billable = foundPart.familyMembers.filter(m => !m.age || parseInt(m.age) >= 5).length || 1;
+                    } else {
+                      billable = foundPart.membersCount || 1;
+                    }
+                  }
+                  total = billable * parseFloat(foundYatra.pricePerPerson);
+                }
+                const due = Math.max(0, total - verifiedPaid);
+                if (due > 0) {
+                  setPublicPayAmount(due.toString());
+                }
+              });
+            }
+          } else {
+            const found = allYatras.find(y => y.id === id);
+            if (found) setSelectedYatra(found);
+          }
         });
       }
     };
@@ -257,7 +308,7 @@ export default function App() {
       await db.addYatra({ ...newYatra, id, status: 'planning', isDeleted: false });
     }
     setIsCreateYatraOpen(false);
-    setNewYatra({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
+    setNewYatra({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, pricePerPerson: '', customQrImageUrl: '', upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -287,11 +338,64 @@ export default function App() {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  // Devotee profile auto-fill helper (finds existing devotees across Yatras by 10-digit mobile number)
+  const handleDevoteePhoneChange = async (enteredPhone, isAdmin = false) => {
+    setNewParticipant(prev => ({ ...prev, phone: enteredPhone }));
+    
+    const clean = enteredPhone.replace(/[^0-9]/g, '').slice(-10);
+    if (clean.length === 10) {
+      setIsSearchingPhone(true);
+      try {
+        const found = await db.findDevoteeByPhone(clean);
+        if (found) {
+          if (isAdmin) {
+            setAdminAutoFilledDevotee(found);
+          } else {
+            setAutoFilledDevotee(found);
+          }
+          setNewParticipant(prev => ({
+            ...prev,
+            phone: enteredPhone,
+            name: found.name || prev.name,
+            email: found.email || prev.email,
+            location: found.location || prev.location,
+            type: found.type || prev.type,
+            familyName: found.familyName || prev.familyName,
+            membersCount: found.membersCount || (found.familyMembers?.length || 1),
+            familyMembers: (found.familyMembers && found.familyMembers.length > 0) ? found.familyMembers : prev.familyMembers,
+            travelMode: found.travelMode || prev.travelMode,
+            travelType: found.travelType || prev.travelType,
+            boardingStation: found.boardingStation || prev.boardingStation,
+            droppingStation: found.droppingStation || prev.droppingStation,
+            remarks: prev.remarks || found.remarks || ''
+          }));
+        } else {
+          if (isAdmin) setAdminAutoFilledDevotee(null);
+          else setAutoFilledDevotee(null);
+        }
+      } catch (err) {
+        console.error("Error looking up devotee:", err);
+      } finally {
+        setIsSearchingPhone(false);
+      }
+    } else {
+      if (isAdmin) setAdminAutoFilledDevotee(null);
+      else setAutoFilledDevotee(null);
+    }
+  };
+
   const handleAddParticipant = async (e) => {
     e.preventDefault();
-    await db.addParticipant({ ...newParticipant, yatraId: selectedYatra.id });
+    if (newParticipant.type === 'family' && (!newParticipant.familyMembers || newParticipant.familyMembers.length === 0)) {
+      alert("Please add at least one family member (including the primary devotee) before registering.");
+      return;
+    }
+    const partToSave = { ...newParticipant, yatraId: selectedYatra.id };
+    await db.addParticipant(partToSave);
+    await db.saveDevoteeProfile(newParticipant);
     setIsAddParticipantOpen(false);
-    setNewParticipant({ name: '', phone: '', email: '', city: '', type: 'individual', familyName: '', membersCount: 1, memberDetails: '', specialRequirements: '', medicalNotes: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
+    setAdminAutoFilledDevotee(null);
+    setNewParticipant({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -320,14 +424,36 @@ export default function App() {
   // --- Public Participant Actions ---
   const handlePublicRegister = async (e) => {
     e.preventDefault();
+    if (newParticipant.type === 'family' && (!newParticipant.familyMembers || newParticipant.familyMembers.length === 0)) {
+      alert("Please add at least one family member (including yourself) in the list before proceeding.");
+      return;
+    }
     const pId = 'part_' + Math.random().toString(36).substring(2, 9);
-    await db.addParticipant({
+    const participantRecord = {
       ...newParticipant,
       id: pId,
       yatraId: selectedYatra.id,
       status: 'interested',
       paymentStatus: 'pending'
-    });
+    };
+    await db.addParticipant(participantRecord);
+    await db.saveDevoteeProfile(participantRecord);
+    setPaymentParticipant(participantRecord);
+    
+    // Pre-calculate payment amount
+    if (selectedYatra?.pricePerPerson) {
+      let billable = 1;
+      if (participantRecord.type === 'family') {
+        if (participantRecord.familyMembers && participantRecord.familyMembers.length > 0) {
+          billable = participantRecord.familyMembers.filter(m => !m.age || parseInt(m.age) >= 5).length || 1;
+        } else {
+          billable = participantRecord.membersCount || 1;
+        }
+      }
+      const initialDue = billable * parseFloat(selectedYatra.pricePerPerson);
+      setPublicPayAmount(initialDue.toString());
+    }
+
     setPublicRegId(pId);
     setPublicRegStatus('success');
   };
@@ -340,9 +466,10 @@ export default function App() {
       yatraId: selectedYatra.id,
       participantId: currentRoute.id, // Participant ID is stored in the route param
       amountPaid: parseFloat(publicPayAmount),
-      transactionRef: publicPayRef,
+      paymentMethod: publicPayMethod,
+      transactionRef: publicPayMethod === 'upi' ? publicPayRef : 'CASH PAYMENT',
       paymentDate: publicPayDate,
-      screenshotUrl: publicPayScreenshot,
+      screenshotUrl: publicPayMethod === 'upi' ? publicPayScreenshot : '',
       status: 'pending_verification'
     });
     // Update participant payment status to pending verification
@@ -354,6 +481,7 @@ export default function App() {
     e.preventDefault();
     if (!editProfileData || !myParticipantData) return;
     const updated = await db.updateParticipant(myParticipantData.id, editProfileData);
+    await db.saveDevoteeProfile(editProfileData);
     setMyParticipantData(updated);
     setIsEditProfileOpen(false);
     alert("Profile updated successfully!");
@@ -376,7 +504,22 @@ export default function App() {
   const verifyPayment = async (paymentId, participantId, status) => {
     await db.updatePayment(paymentId, { status });
     if (status === 'verified') {
-      await db.updateParticipant(participantId, { paymentStatus: 'completed' });
+      const allPays = await db.getPayments(selectedYatra.id);
+      const verifiedPaid = allPays
+        .filter(pay => pay.participantId === participantId && (pay.id === paymentId || pay.status === 'verified'))
+        .reduce((sum, pay) => sum + pay.amountPaid, 0);
+
+      const splitInfo = expCalc.splits.find(s => s.id === participantId);
+      const share = splitInfo ? splitInfo.share : 0;
+      const isCompleted = share > 0 ? (verifiedPaid >= share) : true;
+      
+      const updates = {
+        paymentStatus: isCompleted ? 'completed' : 'partially_paid'
+      };
+      if (isCompleted) {
+        updates.status = 'confirmed'; // Automatically update status to confirmed when payment completed
+      }
+      await db.updateParticipant(participantId, updates);
     } else {
       await db.updateParticipant(participantId, { paymentStatus: 'pending' });
     }
@@ -385,29 +528,54 @@ export default function App() {
 
   // --- Split Calculation Math ---
   const getExpenseCalculations = () => {
+    const yatraPrice = selectedYatra ? parseFloat(selectedYatra.pricePerPerson) || 0 : 0;
+
     const confirmedCount = participants
       .filter(p => p.status === 'confirmed')
       .reduce((sum, p) => sum + (p.type === 'family' ? p.membersCount : 1), 0);
 
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
-    const amountPerPerson = confirmedCount > 0 ? (totalExpenses / confirmedCount) : 0;
+    // Use yatra pricePerPerson if set, else fall back to expense-based split
+    const amountPerPerson = yatraPrice > 0 ? yatraPrice : (confirmedCount > 0 ? (totalExpenses / confirmedCount) : 0);
+
+    // Helper: count billable members for a participant (children under 5 are free)
+    const getBillableCount = (p) => {
+      if (p.type !== 'family') return 1;
+      // If structured familyMembers array exists, exclude children under 5
+      if (p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
+        const billable = p.familyMembers.filter(m => !m.age || parseInt(m.age) >= 5).length;
+        return Math.max(billable, 1); // At least 1 (the primary registrant)
+      }
+      // Fallback to membersCount if no structured data
+      return p.membersCount || 1;
+    };
 
     // Calculate details for individuals and families
     const participantSplits = participants.map(p => {
       const headCount = p.type === 'family' ? p.membersCount : 1;
-      const share = headCount * amountPerPerson;
+      const billableCount = getBillableCount(p);
+      // If admin has set a customPrice for this participant, use it as the total share directly
+      const customTotal = p.customPrice ? parseFloat(p.customPrice) : 0;
+      const share = customTotal > 0 ? customTotal : (yatraPrice > 0 ? billableCount * yatraPrice : headCount * amountPerPerson);
       
       // Calculate payments verified
       const verifiedPaid = payments
         .filter(pay => pay.participantId === p.id && pay.status === 'verified')
         .reduce((sum, pay) => sum + pay.amountPaid, 0);
 
+      const balance = share - verifiedPaid;
+      const dynamicPaymentStatus = verifiedPaid === 0 ? 'pending' : (balance > 0 ? 'partially_paid' : 'completed');
+      const dynamicDevoteeStatus = (dynamicPaymentStatus === 'completed' && p.status === 'interested') ? 'confirmed' : p.status;
+
       return {
         ...p,
         headCount,
+        billableCount,
         share,
         paid: verifiedPaid,
-        balance: share - verifiedPaid
+        balance,
+        dynamicPaymentStatus,
+        dynamicDevoteeStatus
       };
     });
 
@@ -492,7 +660,7 @@ export default function App() {
     const headers = Object.keys(dataList[0]).join(',');
     const rows = dataList.map(row => 
       Object.values(row).map(val => 
-        typeof val === 'string' ? `"${val.replace(/"/g, '""')}"` : val
+        typeof val === 'string' ? `"${val.replace(/"/g, '""')}"` : (typeof val === 'object' ? `"${JSON.stringify(val).replace(/"/g, '""')}"` : val)
       ).join(',')
     );
     
@@ -501,6 +669,70 @@ export default function App() {
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
     link.setAttribute("download", `${filename}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
+  // --- Flattened Participant CSV (family members as individual rows) ---
+  const exportParticipantCSV = () => {
+    const headers = ['Registration ID', 'Family/Group Name', 'Member Name', 'Relation', 'Age', 'Phone', 'Email', 'Location', 'Travel Mode', 'Travel Type', 'Boarding Station', 'Dropping Station', 'Status', 'Payment Status', 'Remarks'];
+    
+    const rows = [];
+    participants.forEach(p => {
+      const splitData = expCalc.splits.find(s => s.id === p.id);
+      const payStatus = splitData?.dynamicPaymentStatus || p.paymentStatus;
+      const devoteeStatus = (payStatus === 'completed' && p.status === 'interested') ? 'confirmed' : (splitData?.dynamicDevoteeStatus || p.status);
+
+      if (p.type === 'family' && p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
+        // Each family member becomes a row
+        p.familyMembers.forEach(member => {
+          rows.push([
+            p.id,
+            p.familyName || p.name,
+            member.name || '',
+            member.relation || '',
+            member.age || '',
+            member.phone || p.phone,
+            p.email,
+            p.location,
+            p.travelMode || '',
+            p.travelType || '',
+            p.boardingStation || '',
+            p.droppingStation || '',
+            devoteeStatus,
+            payStatus,
+            p.remarks || ''
+          ]);
+        });
+      } else {
+        // Individual participant — single row
+        rows.push([
+          p.id,
+          p.type === 'family' ? (p.familyName || p.name) : '—',
+          p.name,
+          'Self',
+          '',
+          p.phone,
+          p.email,
+          p.location,
+          p.travelMode || '',
+          p.travelType || '',
+          p.boardingStation || '',
+          p.droppingStation || '',
+          devoteeStatus,
+          payStatus,
+          p.remarks || ''
+        ]);
+      }
+    });
+
+    const csvRows = rows.map(row => row.map(val => `"${String(val).replace(/"/g, '""')}"`).join(','));
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...csvRows].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `${selectedYatra.name}_Participants_Detailed.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
@@ -605,6 +837,16 @@ export default function App() {
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           {currentUser && (
             <>
+              {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
+                <button
+                  className="btn btn-outline"
+                  style={{ padding: '0.5rem' }}
+                  title="Refresh Data"
+                  onClick={() => setRefreshTrigger(prev => prev + 1)}
+                >
+                  <RefreshCw size={18} />
+                </button>
+              )}
               {currentUser.role === 'super_admin' && (
                 <button className="btn btn-outline" style={{ padding: '0.5rem' }} onClick={() => setIsSettingsOpen(true)}>
                   <Settings size={18} />
@@ -858,6 +1100,8 @@ export default function App() {
                         startDate: selectedYatra.startDate,
                         endDate: selectedYatra.endDate,
                         expectedParticipants: selectedYatra.expectedParticipants || 30,
+                        pricePerPerson: selectedYatra.pricePerPerson || '',
+                        customQrImageUrl: selectedYatra.customQrImageUrl || '',
                         upiId: selectedYatra.upiId,
                         upiName: selectedYatra.upiName,
                         registrationDeadline: selectedYatra.registrationDeadline || ''
@@ -933,52 +1177,187 @@ export default function App() {
             {/* ======================================= */}
             {/* TAB: OVERVIEW */}
             {/* ======================================= */}
-            {activeTab === 'overview' && (
-              <div className="grid-cols-2">
-                <div className="card">
-                  <h3>Devotee Statistics</h3>
-                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1rem', marginTop: '1.25rem' }}>
-                    <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Interested</span>
-                      <h4 style={{ fontSize: '1.5rem' }}>{participants.filter(p => p.status === 'interested').length}</h4>
-                    </div>
-                    <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Confirmed</span>
-                      <h4 style={{ fontSize: '1.5rem' }}>{participants.filter(p => p.status === 'confirmed').length}</h4>
-                    </div>
-                    <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Pending Payments</span>
-                      <h4 style={{ fontSize: '1.5rem' }}>{participants.filter(p => p.paymentStatus === 'pending').length}</h4>
-                    </div>
-                    <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Outstanding Balance</span>
-                      <h4 style={{ fontSize: '1.5rem', color: 'var(--danger)' }}>₹{expCalc.totalOutstanding.toLocaleString()}</h4>
-                    </div>
-                  </div>
-                </div>
+            {activeTab === 'overview' && (() => {
+              const targetSeats = selectedYatra.expectedParticipants || 30;
+              const yPrice = parseFloat(selectedYatra.pricePerPerson) || 0;
+              const totalRegisteredSeats = participants.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              const confirmedSeats = participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'confirmed').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              const interestedSeats = participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'interested').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              const seatPercent = Math.min(100, Math.round((totalRegisteredSeats / targetSeats) * 100));
 
-                <div className="card">
-                  <h3>Spiritual Tour Information</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1.25rem' }}>
-                    <div>
-                      <strong style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>UPI Payment Address:</strong>
-                      <p style={{ fontWeight: '500' }}>{selectedYatra.upiId} ({selectedYatra.upiName})</p>
+              // Financial Metrics
+              const projectedBudget = targetSeats * yPrice;
+              const totalCollected = expCalc.totalCollected;
+              const projectedDeficit = Math.max(0, projectedBudget - totalCollected);
+              const registeredDues = expCalc.totalOutstanding;
+
+              // Logistics & Accommodations
+              const organisedTravelCount = participants.filter(p => p.travelMode === 'organised').reduce((s, p) => s + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              const selfTravelCount = participants.filter(p => p.travelMode === 'self').reduce((s, p) => s + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              const selectedHotel = hotels.find(h => h.finalSelected);
+
+              return (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
+                  {/* TOP ROW: SEAT CAPACITY PROGRESS & FINANCIAL HEALTH */}
+                  <div className="grid-cols-2">
+                    {/* SEAT CAPACITY CARD */}
+                    <div className="card">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                        <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><Users size={18} style={{ color: 'var(--primary)' }} /> Seat Capacity & Target</h3>
+                        <span style={{ fontSize: '0.82rem', fontWeight: 'bold', color: seatPercent >= 100 ? 'var(--success)' : 'var(--primary)' }}>
+                          {seatPercent}% Booked
+                        </span>
+                      </div>
+                      
+                      {/* Visual Progress Bar */}
+                      <div style={{ width: '100%', height: '10px', backgroundColor: 'var(--bg)', borderRadius: '999px', overflow: 'hidden', marginBottom: '1rem', border: '1px solid var(--border)' }}>
+                        <div style={{ width: `${seatPercent}%`, height: '100%', backgroundColor: seatPercent >= 100 ? 'var(--success)' : 'var(--primary)', transition: 'width 0.3s ease' }} />
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Target Seats</span>
+                          <h4 style={{ fontSize: '1.3rem', margin: '0.2rem 0 0' }}>{targetSeats}</h4>
+                        </div>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Registered</span>
+                          <h4 style={{ fontSize: '1.3rem', margin: '0.2rem 0 0', color: 'var(--primary)' }}>{totalRegisteredSeats}</h4>
+                        </div>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Confirmed</span>
+                          <h4 style={{ fontSize: '1.3rem', margin: '0.2rem 0 0', color: 'var(--success)' }}>{confirmedSeats}</h4>
+                        </div>
+                      </div>
+
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        <span>Interested Devotees: <strong>{interestedSeats}</strong></span>
+                        <span>Available Seats: <strong>{Math.max(0, targetSeats - totalRegisteredSeats)}</strong></span>
+                      </div>
                     </div>
-                    <hr style={{ borderColor: 'var(--border)' }} />
-                    <div>
-                      <strong style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>Quick QR Code Preview:</strong>
-                      <div style={{ marginTop: '0.5rem' }}>
-                        <img 
-                          src={getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, 0, selectedYatra.name)} 
-                          alt="UPI QR Code" 
-                          style={{ width: '120px', height: '120px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                        />
+
+                    {/* FINANCIAL SNAPSHOT CARD (Projected Budget vs Collected vs Gap) */}
+                    <div className="card">
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+                        <h3 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: '0.5rem' }}><CreditCard size={18} style={{ color: 'var(--primary)' }} /> Financial Overview</h3>
+                        {yPrice > 0 && (
+                          <span style={{ fontSize: '0.8rem', backgroundColor: 'var(--primary-light)', color: 'var(--primary)', padding: '0.2rem 0.5rem', borderRadius: '4px', fontWeight: 'bold' }}>
+                            ₹{yPrice.toLocaleString()} / seat
+                          </span>
+                        )}
+                      </div>
+
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>🎯 Projected Yatra Inflow</span>
+                          <h4 style={{ fontSize: '1.25rem', margin: '0.2rem 0 0', color: 'var(--text)' }}>
+                            {yPrice > 0 ? `₹${projectedBudget.toLocaleString()}` : '—'}
+                          </h4>
+                          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>{targetSeats} seats × ₹{yPrice.toLocaleString()}</span>
+                        </div>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>💵 Total Collected</span>
+                          <h4 style={{ fontSize: '1.25rem', margin: '0.2rem 0 0', color: 'var(--success)' }}>
+                            ₹{totalCollected.toLocaleString()}
+                          </h4>
+                          <span style={{ fontSize: '0.68rem', color: 'var(--success)' }}>Verified in bank</span>
+                        </div>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', border: '1px solid hsla(0, 84%, 60%, 0.2)' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>⚠️ Projected Collection Gap</span>
+                          <h4 style={{ fontSize: '1.25rem', margin: '0.2rem 0 0', color: 'var(--danger)' }}>
+                            {yPrice > 0 ? `₹${projectedDeficit.toLocaleString()}` : `₹${registeredDues.toLocaleString()}`}
+                          </h4>
+                          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Target minus amount paid</span>
+                        </div>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>📋 Registered Devotee Dues</span>
+                          <h4 style={{ fontSize: '1.25rem', margin: '0.2rem 0 0', color: 'var(--primary)' }}>
+                            ₹{registeredDues.toLocaleString()}
+                          </h4>
+                          <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Pending from current registrations</span>
+                        </div>
                       </div>
                     </div>
                   </div>
+
+                  {/* BOTTOM ROW: LOGISTICS, HOTEL & SCANNER */}
+                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '1.5rem' }}>
+                    {/* TRAVEL LOGISTICS SNAPSHOT */}
+                    <div className="card">
+                      <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                        🚌 Travel Logistics
+                      </h4>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>Overview of transport arrangements required:</p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
+                          <span style={{ fontSize: '0.85rem' }}>🚌 <strong>As Organised (Bus/Train):</strong></span>
+                          <span style={{ fontWeight: 'bold', color: 'var(--primary)' }}>{organisedTravelCount} seat{organisedTravelCount === 1 ? '' : 's'}</span>
+                        </div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
+                          <span style={{ fontSize: '0.85rem' }}>🚗 <strong>Self Travel (Air/Rail/Road):</strong></span>
+                          <span style={{ fontWeight: 'bold' }}>{selfTravelCount} seat{selfTravelCount === 1 ? '' : 's'}</span>
+                        </div>
+                      </div>
+                      <div style={{ marginTop: '0.75rem', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                        Organisers can view station details in the Participants Tab.
+                      </div>
+                    </div>
+
+                    {/* HOTEL RESEARCH STATUS */}
+                    <div className="card">
+                      <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                        <Hotel size={16} style={{ color: 'var(--primary)' }} /> Accommodations
+                      </h4>
+                      {selectedHotel ? (
+                        <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid hsla(142,70%,45%,0.3)', padding: '0.75rem', borderRadius: 'var(--radius-sm)' }}>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ Final Selected Hotel</span>
+                          <div style={{ fontWeight: 'bold', fontSize: '0.95rem', marginTop: '0.2rem' }}>{selectedHotel.name}</div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>📍 {selectedHotel.address}</div>
+                          <div style={{ fontSize: '0.78rem', marginTop: '0.35rem' }}>
+                            <strong>📞 Contact:</strong> {selectedHotel.contactPerson} ({selectedHotel.phone})
+                          </div>
+                          <div style={{ fontSize: '0.78rem', marginTop: '0.2rem' }}>
+                            <strong>Rooms:</strong> {selectedHotel.roomsAvailable} | <strong>Price:</strong> ₹{selectedHotel.roomPrice}/night
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0 0 0.5rem 0' }}>No final hotel selected yet.</p>
+                          <button className="btn btn-outline" style={{ fontSize: '0.78rem', padding: '0.35rem 0.6rem' }} onClick={() => setActiveTab('hotels')}>
+                            View {hotels.length} Evaluated Hotels
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {/* PAYMENT SCANNER & UPI */}
+                    <div className="card" style={{ textAlign: 'center' }}>
+                      <h4 style={{ margin: '0 0 0.5rem 0' }}>📱 Payment Scanner</h4>
+                      <div style={{ display: 'inline-block', backgroundColor: 'var(--bg)', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', marginBottom: '0.5rem' }}>
+                        <img 
+                          src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, 0, selectedYatra.name)} 
+                          alt="UPI QR Scanner" 
+                          style={{ width: '110px', height: '110px', objectFit: 'contain', backgroundColor: 'white' }}
+                        />
+                      </div>
+                      <div style={{ fontSize: '0.8rem' }}>
+                        <code>{selectedYatra.upiId}</code>
+                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{selectedYatra.upiName}</div>
+                      </div>
+                      <button 
+                        className="btn btn-outline" 
+                        style={{ width: '100%', fontSize: '0.75rem', padding: '0.3rem 0.5rem', marginTop: '0.5rem' }}
+                        onClick={() => {
+                          navigator.clipboard.writeText(selectedYatra.upiId);
+                          alert("UPI ID copied to clipboard!");
+                        }}
+                      >
+                        Copy UPI ID
+                      </button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* ======================================= */}
             {/* TAB: HOTELS RESEARCH */}
@@ -1063,89 +1442,444 @@ export default function App() {
             {/* ======================================= */}
             {/* TAB: PARTICIPANTS */}
             {/* ======================================= */}
-            {activeTab === 'participants' && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                  <h3>Registered Devotees</h3>
-                  <button className="btn btn-primary" onClick={() => setIsAddParticipantOpen(true)}>
-                    <Plus size={16} /> Register Devotee
-                  </button>
-                </div>
+            {activeTab === 'participants' && (() => {
+              // Apply search filter and status/payment filters
+              const baseFiltered = filterList(participants, ['name', 'phone', 'email', 'location', 'familyName', 'memberDetails']);
+              const displayedParticipants = baseFiltered.filter(p => {
+                const split = expCalc.splits.find(s => s.id === p.id);
+                const devStatus = (split?.dynamicPaymentStatus === 'completed' && p.status === 'interested') ? 'confirmed' : (split?.dynamicDevoteeStatus || p.status);
+                const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
+                
+                if (participantFilter === 'confirmed') return devStatus === 'confirmed';
+                if (participantFilter === 'interested') return devStatus === 'interested';
+                if (participantFilter === 'partially_paid') return payStatus === 'partially_paid';
+                if (participantFilter === 'completed') return payStatus === 'completed';
+                return true; // 'all'
+              });
 
-                <div className="table-container">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Devotee Details</th>
-                        <th>Type / Members</th>
-                        <th>Special / Medical Notes</th>
-                        <th>Status</th>
-                        <th>Payment Status</th>
-                        <th>WhatsApp Link</th>
-                        <th>Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {filterList(participants, ['name', 'phone', 'email', 'city', 'familyName', 'memberDetails']).map(part => (
-                        <tr key={part.id}>
-                          <td>
-                            <strong>{part.name}</strong>
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>📞 {part.phone} | ✉️ {part.email}</p>
-                            <span style={{ fontSize: '0.75rem', backgroundColor: 'var(--bg)', padding: '0.15rem 0.4rem', borderRadius: '4px' }}>🏡 {part.city}</span>
-                          </td>
-                          <td>
-                            <span style={{ textTransform: 'capitalize', fontWeight: '500' }}>{part.type}</span>
-                            {part.type === 'family' && (
-                              <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                                <strong>{part.familyName}</strong> ({part.membersCount} members)<br />
-                                <span style={{ fontSize: '0.7rem' }}>{part.memberDetails}</span>
-                              </div>
-                            )}
-                          </td>
-                          <td>
-                            <div style={{ fontSize: '0.8rem' }}>
-                              {part.specialRequirements && <div>🍽️ <strong>Diet/Spec:</strong> {part.specialRequirements}</div>}
-                              {part.medicalNotes && <div style={{ color: 'var(--danger)' }}>🩺 <strong>Medical:</strong> {part.medicalNotes}</div>}
-                              {part.remarks && <div style={{ color: 'var(--text-muted)' }}>💬 <strong>Remarks:</strong> {part.remarks}</div>}
-                            </div>
-                          </td>
-                          <td>
-                            <button className={`badge badge-${part.status}`} style={{ cursor: 'pointer', border: 'none' }} onClick={() => cycleParticipantStatus(part.id, part.status)}>
-                              {part.status}
-                            </button>
-                          </td>
-                          <td>
-                            <span className="badge" style={{ backgroundColor: part.paymentStatus === 'completed' ? 'var(--success-light)' : 'var(--warning-light)', color: part.paymentStatus === 'completed' ? 'var(--success)' : 'var(--warning)' }}>
-                              {part.paymentStatus}
-                            </span>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', gap: '0.35rem' }}>
-                              <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem' }} onClick={() => sendWhatsApp(part, 'welcome')}>
-                                Welcome
-                              </button>
-                              <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem' }} onClick={() => sendWhatsApp(part, 'payment_reminder')}>
-                                Reminder
-                              </button>
-                              {part.paymentStatus === 'completed' && (
-                                <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', fontSize: '0.75rem', color: 'var(--success)', borderColor: 'var(--success)' }} onClick={() => sendWhatsApp(part, 'payment_verified')}>
-                                  Receipt
+              return (
+                <div>
+                  {/* TOP TOOLBAR: COUNTS, FILTERS, VIEW TOGGLE & REGISTER */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+                    {/* Filter Pills */}
+                    <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                      <span style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--text-muted)', marginRight: '0.25rem' }}>Filter:</span>
+                      <button 
+                        className={`btn ${participantFilter === 'all' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
+                        onClick={() => setParticipantFilter('all')}
+                      >
+                        All ({participants.length})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'confirmed' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
+                        onClick={() => setParticipantFilter('confirmed')}
+                      >
+                        Confirmed ({participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'confirmed').length})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'interested' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
+                        onClick={() => setParticipantFilter('interested')}
+                      >
+                        Interested ({participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'interested').length})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'partially_paid' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
+                        onClick={() => setParticipantFilter('partially_paid')}
+                      >
+                        Partially Paid ({expCalc.splits.filter(s => s.dynamicPaymentStatus === 'partially_paid').length})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'completed' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
+                        onClick={() => setParticipantFilter('completed')}
+                      >
+                        Fully Paid ({expCalc.splits.filter(s => s.dynamicPaymentStatus === 'completed').length})
+                      </button>
+                    </div>
+
+                    {/* View Switcher & Register Button */}
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                      <div style={{ display: 'flex', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '0.2rem', border: '1px solid var(--border)' }}>
+                        <button 
+                          className={`btn ${participantViewMode === 'table' ? 'btn-primary' : ''}`}
+                          style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', background: participantViewMode === 'table' ? '' : 'none', color: participantViewMode === 'table' ? '' : 'var(--text-muted)' }}
+                          onClick={() => setParticipantViewMode('table')}
+                          title="Compact Table View"
+                        >
+                          📋 Table
+                        </button>
+                        <button 
+                          className={`btn ${participantViewMode === 'cards' ? 'btn-primary' : ''}`}
+                          style={{ padding: '0.35rem 0.65rem', fontSize: '0.8rem', background: participantViewMode === 'cards' ? '' : 'none', color: participantViewMode === 'cards' ? '' : 'var(--text-muted)' }}
+                          onClick={() => setParticipantViewMode('cards')}
+                          title="Grid Cards View"
+                        >
+                          🗂️ Cards
+                        </button>
+                      </div>
+
+                      <button className="btn btn-primary" onClick={() => setIsAddParticipantOpen(true)}>
+                        <Plus size={16} /> Register Devotee
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* VIEW 1: CLEAN & SPACIOUS TABLE WITH EXPANDABLE ROW */}
+                  {participantViewMode === 'table' && (
+                    <div className="table-container">
+                      <table style={{ borderCollapse: 'separate', borderSpacing: '0 0.4rem' }}>
+                        <thead>
+                          <tr>
+                            <th style={{ width: '22%' }}>Devotee</th>
+                            <th style={{ width: '16%' }}>Group / Seats</th>
+                            <th style={{ width: '14%' }}>Travel</th>
+                            <th style={{ width: '10%' }}>Status</th>
+                            <th style={{ width: '14%' }}>Yatra Fee</th>
+                            <th style={{ width: '14%' }}>Payment</th>
+                            <th style={{ width: '10%', textAlign: 'right' }}>Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {displayedParticipants.map(part => {
+                            const splitInfo = expCalc.splits.find(s => s.id === part.id);
+                            const dynamicPaymentStatus = splitInfo?.dynamicPaymentStatus || part.paymentStatus;
+                            const effectiveDevoteeStatus = (dynamicPaymentStatus === 'completed' && part.status === 'interested') ? 'confirmed' : (splitInfo?.dynamicDevoteeStatus || part.status);
+                            const isExpanded = expandedParticipantId === part.id;
+                            const billable = splitInfo ? splitInfo.billableCount : 1;
+                            const computedShare = splitInfo ? splitInfo.share : 0;
+                            const isCustom = part.customPrice && parseFloat(part.customPrice) > 0;
+                            const totalSeats = part.type === 'family' ? (part.membersCount || part.familyMembers?.length || 1) : 1;
+
+                            return (
+                              <React.Fragment key={part.id}>
+                                <tr style={{ backgroundColor: isExpanded ? 'var(--bg)' : 'var(--card-bg)', transition: 'background-color 0.2s ease', borderLeft: isExpanded ? '4px solid var(--primary)' : '1px solid var(--border)' }}>
+                                  {/* Devotee Primary Info */}
+                                  <td>
+                                    <div style={{ fontWeight: 'bold', fontSize: '0.95rem', color: 'var(--text)' }}>{part.name}</div>
+                                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                                      📞 {part.phone}
+                                    </div>
+                                    {part.location && (
+                                      <span style={{ fontSize: '0.7rem', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', padding: '0.1rem 0.35rem', borderRadius: '3px', display: 'inline-block', marginTop: '0.2rem' }}>
+                                        📍 {part.location}
+                                      </span>
+                                    )}
+                                  </td>
+
+                                  {/* Group / Seats */}
+                                  <td>
+                                    <span style={{ fontWeight: '600', fontSize: '0.85rem' }}>
+                                      {part.type === 'family' ? `👨‍👩‍👧‍👦 ${part.familyName || 'Family'}` : '👤 Individual'}
+                                    </span>
+                                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                                      {totalSeats} seat{totalSeats === 1 ? '' : 's'} {part.type === 'family' && billable < totalSeats ? `(${totalSeats - billable} free <5)` : ''}
+                                    </div>
+                                  </td>
+
+                                  {/* Travel */}
+                                  <td>
+                                    <span className="badge" style={{ backgroundColor: part.travelMode === 'organised' ? 'var(--primary-light)' : 'var(--bg)', color: part.travelMode === 'organised' ? 'var(--primary)' : 'var(--text)', border: '1px solid var(--border)', textTransform: 'capitalize' }}>
+                                      {part.travelMode === 'organised' ? '🚌 Organised' : `🚗 Self (${part.travelType || 'Direct'})`}
+                                    </span>
+                                    {part.travelType === 'rail' && (part.boardingStation || part.droppingStation) && (
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.2rem' }}>
+                                        🚉 {part.droppingStation || part.boardingStation}
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {/* Devotee Status */}
+                                  <td>
+                                    <button 
+                                      className={`badge badge-${effectiveDevoteeStatus}`} 
+                                      style={{ cursor: 'pointer', border: 'none' }} 
+                                      onClick={() => cycleParticipantStatus(part.id, effectiveDevoteeStatus)}
+                                      title="Click to cycle status"
+                                    >
+                                      {effectiveDevoteeStatus}
+                                    </button>
+                                  </td>
+
+                                  {/* Yatra Amount */}
+                                  <td>
+                                    <div style={{ fontWeight: 'bold', fontSize: '1rem', color: 'var(--text)' }}>
+                                      ₹{Math.round(computedShare).toLocaleString()}
+                                    </div>
+                                    {isCustom ? (
+                                      <span style={{ fontSize: '0.68rem', backgroundColor: 'var(--primary-light)', color: 'var(--primary)', padding: '0.1rem 0.35rem', borderRadius: '3px' }}>✏️ Custom</span>
+                                    ) : (
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                                        {billable} × ₹{parseFloat(selectedYatra.pricePerPerson || 0).toLocaleString()}
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {/* Payment Status */}
+                                  <td>
+                                    <span className="badge" style={{ backgroundColor: dynamicPaymentStatus === 'completed' ? 'var(--success-light)' : (dynamicPaymentStatus === 'partially_paid' ? 'var(--primary-light)' : 'var(--warning-light)'), color: dynamicPaymentStatus === 'completed' ? 'var(--success)' : (dynamicPaymentStatus === 'partially_paid' ? 'var(--primary)' : 'var(--warning)') }}>
+                                      {dynamicPaymentStatus.replace('_', ' ')}
+                                    </span>
+                                    {dynamicPaymentStatus === 'partially_paid' && splitInfo && (
+                                      <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', lineHeight: '1.3' }}>
+                                        <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>Paid: ₹{splitInfo.paid.toLocaleString()}</span><br />
+                                        <span style={{ color: 'var(--danger)', fontWeight: 'bold' }}>Due: ₹{splitInfo.balance.toLocaleString()}</span>
+                                      </div>
+                                    )}
+                                    {dynamicPaymentStatus === 'completed' && splitInfo && (
+                                      <div style={{ marginTop: '0.15rem', fontSize: '0.72rem', color: 'var(--success)', fontWeight: '600' }}>
+                                        ✓ Full Paid
+                                      </div>
+                                    )}
+                                  </td>
+
+                                  {/* Row Actions */}
+                                  <td style={{ textAlign: 'right' }}>
+                                    <div style={{ display: 'inline-flex', gap: '0.35rem', alignItems: 'center' }}>
+                                      <button 
+                                        className={`btn ${isExpanded ? 'btn-primary' : 'btn-outline'}`}
+                                        style={{ padding: '0.3rem 0.5rem', fontSize: '0.75rem' }}
+                                        onClick={() => setExpandedParticipantId(isExpanded ? null : part.id)}
+                                        title={isExpanded ? "Collapse Details" : "View Full Details"}
+                                      >
+                                        {isExpanded ? '▲ Close' : '👁️ Details'}
+                                      </button>
+
+                                      <button 
+                                        className="btn btn-outline" 
+                                        style={{ padding: '0.3rem 0.45rem', fontSize: '0.75rem' }}
+                                        onClick={() => sendWhatsApp(part, dynamicPaymentStatus === 'completed' ? 'payment_verified' : 'payment_reminder')}
+                                        title="Send WhatsApp Message"
+                                      >
+                                        💬
+                                      </button>
+
+                                      <button 
+                                        className="btn btn-danger btn-icon" 
+                                        style={{ padding: '0.3rem' }}
+                                        onClick={() => {
+                                          if (window.confirm(`Delete devotee registration for ${part.name}?`)) {
+                                            db.deleteParticipant(part.id).then(() => setRefreshTrigger(prev => prev + 1));
+                                          }
+                                        }}
+                                        title="Delete Participant"
+                                      >
+                                        <Trash2 size={13} />
+                                      </button>
+                                    </div>
+                                  </td>
+                                </tr>
+
+                                {/* EXPANDED DETAILS DRAWER SUB-ROW */}
+                                {isExpanded && (
+                                  <tr style={{ backgroundColor: 'var(--bg)' }}>
+                                    <td colSpan={7} style={{ padding: '1rem 1.25rem', borderTop: 'none', borderBottom: '2px solid var(--border)' }}>
+                                      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '1.5rem', backgroundColor: 'var(--card-bg)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                                        {/* SECTION A: FAMILY MEMBERS ROSTER */}
+                                        <div>
+                                          <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text)' }}>
+                                            👨‍👩‍👧‍👦 Family Members ({totalSeats})
+                                          </h4>
+                                          {part.familyMembers && part.familyMembers.length > 0 ? (
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                              {part.familyMembers.map((m, idx) => (
+                                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0.5rem', backgroundColor: 'var(--bg)', borderRadius: '4px', fontSize: '0.8rem' }}>
+                                                  <span>
+                                                    <strong>{idx + 1}. {m.name || 'Unnamed'}</strong> ({m.relation || 'Relation N/A'})
+                                                  </span>
+                                                  <span>
+                                                    {m.age ? `${m.age} yrs` : 'Age N/A'}
+                                                    {m.age && parseInt(m.age) < 5 ? (
+                                                      <span style={{ color: 'var(--success)', fontWeight: 'bold', marginLeft: '0.35rem' }}>🆓 FREE</span>
+                                                    ) : ''}
+                                                  </span>
+                                                </div>
+                                              ))}
+                                            </div>
+                                          ) : (
+                                            <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                                              👤 Individual Registration: <strong>{part.name}</strong> (Self)
+                                              {part.memberDetails && <p style={{ marginTop: '0.35rem' }}>Notes: {part.memberDetails}</p>}
+                                            </div>
+                                          )}
+                                        </div>
+
+                                        {/* SECTION B: TRAVEL & LOGISTICS */}
+                                        <div>
+                                          <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text)' }}>
+                                            🚗 Travel Logistics
+                                          </h4>
+                                          <div style={{ fontSize: '0.82rem', display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                            <div><strong>Mode:</strong> <span style={{ textTransform: 'capitalize' }}>{part.travelMode}</span></div>
+                                            {part.travelMode === 'self' && <div><strong>Transport Type:</strong> <span style={{ textTransform: 'capitalize' }}>{part.travelType || 'Direct'}</span></div>}
+                                            {part.boardingStation && <div><strong>Boarding Station:</strong> {part.boardingStation}</div>}
+                                            {part.droppingStation && <div><strong>Dropping Station:</strong> {part.droppingStation}</div>}
+                                            <div><strong>Email:</strong> {part.email || '—'}</div>
+                                            {part.remarks && (
+                                              <div style={{ marginTop: '0.35rem', padding: '0.4rem', backgroundColor: 'var(--bg)', borderRadius: '4px', fontSize: '0.78rem' }}>
+                                                <strong>Remarks:</strong> {part.remarks}
+                                              </div>
+                                            )}
+                                          </div>
+                                        </div>
+
+                                        {/* SECTION C: PRICE CUSTOMIZATION & QUICK ACTIONS */}
+                                        <div>
+                                          <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text)' }}>
+                                            💰 Custom Yatra Amount
+                                          </h4>
+                                          <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginBottom: '0.5rem' }}>
+                                            Admin superpower: Set custom total amount for this devotee/family.
+                                          </p>
+                                          
+                                          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                                            <input 
+                                              type="number"
+                                              className="form-control"
+                                              style={{ fontSize: '0.85rem', padding: '0.35rem 0.5rem', width: '120px' }}
+                                              placeholder={`₹${Math.round(computedShare).toLocaleString()}`}
+                                              defaultValue={part.customPrice || ''}
+                                              onBlur={async (e) => {
+                                                const val = e.target.value.trim();
+                                                await db.updateParticipant(part.id, { customPrice: val || '' });
+                                                setRefreshTrigger(prev => prev + 1);
+                                              }}
+                                              onKeyDown={(e) => { if (e.key === 'Enter') e.target.blur(); }}
+                                            />
+                                            {part.customPrice && (
+                                              <button 
+                                                className="btn btn-outline"
+                                                style={{ fontSize: '0.75rem', padding: '0.35rem 0.5rem' }}
+                                                onClick={async () => {
+                                                  await db.updateParticipant(part.id, { customPrice: '' });
+                                                  setRefreshTrigger(prev => prev + 1);
+                                                }}
+                                              >
+                                                Reset to Default
+                                              </button>
+                                            )}
+                                          </div>
+                                          <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                                            {isCustom ? "✓ Custom amount active" : "Auto-calculated default active"}
+                                          </div>
+
+                                          <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem' }} onClick={() => sendWhatsApp(part, 'welcome')}>
+                                              Send Welcome WhatsApp
+                                            </button>
+                                            <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem' }} onClick={() => sendWhatsApp(part, 'payment_reminder')}>
+                                              Send Reminder
+                                            </button>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    </td>
+                                  </tr>
+                                )}
+                              </React.Fragment>
+                            );
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {/* VIEW 2: BEAUTIFUL RESPONSIVE CARDS GRID */}
+                  {participantViewMode === 'cards' && (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
+                      {displayedParticipants.map(part => {
+                        const splitInfo = expCalc.splits.find(s => s.id === part.id);
+                        const dynamicPaymentStatus = splitInfo?.dynamicPaymentStatus || part.paymentStatus;
+                        const effectiveDevoteeStatus = (dynamicPaymentStatus === 'completed' && part.status === 'interested') ? 'confirmed' : (splitInfo?.dynamicDevoteeStatus || part.status);
+                        const totalSeats = part.type === 'family' ? (part.membersCount || part.familyMembers?.length || 1) : 1;
+                        const computedShare = splitInfo ? splitInfo.share : 0;
+                        const paid = splitInfo ? splitInfo.paid : 0;
+                        const balance = splitInfo ? splitInfo.balance : 0;
+
+                        return (
+                          <div key={part.id} className="card" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'space-between', padding: '1.25rem' }}>
+                            <div>
+                              {/* Header: Name & Status */}
+                              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
+                                <div>
+                                  <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text)' }}>{part.name}</h4>
+                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>📞 {part.phone} {part.location ? `• ${part.location}` : ''}</span>
+                                </div>
+                                <button 
+                                  className={`badge badge-${effectiveDevoteeStatus}`} 
+                                  style={{ cursor: 'pointer', border: 'none' }} 
+                                  onClick={() => cycleParticipantStatus(part.id, effectiveDevoteeStatus)}
+                                >
+                                  {effectiveDevoteeStatus}
                                 </button>
+                              </div>
+
+                              {/* Group / Seats Badge */}
+                              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
+                                <span style={{ fontSize: '0.75rem', backgroundColor: 'var(--bg)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border)' }}>
+                                  {part.type === 'family' ? `👨‍👩‍👧‍👦 ${part.familyName || 'Family'} (${totalSeats} seats)` : '👤 Individual'}
+                                </span>
+                                <span style={{ fontSize: '0.75rem', backgroundColor: 'var(--bg)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border)' }}>
+                                  {part.travelMode === 'organised' ? '🚌 Organised' : '🚗 Self Travel'}
+                                </span>
+                              </div>
+
+                              {/* Family Members Preview */}
+                              {part.type === 'family' && part.familyMembers && part.familyMembers.length > 0 && (
+                                <div style={{ fontSize: '0.78rem', backgroundColor: 'var(--bg)', padding: '0.5rem 0.75rem', borderRadius: '4px', marginBottom: '0.75rem', color: 'var(--text-muted)' }}>
+                                  <strong>Members:</strong> {part.familyMembers.map(m => m.name).filter(Boolean).join(', ')}
+                                </div>
                               )}
+
+                              {/* Financial Pill Box */}
+                              <div style={{ backgroundColor: 'var(--primary-light)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '0.75rem' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
+                                  <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Total Fee:</span>
+                                  <span style={{ fontSize: '1.05rem', fontWeight: 'bold' }}>₹{Math.round(computedShare).toLocaleString()}</span>
+                                </div>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8rem' }}>
+                                  <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>Paid: ₹{paid.toLocaleString()}</span>
+                                  <span style={{ color: balance > 0 ? 'var(--danger)' : 'var(--success)', fontWeight: 'bold' }}>
+                                    {balance > 0 ? `Due: ₹${balance.toLocaleString()}` : '✓ Fully Paid'}
+                                  </span>
+                                </div>
+                              </div>
                             </div>
-                          </td>
-                          <td>
-                            <button className="btn btn-danger btn-icon" onClick={() => db.deleteParticipant(part.id).then(() => setRefreshTrigger(prev => prev + 1))}>
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+
+                            {/* Card Footer Actions */}
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', marginTop: '0.5rem' }}>
+                              <span className="badge" style={{ backgroundColor: dynamicPaymentStatus === 'completed' ? 'var(--success-light)' : (dynamicPaymentStatus === 'partially_paid' ? 'var(--primary-light)' : 'var(--warning-light)'), color: dynamicPaymentStatus === 'completed' ? 'var(--success)' : (dynamicPaymentStatus === 'partially_paid' ? 'var(--primary)' : 'var(--warning)') }}>
+                                {dynamicPaymentStatus.replace('_', ' ')}
+                              </span>
+
+                              <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                <button className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={() => sendWhatsApp(part, dynamicPaymentStatus === 'completed' ? 'payment_verified' : 'payment_reminder')}>
+                                  WhatsApp
+                                </button>
+                                <button 
+                                  className="btn btn-danger btn-icon" 
+                                  style={{ padding: '0.25rem' }}
+                                  onClick={() => {
+                                    if (window.confirm(`Delete ${part.name}?`)) {
+                                      db.deleteParticipant(part.id).then(() => setRefreshTrigger(prev => prev + 1));
+                                    }
+                                  }}
+                                >
+                                  <Trash2 size={13} />
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* ======================================= */}
             {/* TAB: PAYMENTS */}
@@ -1158,7 +1892,8 @@ export default function App() {
                     <thead>
                       <tr>
                         <th>Participant</th>
-                        <th>Amount Uploaded</th>
+                        <th>Amount</th>
+                        <th>Method</th>
                         <th>Transaction Ref</th>
                         <th>Date Paid</th>
                         <th>Proof Receipt</th>
@@ -1176,6 +1911,16 @@ export default function App() {
                               <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>ID: {pay.participantId}</p>
                             </td>
                             <td><strong style={{ fontSize: '1.05rem', color: 'var(--success)' }}>₹{pay.amountPaid}</strong></td>
+                            <td>
+                              <span style={{
+                                display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                                backgroundColor: pay.paymentMethod === 'cash' ? 'var(--success-light)' : 'var(--primary-light)',
+                                color: pay.paymentMethod === 'cash' ? 'var(--success)' : 'var(--primary)',
+                                padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.78rem', fontWeight: '600', textTransform: 'uppercase'
+                              }}>
+                                {pay.paymentMethod === 'cash' ? '💵 Cash' : '📱 UPI'}
+                              </span>
+                            </td>
                             <td><code>{pay.transactionRef}</code></td>
                             <td>{pay.paymentDate}</td>
                             <td>
@@ -1183,6 +1928,10 @@ export default function App() {
                                 <a href={pay.screenshotUrl} target="_blank" rel="noopener noreferrer">
                                   <img src={pay.screenshotUrl} alt="Receipt proof" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border)' }} />
                                 </a>
+                              ) : pay.paymentMethod === 'cash' ? (
+                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', backgroundColor: 'var(--success-light)', color: 'var(--success)', padding: '0.25rem 0.6rem', borderRadius: '4px', fontSize: '0.78rem', fontWeight: '600' }}>
+                                  💵 Cash Payment
+                                </span>
                               ) : (
                                 <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No screenshot</span>
                               )}
@@ -1404,57 +2153,141 @@ export default function App() {
                   <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>Auto-saved instantly as you type.</p>
                 </div>
 
-                {/* CHECKLIST */}
+                {/* CHECKLIST - Upgraded To-Do List */}
                 <div className="card">
-                  <h3>Yatra Organizer Checklist</h3>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem', marginTop: '1rem' }}>
-                    {JSON.parse(notes.content).checklist.map(item => (
-                      <div key={item.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '0.5rem 0', borderBottom: '1px solid var(--border)' }}>
-                        <label className="checkbox-group">
-                          <input 
-                            type="checkbox" 
-                            checked={item.checked} 
-                            onChange={async (e) => {
-                              const current = JSON.parse(notes.content);
-                              const match = current.checklist.find(i => i.id === item.id);
-                              if (match) match.checked = e.target.checked;
-                              const updatedNotes = await db.updateNotes(notes.id, { content: JSON.stringify(current) });
-                              setNotes(updatedNotes);
-                            }}
-                          />
-                          <span style={{ textDecoration: item.checked ? 'line-through' : '', color: item.checked ? 'var(--text-muted)' : '' }}>{item.text}</span>
-                        </label>
-                        <button className="btn btn-danger btn-icon" style={{ padding: '0.25rem' }} onClick={async () => {
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <h3>Yatra Organizer To-Do List</h3>
+                    <button className="btn btn-primary" style={{ padding: '0.4rem 0.75rem', fontSize: '0.85rem' }} onClick={() => setIsAddTaskOpen(!isAddTaskOpen)}>
+                      <Plus size={14} /> Add Task
+                    </button>
+                  </div>
+
+                  {/* Add Task Form */}
+                  {isAddTaskOpen && (
+                    <div style={{ marginTop: '1rem', padding: '1rem', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                      <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                        <label style={{ fontSize: '0.8rem', fontWeight: '600' }}>Task Name *</label>
+                        <input
+                          type="text"
+                          className="form-control"
+                          placeholder="e.g. Book hotel, Collect passports..."
+                          value={newTaskForm.text}
+                          onChange={(e) => setNewTaskForm(f => ({ ...f, text: e.target.value }))}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                        <label style={{ fontSize: '0.8rem', fontWeight: '600' }}>Details / Notes</label>
+                        <textarea
+                          className="form-control"
+                          rows={2}
+                          placeholder="Any additional information or sub-tasks..."
+                          value={newTaskForm.details}
+                          onChange={(e) => setNewTaskForm(f => ({ ...f, details: e.target.value }))}
+                        />
+                      </div>
+                      <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                        <label style={{ fontSize: '0.8rem', fontWeight: '600' }}>Target Date</label>
+                        <input
+                          type="date"
+                          className="form-control"
+                          value={newTaskForm.date}
+                          onChange={(e) => setNewTaskForm(f => ({ ...f, date: e.target.value }))}
+                        />
+                      </div>
+                      <div style={{ display: 'flex', gap: '0.5rem' }}>
+                        <button className="btn btn-primary" style={{ flex: 1 }} onClick={async () => {
+                          if (!newTaskForm.text.trim()) return;
                           const current = JSON.parse(notes.content);
-                          current.checklist = current.checklist.filter(i => i.id !== item.id);
+                          current.checklist.push({
+                            id: 'chk_' + Math.random().toString(36).substring(2, 9),
+                            text: newTaskForm.text.trim(),
+                            details: newTaskForm.details.trim(),
+                            date: newTaskForm.date,
+                            checked: false,
+                            createdAt: new Date().toISOString().split('T')[0]
+                          });
                           const updatedNotes = await db.updateNotes(notes.id, { content: JSON.stringify(current) });
                           setNotes(updatedNotes);
+                          setNewTaskForm({ text: '', details: '', date: '' });
+                          setIsAddTaskOpen(false);
                         }}>
-                          <Trash2 size={12} />
+                          <Check size={14} /> Save Task
+                        </button>
+                        <button className="btn btn-outline" onClick={() => { setIsAddTaskOpen(false); setNewTaskForm({ text: '', details: '', date: '' }); }}>
+                          Cancel
                         </button>
                       </div>
-                    ))}
-                    <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1rem' }}>
-                      <input 
-                        type="text" 
-                        className="form-control" 
-                        placeholder="Add new task..." 
-                        id="new-task-input"
-                        onKeyDown={async (e) => {
-                          if (e.key === 'Enter' && e.target.value.trim()) {
-                            const current = JSON.parse(notes.content);
-                            current.checklist.push({
-                              id: 'chk_' + Math.random().toString(36).substring(2, 9),
-                              text: e.target.value.trim(),
-                              checked: false
-                            });
-                            const updatedNotes = await db.updateNotes(notes.id, { content: JSON.stringify(current) });
-                            setNotes(updatedNotes);
-                            e.target.value = '';
-                          }
-                        }}
-                      />
                     </div>
+                  )}
+
+                  {/* Tasks List */}
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '1rem' }}>
+                    {JSON.parse(notes.content).checklist.length === 0 && (
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', textAlign: 'center', padding: '1.5rem 0' }}>No tasks yet. Click "Add Task" to create your first to-do item.</p>
+                    )}
+                    {JSON.parse(notes.content).checklist.map(item => (
+                      <div key={item.id} style={{
+                        padding: '0.75rem',
+                        borderRadius: 'var(--radius-sm)',
+                        border: '1px solid var(--border)',
+                        backgroundColor: item.checked ? 'var(--bg)' : 'var(--card-bg)',
+                        opacity: item.checked ? 0.65 : 1,
+                        transition: 'all 0.2s ease'
+                      }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: '0.5rem' }}>
+                          <label className="checkbox-group" style={{ flex: 1, alignItems: 'flex-start' }}>
+                            <input
+                              type="checkbox"
+                              checked={item.checked}
+                              onChange={async (e) => {
+                                const current = JSON.parse(notes.content);
+                                const match = current.checklist.find(i => i.id === item.id);
+                                if (match) match.checked = e.target.checked;
+                                const updatedNotes = await db.updateNotes(notes.id, { content: JSON.stringify(current) });
+                                setNotes(updatedNotes);
+                              }}
+                              style={{ marginTop: '0.15rem' }}
+                            />
+                            <div>
+                              <span style={{
+                                fontWeight: '600',
+                                textDecoration: item.checked ? 'line-through' : 'none',
+                                color: item.checked ? 'var(--text-muted)' : 'var(--text)',
+                                fontSize: '0.9rem'
+                              }}>
+                                {item.text}
+                              </span>
+                              {item.details && (
+                                <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: '0.2rem 0 0', lineHeight: '1.4' }}>
+                                  {item.details}
+                                </p>
+                              )}
+                              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '0.3rem', flexWrap: 'wrap' }}>
+                                {item.date && (
+                                  <span style={{ fontSize: '0.72rem', color: new Date(item.date) < new Date() && !item.checked ? 'var(--danger)' : 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '0.2rem' }}>
+                                    📅 {new Date(item.date).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}
+                                    {new Date(item.date) < new Date() && !item.checked && <span style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: '700' }}>OVERDUE</span>}
+                                  </span>
+                                )}
+                                {item.createdAt && (
+                                  <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Added: {item.createdAt}</span>
+                                )}
+                              </div>
+                            </div>
+                          </label>
+                          <button className="btn btn-danger btn-icon" style={{ padding: '0.25rem', flexShrink: 0 }} onClick={async () => {
+                            if (window.confirm('Delete this task?')) {
+                              const current = JSON.parse(notes.content);
+                              current.checklist = current.checklist.filter(i => i.id !== item.id);
+                              const updatedNotes = await db.updateNotes(notes.id, { content: JSON.stringify(current) });
+                              setNotes(updatedNotes);
+                            }
+                          }}>
+                            <Trash2 size={12} />
+                          </button>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               </div>
@@ -1514,8 +2347,8 @@ export default function App() {
             {activeTab === 'reports' && (
               <div>
                 <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem' }}>
-                  <button className="btn btn-outline" onClick={() => exportToCSV(participants, `${selectedYatra.name}_Participants`)}>
-                    <FileDown size={16} /> Export Participant CSV
+                  <button className="btn btn-outline" onClick={() => exportParticipantCSV()}>
+                    <FileDown size={16} /> Export Participant CSV (Detailed)
                   </button>
                   <button className="btn btn-outline" onClick={() => exportToCSV(payments, `${selectedYatra.name}_Payments`)}>
                     <FileDown size={16} /> Export Payment CSV
@@ -1623,14 +2456,87 @@ export default function App() {
                 </div>
               ) : (
                 <form onSubmit={handlePublicRegister}>
+                  {/* Returning Devotee Auto-Fill Banner */}
+                  {autoFilledDevotee && (
+                    <div style={{
+                      backgroundColor: 'hsla(142, 72%, 96%, 1)',
+                      border: '1.5px solid #10b981',
+                      borderRadius: 'var(--radius-sm)',
+                      padding: '1rem 1.25rem',
+                      marginBottom: '1.5rem',
+                      display: 'flex',
+                      gap: '0.85rem',
+                      alignItems: 'flex-start',
+                      boxShadow: '0 2px 6px rgba(16,185,129,0.12)'
+                    }}>
+                      <Sparkles size={24} style={{ color: '#059669', flexShrink: 0, marginTop: '2px' }} />
+                      <div style={{ flex: 1 }}>
+                        <div style={{ fontWeight: '700', color: '#065f46', fontSize: '0.95rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                          <span>Welcome back, {autoFilledDevotee.name}! 🙏</span>
+                          {autoFilledDevotee.familyName && (
+                            <span style={{ fontSize: '0.8rem', backgroundColor: '#d1fae5', color: '#047857', padding: '0.15rem 0.5rem', borderRadius: '1rem', fontWeight: 600 }}>
+                              {autoFilledDevotee.familyName}
+                            </span>
+                          )}
+                        </div>
+                        <p style={{ margin: '0.35rem 0 0.5rem 0', fontSize: '0.85rem', color: '#047857', lineHeight: '1.45' }}>
+                          We identified your saved devotee profile from your previous Yatra! Your contact info and <strong>{autoFilledDevotee.familyMembers?.length || 1} family member(s)</strong> have been auto-populated below. You can review, add new members, remove members, or update anything as needed.
+                        </p>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setAutoFilledDevotee(null);
+                            setNewParticipant({
+                              name: '', phone: newParticipant.phone, email: '', location: '',
+                              type: 'individual', familyName: '', membersCount: 1, familyMembers: [],
+                              memberDetails: '', travelMode: 'organised', travelType: '',
+                              boardingStation: '', droppingStation: '', remarks: '',
+                              status: 'interested', paymentStatus: 'pending'
+                            });
+                          }}
+                          style={{
+                            background: 'none',
+                            border: 'none',
+                            color: '#b91c1c',
+                            fontSize: '0.8rem',
+                            textDecoration: 'underline',
+                            cursor: 'pointer',
+                            padding: 0,
+                            fontWeight: '600'
+                          }}
+                        >
+                          Not you? Click here to clear and start fresh
+                        </button>
+                      </div>
+                    </div>
+                  )}
+
                   <div className="grid-cols-2">
                     <div className="form-group">
-                      <label>Devotee Name</label>
-                      <input type="text" required className="form-control" placeholder="Ramesh Sharma" value={newParticipant.name} onChange={(e) => setNewParticipant({...newParticipant, name: e.target.value})} />
+                      <label>Mobile Number (WhatsApp Preferred)</label>
+                      <input
+                        type="tel"
+                        required
+                        className="form-control"
+                        placeholder="9876543210"
+                        value={newParticipant.phone}
+                        onChange={(e) => handleDevoteePhoneChange(e.target.value, false)}
+                        onBlur={() => handleDevoteePhoneChange(newParticipant.phone, false)}
+                      />
+                      <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block' }}>
+                        💡 Returning devotee? Type your 10-digit number to auto-load your family!
+                      </small>
                     </div>
                     <div className="form-group">
-                      <label>Mobile Number (WhatsApp Preferred)</label>
-                      <input type="tel" required className="form-control" placeholder="9876543210" value={newParticipant.phone} onChange={(e) => setNewParticipant({...newParticipant, phone: e.target.value})} />
+                      <label>Devotee Name</label>
+                      <input
+                        type="text"
+                        required
+                        className="form-control"
+                        placeholder="Ramesh Sharma"
+                        value={newParticipant.name}
+                        onChange={(e) => setNewParticipant({...newParticipant, name: e.target.value})}
+                      />
                     </div>
                   </div>
 
@@ -1640,8 +2546,8 @@ export default function App() {
                       <input type="email" required className="form-control" placeholder="ramesh@gmail.com" value={newParticipant.email} onChange={(e) => setNewParticipant({...newParticipant, email: e.target.value})} />
                     </div>
                     <div className="form-group">
-                      <label>City</label>
-                      <input type="text" required className="form-control" placeholder="Mumbai" value={newParticipant.city} onChange={(e) => setNewParticipant({...newParticipant, city: e.target.value})} />
+                      <label>Location (City/State)</label>
+                      <input type="text" required className="form-control" placeholder="Mumbai" value={newParticipant.location} onChange={(e) => setNewParticipant({...newParticipant, location: e.target.value})} />
                     </div>
                   </div>
 
@@ -1654,31 +2560,172 @@ export default function App() {
                   </div>
 
                   {newParticipant.type === 'family' && (
-                    <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem' }}>
+                    <div style={{ backgroundColor: 'var(--bg)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', border: '1px solid var(--border)' }}>
                       <div className="form-group">
                         <label>Family Name / Title</label>
                         <input type="text" className="form-control" placeholder="Sharma Family" value={newParticipant.familyName} onChange={(e) => setNewParticipant({...newParticipant, familyName: e.target.value})} />
                       </div>
-                      <div className="form-group">
-                        <label>Total Family Members</label>
-                        <input type="number" className="form-control" min={1} value={newParticipant.membersCount} onChange={(e) => setNewParticipant({...newParticipant, membersCount: parseInt(e.target.value) || 1})} />
+
+                      {/* Important Warning Banner */}
+                      <div style={{ backgroundColor: 'var(--warning-light)', color: 'var(--warning)', border: '1px solid hsla(38,92%,50%,0.3)', padding: '0.85rem', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', display: 'flex', gap: '0.6rem', alignItems: 'flex-start' }}>
+                        <AlertTriangle size={20} style={{ flexShrink: 0, marginTop: '2px' }} />
+                        <div style={{ fontSize: '0.85rem', lineHeight: '1.4' }}>
+                          <strong>Important: Please include YOURSELF in the member list below!</strong><br />
+                          The primary devotee is <em>not</em> automatically counted as a seat. Please add yourself (with Relation: <strong>"Self"</strong>) and all accompanying family members so that your total seat count and charges are calculated accurately.
+                        </div>
                       </div>
-                      <div className="form-group">
-                        <label>Members Details (Names, Ages, Relations)</label>
-                        <textarea className="form-control" rows={3} placeholder="1. Ramesh (45) - Self, 2. Sunita (42) - Wife..." value={newParticipant.memberDetails} onChange={(e) => setNewParticipant({...newParticipant, memberDetails: e.target.value})} />
+
+                      {/* Quick Add Myself Button if not yet added */}
+                      {!(newParticipant.familyMembers || []).some(m => m.relation === 'Self') && (
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          style={{ marginBottom: '1rem', fontSize: '0.82rem', padding: '0.4rem 0.75rem', borderColor: 'var(--primary)', color: 'var(--primary)', width: '100%', backgroundColor: 'var(--primary-light)', fontWeight: '600' }}
+                          onClick={() => {
+                            const selfMember = { name: newParticipant.name || '', relation: 'Self', age: '', phone: newParticipant.phone || '' };
+                            const current = newParticipant.familyMembers || [];
+                            const updated = [selfMember, ...current];
+                            setNewParticipant({ ...newParticipant, familyMembers: updated, membersCount: updated.length });
+                          }}
+                        >
+                          👤 Click to Add Yourself ({newParticipant.name || 'Primary Devotee'}) as 1st Member
+                        </button>
+                      )}
+
+                      <div style={{ marginBottom: '0.75rem' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <label style={{ fontWeight: '600', fontSize: '0.9rem', margin: 0 }}>Family Members List</label>
+                          <span style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 'bold' }}>
+                            {newParticipant.familyMembers?.length || 0} Member{(newParticipant.familyMembers?.length || 0) === 1 ? '' : 's'} Added
+                          </span>
+                        </div>
+                        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>Children under 5 years are exempt from yatra fees (Free seat).</p>
+                        
+                        {(newParticipant.familyMembers || []).map((member, idx) => (
+                          <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                            <div style={{ flex: 2 }}>
+                              <input type="text" required className="form-control" placeholder="Full Name" value={member.name} onChange={(e) => {
+                                const updated = [...newParticipant.familyMembers];
+                                updated[idx] = { ...updated[idx], name: e.target.value };
+                                setNewParticipant({...newParticipant, familyMembers: updated});
+                              }} style={{ fontSize: '0.85rem', padding: '0.4rem' }} />
+                            </div>
+                            <div style={{ flex: 1.2 }}>
+                              <select className="form-control" value={member.relation} onChange={(e) => {
+                                const updated = [...newParticipant.familyMembers];
+                                updated[idx] = { ...updated[idx], relation: e.target.value };
+                                setNewParticipant({...newParticipant, familyMembers: updated});
+                              }} style={{ fontSize: '0.85rem', padding: '0.4rem' }}>
+                                <option value="">Relation</option>
+                                <option value="Self">Self</option>
+                                <option value="Spouse">Spouse</option>
+                                <option value="Son">Son</option>
+                                <option value="Daughter">Daughter</option>
+                                <option value="Father">Father</option>
+                                <option value="Mother">Mother</option>
+                                <option value="Brother">Brother</option>
+                                <option value="Sister">Sister</option>
+                                <option value="Other">Other</option>
+                              </select>
+                            </div>
+                            <div style={{ width: '65px' }}>
+                              <input type="number" className="form-control" placeholder="Age" min={0} max={120} value={member.age} onChange={(e) => {
+                                const updated = [...newParticipant.familyMembers];
+                                updated[idx] = { ...updated[idx], age: e.target.value };
+                                setNewParticipant({...newParticipant, familyMembers: updated});
+                              }} style={{ fontSize: '0.85rem', padding: '0.4rem' }} />
+                            </div>
+                            <div style={{ flex: 1.5 }}>
+                              <input type="tel" className="form-control" placeholder="Phone No." value={member.phone} onChange={(e) => {
+                                const updated = [...newParticipant.familyMembers];
+                                updated[idx] = { ...updated[idx], phone: e.target.value };
+                                setNewParticipant({...newParticipant, familyMembers: updated});
+                              }} style={{ fontSize: '0.85rem', padding: '0.4rem' }} />
+                            </div>
+                            <button type="button" className="btn btn-danger btn-icon" style={{ padding: '0.3rem', flexShrink: 0 }} onClick={() => {
+                              const updated = newParticipant.familyMembers.filter((_, i) => i !== idx);
+                              setNewParticipant({...newParticipant, familyMembers: updated, membersCount: updated.length || 1});
+                            }}>
+                              <Trash2 size={12} />
+                            </button>
+                          </div>
+                        ))}
+
+                        <button type="button" className="btn btn-outline" style={{ width: '100%', marginTop: '0.5rem', padding: '0.5rem', fontSize: '0.85rem' }} onClick={() => {
+                          const updated = [...(newParticipant.familyMembers || []), { name: '', relation: '', age: '', phone: '' }];
+                          setNewParticipant({...newParticipant, familyMembers: updated, membersCount: updated.length});
+                        }}>
+                          <Plus size={14} /> Add Another Family Member
+                        </button>
+
+                        {/* Confirmation Step & Summary */}
+                        <div style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.85rem', marginTop: '1rem' }}>
+                          <h5 style={{ margin: '0 0 0.5rem 0', color: 'var(--text)' }}>📋 Family Members Summary</h5>
+                          {(!newParticipant.familyMembers || newParticipant.familyMembers.length === 0) ? (
+                            <p style={{ color: 'var(--danger)', fontSize: '0.8rem', margin: 0 }}>⚠️ No members added yet. Please add all family members above.</p>
+                          ) : (
+                            <div>
+                              <ul style={{ margin: '0 0 0.5rem 1.2rem', padding: 0, fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                                {newParticipant.familyMembers.map((m, i) => (
+                                  <li key={i} style={{ marginBottom: '0.2rem' }}>
+                                    <strong>{m.name || 'Unnamed'}</strong> ({m.relation || 'Relation N/A'}{m.age ? `, ${m.age} yrs` : ''}) {m.age && parseInt(m.age) < 5 ? <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>— Free (Under 5)</span> : ''}
+                                  </li>
+                                ))}
+                              </ul>
+                              {selectedYatra?.pricePerPerson && (
+                                <div style={{ fontSize: '0.85rem', fontWeight: 'bold', color: 'var(--primary)', marginBottom: '0.5rem' }}>
+                                  Estimated Yatra Amount: ₹{(newParticipant.familyMembers.filter(m => !m.age || parseInt(m.age) >= 5).length * parseFloat(selectedYatra.pricePerPerson)).toLocaleString()}
+                                </div>
+                              )}
+                              <label className="checkbox-group" style={{ cursor: 'pointer', fontSize: '0.85rem', fontWeight: '600', marginTop: '0.5rem' }}>
+                                <input 
+                                  type="checkbox" 
+                                  required 
+                                  checked={familyConfirmed} 
+                                  onChange={(e) => setFamilyConfirmed(e.target.checked)} 
+                                />
+                                <span>I reconfirm that all family members (including myself) are listed above.</span>
+                              </label>
+                            </div>
+                          )}
+                        </div>
                       </div>
                     </div>
                   )}
 
-                  <div className="form-group">
-                    <label>Special Dietary Requirements (e.g. Sattvic, No onion/garlic, Diabetic diet)</label>
-                    <input type="text" className="form-control" placeholder="Pure sattvic, no garlic" value={newParticipant.specialRequirements} onChange={(e) => setNewParticipant({...newParticipant, specialRequirements: e.target.value})} />
+                  <div className="grid-cols-2">
+                    <div className="form-group">
+                      <label>Mode of Travel</label>
+                      <select value={newParticipant.travelMode} onChange={(e) => setNewParticipant({...newParticipant, travelMode: e.target.value})}>
+                        <option value="organised">As Organised</option>
+                        <option value="self">Self Travel</option>
+                      </select>
+                    </div>
+                    {newParticipant.travelMode === 'self' && (
+                      <div className="form-group">
+                        <label>Travel Type</label>
+                        <select value={newParticipant.travelType} onChange={(e) => setNewParticipant({...newParticipant, travelType: e.target.value})}>
+                          <option value="">Select Type...</option>
+                          <option value="air">Air</option>
+                          <option value="rail">Rail</option>
+                          <option value="road">Road</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
-
-                  <div className="form-group">
-                    <label>Medical Notes or History</label>
-                    <input type="text" className="form-control" placeholder="Elderly member cannot walk long distances" value={newParticipant.medicalNotes} onChange={(e) => setNewParticipant({...newParticipant, medicalNotes: e.target.value})} />
-                  </div>
+                  
+                  {newParticipant.travelMode === 'self' && newParticipant.travelType === 'rail' && (
+                    <div className="grid-cols-2">
+                      <div className="form-group">
+                        <label>Boarding Station</label>
+                        <input type="text" className="form-control" placeholder="Mumbai Central" value={newParticipant.boardingStation} onChange={(e) => setNewParticipant({...newParticipant, boardingStation: e.target.value})} />
+                      </div>
+                      <div className="form-group">
+                        <label>Dropping Station</label>
+                        <input type="text" className="form-control" placeholder="Mathura Jn" value={newParticipant.droppingStation} onChange={(e) => setNewParticipant({...newParticipant, droppingStation: e.target.value})} />
+                      </div>
+                    </div>
+                  )}
 
                   <div className="form-group">
                     <label>Remarks / Notes</label>
@@ -1701,7 +2748,7 @@ export default function App() {
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
             <div className="card" style={{ width: '100%', maxWidth: '500px', padding: '2.5rem', textAlign: 'center' }}>
               <Compass size={40} style={{ color: 'var(--primary)', marginBottom: '0.5rem', display: 'inline-block' }} />
-              <h2>UPI QR Scan to Pay</h2>
+              <h2>Yatra Payment</h2>
               <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Complete your yatra fees payment to confirm booking</p>
 
               {publicPayStatus === 'success' ? (
@@ -1717,45 +2764,159 @@ export default function App() {
                 </div>
               ) : (
                 <form onSubmit={handlePublicPayment}>
-                  {/* UPI QR SCANNER BOX */}
-                  <div style={{ backgroundColor: 'var(--bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px dashed var(--primary-border)', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                    <img 
-                      src={getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, parseFloat(publicPayAmount) || 0, 'Yatra Payment')} 
-                      alt="UPI QR Scanner" 
-                      style={{ width: '200px', height: '200px', backgroundColor: 'white', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                    />
-                    <div style={{ marginTop: '1rem', fontSize: '0.9rem' }}>
-                      <strong>UPI ID:</strong> <code>{selectedYatra.upiId}</code><br />
-                      <strong>Account Name:</strong> {selectedYatra.upiName}
+                  {/* Payment Method Toggle */}
+                  <div style={{ display: 'flex', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '0.25rem', marginBottom: '1.5rem' }}>
+                    <button
+                      type="button"
+                      className={`btn ${publicPayMethod === 'upi' ? 'btn-primary' : ''}`}
+                      style={{ flex: 1, padding: '0.6rem', background: publicPayMethod === 'upi' ? '' : 'none', color: publicPayMethod === 'upi' ? '' : 'var(--text-muted)' }}
+                      onClick={() => setPublicPayMethod('upi')}
+                    >📱 Pay via UPI</button>
+                    <button
+                      type="button"
+                      className={`btn ${publicPayMethod === 'cash' ? 'btn-primary' : ''}`}
+                      style={{ flex: 1, padding: '0.6rem', background: publicPayMethod === 'cash' ? '' : 'none', color: publicPayMethod === 'cash' ? '' : 'var(--text-muted)' }}
+                      onClick={() => setPublicPayMethod('cash')}
+                    >💵 Pay by Cash</button>
+                  </div>
+
+                  {/* UPI QR SCANNER BOX - only for UPI */}
+                  {publicPayMethod === 'upi' && (
+                    <div style={{ backgroundColor: 'var(--bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px dashed var(--primary-border)', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <img 
+                        src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, parseFloat(publicPayAmount) || 0, 'Yatra Payment')} 
+                        alt="UPI QR Scanner" 
+                        style={{ width: '220px', height: '220px', objectFit: 'contain', backgroundColor: 'white', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
+                      />
+                      <div style={{ marginTop: '1rem', fontSize: '0.9rem' }}>
+                        <strong>UPI ID:</strong> <code>{selectedYatra.upiId}</code><br />
+                        <strong>Account Name:</strong> {selectedYatra.upiName}
+                      </div>
                     </div>
-                  </div>
+                  )}
 
-                  <div className="form-group" style={{ textAlign: 'left' }}>
-                    <label>Amount Paid (₹)</label>
-                    <input type="number" required className="form-control" placeholder="12000" value={publicPayAmount} onChange={(e) => setPublicPayAmount(e.target.value)} />
-                  </div>
+                  {/* Cash payment info */}
+                  {publicPayMethod === 'cash' && (
+                    <div style={{ backgroundColor: 'var(--success-light)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem', fontSize: '0.85rem', color: 'var(--success)', textAlign: 'left' }}>
+                      <strong>💵 Cash Payment:</strong> Please hand over the cash amount to the Yatra organizer and enter the amount below. The organizer will verify and confirm your payment.
+                    </div>
+                  )}
 
-                  <div className="form-group" style={{ textAlign: 'left' }}>
-                    <label>UPI Transaction / Reference Number (12 Digits)</label>
-                    <input type="text" required className="form-control" placeholder="UPI1234901824..." value={publicPayRef} onChange={(e) => setPublicPayRef(e.target.value)} />
-                  </div>
+                  {/* Exact Amount Calculation & Display */}
+                  {(() => {
+                    const pObj = paymentParticipant || participants.find(p => p.id === currentRoute.id);
+                    const yPrice = selectedYatra.pricePerPerson ? parseFloat(selectedYatra.pricePerPerson) : 0;
+                    
+                    let billableCount = 1;
+                    let freeCount = 0;
+                    let totalFee = 0;
+                    let isCustom = false;
 
-                  <div className="form-group" style={{ textAlign: 'left' }}>
-                    <label>Payment Date</label>
-                    <input type="date" required className="form-control" value={publicPayDate} onChange={(e) => setPublicPayDate(e.target.value)} />
-                  </div>
-
-                  <div className="form-group" style={{ textAlign: 'left' }}>
-                    <label>Upload Screenshot / Receipt Proof</label>
-                    <input type="file" required accept="image/*" className="form-control" onChange={(e) => {
-                      if (e.target.files && e.target.files[0]) {
-                        handleImageUpload(e.target.files[0], setPublicPayScreenshot);
+                    if (pObj) {
+                      if (pObj.type === 'family') {
+                        if (pObj.familyMembers && pObj.familyMembers.length > 0) {
+                          billableCount = pObj.familyMembers.filter(m => !m.age || parseInt(m.age) >= 5).length || 1;
+                          freeCount = pObj.familyMembers.filter(m => m.age && parseInt(m.age) < 5).length;
+                        } else {
+                          billableCount = pObj.membersCount || 1;
+                        }
+                      } else {
+                        billableCount = 1;
                       }
-                    }} />
+
+                      if (pObj.customPrice && parseFloat(pObj.customPrice) > 0) {
+                        totalFee = parseFloat(pObj.customPrice);
+                        isCustom = true;
+                      } else if (yPrice > 0) {
+                        totalFee = billableCount * yPrice;
+                      }
+                    } else if (yPrice > 0) {
+                      totalFee = yPrice;
+                    }
+
+                    return (
+                      <div style={{ backgroundColor: 'var(--primary-light)', border: '1px solid var(--primary-border)', padding: '1.25rem', borderRadius: 'var(--radius-md)', marginBottom: '1.25rem', textAlign: 'left' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                          <span style={{ fontSize: '0.88rem', color: 'var(--text)' }}>
+                            {pObj ? (
+                              <>Devotee: <strong>{pObj.name}</strong> {pObj.type === 'family' ? `(${pObj.familyName || 'Family'})` : ''}</>
+                            ) : <span>Yatra: <strong>{selectedYatra.name}</strong></span>}
+                          </span>
+                          <span style={{ fontSize: '0.75rem', backgroundColor: 'var(--card-bg)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border)', fontWeight: 'bold' }}>
+                            {pObj?.type === 'family' ? `👨‍👩‍👧‍👦 ${pObj.membersCount || (billableCount + freeCount)} Seats` : '👤 1 Seat'}
+                          </span>
+                        </div>
+
+                        {/* Breakdown text */}
+                        {isCustom ? (
+                          <div style={{ fontSize: '0.82rem', color: 'var(--primary)', fontWeight: '500', marginBottom: '0.4rem' }}>
+                            ✏️ <em>Special Customized Yatra Fee approved by Organizer</em>
+                          </div>
+                        ) : yPrice > 0 ? (
+                          <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+                            ₹{yPrice.toLocaleString()} per person × {billableCount} billable member{billableCount > 1 ? 's' : ''}
+                            {freeCount > 0 && <span style={{ color: 'var(--success)', fontWeight: 'bold' }}> ({freeCount} child under 5 yrs is FREE)</span>}
+                          </div>
+                        ) : null}
+
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.6rem', borderTop: '1px dashed hsla(210, 80%, 50%, 0.25)', marginTop: '0.3rem' }}>
+                          <span style={{ fontSize: '0.95rem', fontWeight: 'bold', color: 'var(--text)' }}>Exact Amount to Pay:</span>
+                          <span style={{ fontSize: '1.4rem', fontWeight: '800', color: 'var(--primary)' }}>₹{totalFee.toLocaleString()}</span>
+                        </div>
+                      </div>
+                    );
+                  })()}
+
+                  <div className="form-group" style={{ textAlign: 'left' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.3rem' }}>
+                      <label style={{ margin: 0 }}>Amount to Submit (₹)</label>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Part payment accepted</span>
+                    </div>
+                    <input 
+                      type="number" 
+                      required 
+                      className="form-control" 
+                      placeholder="Enter payment amount" 
+                      value={publicPayAmount} 
+                      onChange={(e) => setPublicPayAmount(e.target.value)} 
+                      style={{ fontSize: '1.15rem', fontWeight: 'bold', color: 'var(--primary)' }}
+                    />
                   </div>
+
+                  {/* UPI-only fields */}
+                  {publicPayMethod === 'upi' && (
+                    <>
+                      <div className="form-group" style={{ textAlign: 'left' }}>
+                        <label>UPI Transaction / Reference Number (12 Digits)</label>
+                        <input type="text" required className="form-control" placeholder="UPI1234901824..." value={publicPayRef} onChange={(e) => setPublicPayRef(e.target.value)} />
+                      </div>
+
+                      <div className="form-group" style={{ textAlign: 'left' }}>
+                        <label>Payment Date</label>
+                        <input type="date" required className="form-control" value={publicPayDate} onChange={(e) => setPublicPayDate(e.target.value)} />
+                      </div>
+
+                      <div className="form-group" style={{ textAlign: 'left' }}>
+                        <label>Upload Screenshot / Receipt Proof</label>
+                        <input type="file" required accept="image/*" className="form-control" onChange={(e) => {
+                          if (e.target.files && e.target.files[0]) {
+                            handleImageUpload(e.target.files[0], setPublicPayScreenshot);
+                          }
+                        }} />
+                      </div>
+                    </>
+                  )}
+
+                  {/* Cash-only: payment date */}
+                  {publicPayMethod === 'cash' && (
+                    <div className="form-group" style={{ textAlign: 'left' }}>
+                      <label>Date of Cash Payment</label>
+                      <input type="date" required className="form-control" value={publicPayDate} onChange={(e) => setPublicPayDate(e.target.value)} />
+                    </div>
+                  )}
 
                   <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
-                    Submit Payment Receipt
+                    {publicPayMethod === 'cash' ? 'Submit Cash Payment' : 'Submit Payment Receipt'}
                   </button>
                 </form>
               )}
@@ -1864,9 +3025,9 @@ export default function App() {
                       
                       <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', display: 'inline-block', marginBottom: '1rem', border: '1px solid var(--border)' }}>
                         <img 
-                          src={getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, 0, 'Confirm Yatra Seat')} 
+                          src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, 0, 'Confirm Yatra Seat')} 
                           alt="Pay UPI" 
-                          style={{ width: '150px', height: '150px' }}
+                          style={{ width: '160px', height: '160px', objectFit: 'contain', backgroundColor: 'white', padding: '0.25rem', borderRadius: 'var(--radius-sm)' }}
                         />
                       </div>
                       
@@ -1971,6 +3132,10 @@ export default function App() {
                   <input type="date" required className="form-control" value={newYatra.registrationDeadline} onChange={(e) => setNewYatra({...newYatra, registrationDeadline: e.target.value})} />
                 </div>
               </div>
+              <div className="form-group">
+                <label>💰 Price Per Person (₹) <span style={{ color: 'var(--text-muted)', fontWeight: 'normal', fontSize: '0.8rem' }}>— Children under 5 yrs are free</span></label>
+                <input type="number" className="form-control" min={0} placeholder="e.g. 7000" value={newYatra.pricePerPerson} onChange={(e) => setNewYatra({...newYatra, pricePerPerson: e.target.value})} />
+              </div>
               <div className="grid-cols-2">
                 <div className="form-group">
                   <label>Paytm/UPI ID for Devotees</label>
@@ -1980,6 +3145,31 @@ export default function App() {
                   <label>UPI Account Name</label>
                   <input type="text" required className="form-control" placeholder="Rohit Wadhwani" value={newYatra.upiName} onChange={(e) => setNewYatra({...newYatra, upiName: e.target.value})} />
                 </div>
+              </div>
+
+              <div className="form-group">
+                <label>🖼️ Custom Payment Scanner / Standee QR Image <span style={{ color: 'var(--text-muted)', fontWeight: 'normal', fontSize: '0.8rem' }}>(Optional)</span></label>
+                <input 
+                  type="file" 
+                  accept="image/*" 
+                  className="form-control" 
+                  onChange={(e) => {
+                    if (e.target.files && e.target.files[0]) {
+                      handleImageUpload(e.target.files[0], (base64) => setNewYatra({...newYatra, customQrImageUrl: base64}));
+                    }
+                  }} 
+                />
+                {newYatra.customQrImageUrl && (
+                  <div style={{ marginTop: '0.5rem', display: 'flex', alignItems: 'center', gap: '0.75rem', backgroundColor: 'var(--bg)', padding: '0.5rem', borderRadius: 'var(--radius-sm)' }}>
+                    <img src={newYatra.customQrImageUrl} alt="Custom QR Preview" style={{ width: '60px', height: '60px', objectFit: 'contain', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', backgroundColor: 'white' }} />
+                    <div>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--success)', fontWeight: 'bold' }}>✓ Custom Scanner Image Attached</span>
+                      <br />
+                      <button type="button" className="btn btn-outline" style={{ fontSize: '0.7rem', padding: '0.15rem 0.4rem', marginTop: '0.2rem' }} onClick={() => setNewYatra({...newYatra, customQrImageUrl: ''})}>Remove Image</button>
+                    </div>
+                  </div>
+                )}
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Upload your real PhonePe, GPay, or Paytm standee screenshot. If left blank, an auto-generated QR code is used.</span>
               </div>
               <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>{editingYatraId ? 'Save Changes' : 'Create Yatra Tour'}</button>
             </form>
@@ -2066,17 +3256,74 @@ export default function App() {
           <div className="modal-content">
             <div className="modal-header">
               <h3>Register Devotee Details</h3>
-              <button className="modal-close" onClick={() => setIsAddParticipantOpen(false)}>×</button>
+              <button className="modal-close" onClick={() => { setIsAddParticipantOpen(false); setAdminAutoFilledDevotee(null); }}>×</button>
             </div>
             <form onSubmit={handleAddParticipant}>
+              {/* Returning Devotee Banner */}
+              {adminAutoFilledDevotee && (
+                <div style={{
+                  backgroundColor: '#eff6ff',
+                  border: '1.5px solid #3b82f6',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '0.75rem 1rem',
+                  marginBottom: '1rem',
+                  display: 'flex',
+                  gap: '0.65rem',
+                  alignItems: 'center',
+                  justifyContent: 'space-between'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <UserCheck size={20} style={{ color: '#2563eb', flexShrink: 0 }} />
+                    <span style={{ fontSize: '0.85rem', color: '#1e40af' }}>
+                      <strong>Returning Devotee:</strong> {adminAutoFilledDevotee.name} {adminAutoFilledDevotee.familyName ? `(${adminAutoFilledDevotee.familyName})` : ''} — {adminAutoFilledDevotee.familyMembers?.length || 1} family member(s) auto-filled!
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    className="btn btn-outline"
+                    style={{ fontSize: '0.75rem', padding: '0.2rem 0.5rem', height: 'auto', color: '#dc2626', borderColor: '#fca5a5' }}
+                    onClick={() => {
+                      setAdminAutoFilledDevotee(null);
+                      setNewParticipant({
+                        name: '', phone: newParticipant.phone, email: '', location: '',
+                        type: 'individual', familyName: '', membersCount: 1, familyMembers: [],
+                        memberDetails: '', travelMode: 'organised', travelType: '',
+                        boardingStation: '', droppingStation: '', remarks: '',
+                        status: 'interested', paymentStatus: 'pending'
+                      });
+                    }}
+                  >
+                    Clear
+                  </button>
+                </div>
+              )}
+
               <div className="grid-cols-2">
                 <div className="form-group">
-                  <label>Full Name</label>
-                  <input type="text" required className="form-control" placeholder="Amit Gupta" value={newParticipant.name} onChange={(e) => setNewParticipant({...newParticipant, name: e.target.value})} />
+                  <label>Phone Number (WhatsApp)</label>
+                  <input
+                    type="tel"
+                    required
+                    className="form-control"
+                    placeholder="9876543210"
+                    value={newParticipant.phone}
+                    onChange={(e) => handleDevoteePhoneChange(e.target.value, true)}
+                    onBlur={() => handleDevoteePhoneChange(newParticipant.phone, true)}
+                  />
+                  <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block' }}>
+                    💡 Enter 10-digit number to auto-populate saved profile & family.
+                  </small>
                 </div>
                 <div className="form-group">
-                  <label>Phone Number (WhatsApp)</label>
-                  <input type="tel" required className="form-control" placeholder="9876543210" value={newParticipant.phone} onChange={(e) => setNewParticipant({...newParticipant, phone: e.target.value})} />
+                  <label>Full Name</label>
+                  <input
+                    type="text"
+                    required
+                    className="form-control"
+                    placeholder="Amit Gupta"
+                    value={newParticipant.name}
+                    onChange={(e) => setNewParticipant({...newParticipant, name: e.target.value})}
+                  />
                 </div>
               </div>
               <div className="grid-cols-2">
@@ -2085,8 +3332,8 @@ export default function App() {
                   <input type="email" className="form-control" placeholder="amit@gmail.com" value={newParticipant.email} onChange={(e) => setNewParticipant({...newParticipant, email: e.target.value})} />
                 </div>
                 <div className="form-group">
-                  <label>City</label>
-                  <input type="text" className="form-control" placeholder="Pune" value={newParticipant.city} onChange={(e) => setNewParticipant({...newParticipant, city: e.target.value})} />
+                  <label>Location</label>
+                  <input type="text" className="form-control" placeholder="Pune" value={newParticipant.location} onChange={(e) => setNewParticipant({...newParticipant, location: e.target.value})} />
                 </div>
               </div>
               <div className="form-group">
@@ -2103,25 +3350,144 @@ export default function App() {
                     <label>Family Name</label>
                     <input type="text" className="form-control" placeholder="Gupta Family" value={newParticipant.familyName} onChange={(e) => setNewParticipant({...newParticipant, familyName: e.target.value})} />
                   </div>
-                  <div className="form-group">
-                    <label>Total Family Members</label>
-                    <input type="number" className="form-control" min={1} value={newParticipant.membersCount} onChange={(e) => setNewParticipant({...newParticipant, membersCount: parseInt(e.target.value) || 1})} />
+
+                  {/* Notice */}
+                  <div style={{ backgroundColor: 'var(--warning-light)', color: 'var(--warning)', border: '1px solid hsla(38,92%,50%,0.3)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '0.85rem', fontSize: '0.82rem' }}>
+                    <strong>Note:</strong> Ensure the primary devotee is added with Relation: <strong>"Self"</strong> in the list below so their seat is counted.
                   </div>
-                  <div className="form-group">
-                    <label>Members Details (Names/Ages)</label>
-                    <textarea className="form-control" rows={2} placeholder="Amit (40), Sunita (38)..." value={newParticipant.memberDetails} onChange={(e) => setNewParticipant({...newParticipant, memberDetails: e.target.value})} />
+
+                  {!(newParticipant.familyMembers || []).some(m => m.relation === 'Self') && (
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{ marginBottom: '0.75rem', fontSize: '0.8rem', padding: '0.35rem 0.6rem', borderColor: 'var(--primary)', color: 'var(--primary)', width: '100%', backgroundColor: 'var(--primary-light)', fontWeight: '600' }}
+                      onClick={() => {
+                        const selfMember = { name: newParticipant.name || '', relation: 'Self', age: '', phone: newParticipant.phone || '' };
+                        const current = newParticipant.familyMembers || [];
+                        const updated = [selfMember, ...current];
+                        setNewParticipant({ ...newParticipant, familyMembers: updated, membersCount: updated.length });
+                      }}
+                    >
+                      👤 Click to Add Devotee ({newParticipant.name || 'Primary'}) as 1st Member
+                    </button>
+                  )}
+
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <label style={{ fontWeight: '600', fontSize: '0.9rem', display: 'block', marginBottom: '0.5rem' }}>Family Members</label>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>Add details for each family member. Children under 5 years are exempt from yatra fees.</p>
+                    
+                    {(newParticipant.familyMembers || []).map((member, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                        <div style={{ flex: 2 }}>
+                          <input type="text" className="form-control" placeholder="Full Name" value={member.name} onChange={(e) => {
+                            const updated = [...newParticipant.familyMembers];
+                            updated[idx] = { ...updated[idx], name: e.target.value };
+                            setNewParticipant({...newParticipant, familyMembers: updated});
+                          }} style={{ fontSize: '0.85rem', padding: '0.4rem' }} />
+                        </div>
+                        <div style={{ flex: 1 }}>
+                          <select className="form-control" value={member.relation} onChange={(e) => {
+                            const updated = [...newParticipant.familyMembers];
+                            updated[idx] = { ...updated[idx], relation: e.target.value };
+                            setNewParticipant({...newParticipant, familyMembers: updated});
+                          }} style={{ fontSize: '0.85rem', padding: '0.4rem' }}>
+                            <option value="">Relation</option>
+                            <option value="Self">Self</option>
+                            <option value="Spouse">Spouse</option>
+                            <option value="Son">Son</option>
+                            <option value="Daughter">Daughter</option>
+                            <option value="Father">Father</option>
+                            <option value="Mother">Mother</option>
+                            <option value="Brother">Brother</option>
+                            <option value="Sister">Sister</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                        <div style={{ width: '60px' }}>
+                          <input type="number" className="form-control" placeholder="Age" min={0} max={120} value={member.age} onChange={(e) => {
+                            const updated = [...newParticipant.familyMembers];
+                            updated[idx] = { ...updated[idx], age: e.target.value };
+                            setNewParticipant({...newParticipant, familyMembers: updated});
+                          }} style={{ fontSize: '0.85rem', padding: '0.4rem' }} />
+                        </div>
+                        <div style={{ flex: 1.5 }}>
+                          <input type="tel" className="form-control" placeholder="Phone No." value={member.phone} onChange={(e) => {
+                            const updated = [...newParticipant.familyMembers];
+                            updated[idx] = { ...updated[idx], phone: e.target.value };
+                            setNewParticipant({...newParticipant, familyMembers: updated});
+                          }} style={{ fontSize: '0.85rem', padding: '0.4rem' }} />
+                        </div>
+                        <button type="button" className="btn btn-danger btn-icon" style={{ padding: '0.3rem', flexShrink: 0 }} onClick={() => {
+                          const updated = newParticipant.familyMembers.filter((_, i) => i !== idx);
+                          setNewParticipant({...newParticipant, familyMembers: updated, membersCount: updated.length || 1});
+                        }}>
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+
+                    <button type="button" className="btn btn-outline" style={{ width: '100%', marginTop: '0.5rem', padding: '0.5rem', fontSize: '0.85rem' }} onClick={() => {
+                      const updated = [...(newParticipant.familyMembers || []), { name: '', relation: '', age: '', phone: '' }];
+                      setNewParticipant({...newParticipant, familyMembers: updated, membersCount: updated.length});
+                    }}>
+                      <Plus size={14} /> Add Family Member
+                    </button>
+
+                    {/* Admin Modal Family Summary Card */}
+                    <div style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.85rem', marginTop: '1rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                        <strong style={{ fontSize: '0.85rem' }}>Total Members: {newParticipant.familyMembers?.length || 0}</strong>
+                        {selectedYatra?.pricePerPerson && (
+                          <span style={{ fontSize: '0.85rem', color: 'var(--primary)', fontWeight: 'bold' }}>
+                            Yatra Total: ₹{((newParticipant.familyMembers?.filter(m => !m.age || parseInt(m.age) >= 5).length || 0) * parseFloat(selectedYatra.pricePerPerson)).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        {newParticipant.familyMembers?.filter(m => !m.age || parseInt(m.age) >= 5).length || 0} billable member(s)
+                        {(newParticipant.familyMembers?.filter(m => m.age && parseInt(m.age) < 5).length || 0) > 0 && (
+                          <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>
+                            {' '}(+{newParticipant.familyMembers.filter(m => m.age && parseInt(m.age) < 5).length} child under 5 yrs traveling FREE)
+                          </span>
+                        )}
+                      </div>
+                    </div>
                   </div>
                 </div>
               )}
 
-              <div className="form-group">
-                <label>Special Dietary Requirements</label>
-                <input type="text" className="form-control" placeholder="No Onion / Garlic prasadam" value={newParticipant.specialRequirements} onChange={(e) => setNewParticipant({...newParticipant, specialRequirements: e.target.value})} />
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Mode of Travel</label>
+                  <select value={newParticipant.travelMode} onChange={(e) => setNewParticipant({...newParticipant, travelMode: e.target.value})}>
+                    <option value="organised">As Organised</option>
+                    <option value="self">Self Travel</option>
+                  </select>
+                </div>
+                {newParticipant.travelMode === 'self' && (
+                  <div className="form-group">
+                    <label>Travel Type</label>
+                    <select value={newParticipant.travelType} onChange={(e) => setNewParticipant({...newParticipant, travelType: e.target.value})}>
+                      <option value="">Select Type...</option>
+                      <option value="air">Air</option>
+                      <option value="rail">Rail</option>
+                      <option value="road">Road</option>
+                    </select>
+                  </div>
+                )}
               </div>
-              <div className="form-group">
-                <label>Medical Comments / Notes</label>
-                <input type="text" className="form-control" placeholder="Diabetes patient" value={newParticipant.medicalNotes} onChange={(e) => setNewParticipant({...newParticipant, medicalNotes: e.target.value})} />
-              </div>
+              {newParticipant.travelMode === 'self' && newParticipant.travelType === 'rail' && (
+                <div className="grid-cols-2">
+                  <div className="form-group">
+                    <label>Boarding Station</label>
+                    <input type="text" className="form-control" placeholder="Mumbai Central" value={newParticipant.boardingStation} onChange={(e) => setNewParticipant({...newParticipant, boardingStation: e.target.value})} />
+                  </div>
+                  <div className="form-group">
+                    <label>Dropping Station</label>
+                    <input type="text" className="form-control" placeholder="Mathura Jn" value={newParticipant.droppingStation} onChange={(e) => setNewParticipant({...newParticipant, droppingStation: e.target.value})} />
+                  </div>
+                </div>
+              )}
               <div className="form-group">
                 <label>Remarks</label>
                 <input type="text" className="form-control" value={newParticipant.remarks} onChange={(e) => setNewParticipant({...newParticipant, remarks: e.target.value})} />
