@@ -74,7 +74,9 @@ export default function App() {
   const [selectedHotelFilter, setSelectedHotelFilter] = useState('all');
   const [newRoom, setNewRoom] = useState({ 
     roomNumber: '', 
-    roomType: 'Double Bed', 
+    roomType: 'Twin Bed (2 Beds)', 
+    bedCount: 2,
+    extraMattressAllowed: 0,
     capacity: 2, 
     floor: 'Ground Floor', 
     hotelName: '', 
@@ -619,46 +621,161 @@ export default function App() {
       }
     }
 
+    const bedCount = parseInt(newRoom.bedCount) || parseInt(newRoom.capacity) || 2;
+    const roomPayload = {
+      ...newRoom,
+      bedCount,
+      capacity: bedCount,
+      extraMattressAllowed: parseInt(newRoom.extraMattressAllowed) || 0,
+      extraMattressCost: parseInt(newRoom.extraMattressCost) || 500,
+      hotelName,
+      hotelId
+    };
+
     if (editingRoomId) {
-      await db.updateRoom(editingRoomId, { ...newRoom, hotelName, hotelId });
+      await db.updateRoom(editingRoomId, roomPayload);
     } else {
       const id = 'rm_' + Math.random().toString(36).substring(2, 9);
-      await db.addRoom({ ...newRoom, id, yatraId: selectedYatra.id, hotelName, hotelId });
+      await db.addRoom({ ...roomPayload, id, yatraId: selectedYatra.id });
     }
     setIsAddRoomOpen(false);
     setEditingRoomId(null);
-    setNewRoom({ roomNumber: '', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', hotelName: '', hotelId: '', extraMattressCost: 500, notes: '', isCustomHotel: false, customHotelName: '', customHotelAddress: '', customHotelContact: '', customHotelPhone: '' });
+    setNewRoom({ 
+      roomNumber: '', 
+      roomType: 'Twin Bed (2 Beds)', 
+      bedCount: 2, 
+      capacity: 2, 
+      extraMattressAllowed: 0,
+      floor: 'Ground Floor', 
+      hotelName: '', 
+      hotelId: '', 
+      extraMattressCost: 500, 
+      notes: '', 
+      isCustomHotel: false, 
+      customHotelName: '', 
+      customHotelAddress: '', 
+      customHotelContact: '', 
+      customHotelPhone: '' 
+    });
     setRefreshTrigger(prev => prev + 1);
   };
 
   const handleDeleteRoom = async (roomId) => {
     if (window.confirm("Delete this room? Devotees assigned to this room will become unallocated.")) {
       await db.deleteRoom(roomId);
-      const affected = participants.filter(p => p.roomId === roomId);
-      for (const p of affected) {
-        await db.updateParticipant(p.id, { roomId: '', roomNumber: '', hotelName: '', hotelId: '' });
+      for (const p of participants) {
+        let needsUpdate = false;
+        const updateData = {};
+        if (p.roomId === roomId) {
+          needsUpdate = true;
+          updateData.roomId = '';
+          updateData.roomNumber = '';
+          updateData.hotelName = '';
+          updateData.hotelId = '';
+        }
+        if (p.familyMembers && p.familyMembers.some(m => (m.roomId || p.roomId) === roomId)) {
+          needsUpdate = true;
+          updateData.familyMembers = p.familyMembers.map(m => {
+            const curR = m.roomId !== undefined ? m.roomId : p.roomId;
+            return curR === roomId ? { ...m, roomId: '', roomNumber: '', hotelName: '', hotelId: '' } : m;
+          });
+        }
+        if (needsUpdate) {
+          await db.updateParticipant(p.id, updateData);
+        }
       }
       setRefreshTrigger(prev => prev + 1);
     }
   };
 
+  // Reassign whole participant / family to a room (or unassign if roomId === '')
   const handleReassignRoom = async (participantId, roomId) => {
+    const p = participants.find(x => x.id === participantId);
+    if (!p) return;
+
     if (!roomId) {
-      await db.updateParticipant(participantId, { roomId: '', roomNumber: '', hotelName: '', hotelId: '' });
+      const updatedMembers = p.familyMembers ? p.familyMembers.map(m => ({
+        ...m,
+        roomId: '',
+        roomNumber: '',
+        hotelName: '',
+        hotelId: ''
+      })) : [];
+      await db.updateParticipant(participantId, {
+        roomId: '',
+        roomNumber: '',
+        hotelName: '',
+        hotelId: '',
+        ...(p.familyMembers ? { familyMembers: updatedMembers } : {})
+      });
     } else {
       const rm = rooms.find(r => r.id === roomId);
       if (rm) {
-        await db.updateParticipant(participantId, {
+        const updatedMembers = p.familyMembers ? p.familyMembers.map(m => ({
+          ...m,
           roomId: rm.id,
           roomNumber: rm.roomNumber,
           hotelName: rm.hotelName,
           hotelId: rm.hotelId || ''
+        })) : [];
+        await db.updateParticipant(participantId, {
+          roomId: rm.id,
+          roomNumber: rm.roomNumber,
+          hotelName: rm.hotelName,
+          hotelId: rm.hotelId || '',
+          ...(p.familyMembers ? { familyMembers: updatedMembers } : {})
         });
       }
     }
     setRefreshTrigger(prev => prev + 1);
   };
 
+  // Reassign an individual family member to any room (or unassign)
+  const handleReassignMemberRoom = async (participantId, memberIndex, roomId) => {
+    const p = participants.find(x => x.id === participantId);
+    if (!p || !p.familyMembers || memberIndex === null || memberIndex === undefined) return;
+
+    const updatedMembers = [...p.familyMembers];
+    const targetMember = updatedMembers[memberIndex];
+    if (!targetMember) return;
+
+    let newRoomId = '';
+    let newRoomNumber = '';
+    let newHotelName = '';
+    let newHotelId = '';
+
+    if (roomId) {
+      const rm = rooms.find(r => r.id === roomId);
+      if (rm) {
+        newRoomId = rm.id;
+        newRoomNumber = rm.roomNumber;
+        newHotelName = rm.hotelName;
+        newHotelId = rm.hotelId || '';
+      }
+    }
+
+    updatedMembers[memberIndex] = {
+      ...targetMember,
+      roomId: newRoomId,
+      roomNumber: newRoomNumber,
+      hotelName: newHotelName,
+      hotelId: newHotelId
+    };
+
+    // If primary devotee (memberIndex === 0 or relation === 'Self'), also update parent record
+    const updateData = { familyMembers: updatedMembers };
+    if (memberIndex === 0 || targetMember.relation === 'Self') {
+      updateData.roomId = newRoomId;
+      updateData.roomNumber = newRoomNumber;
+      updateData.hotelName = newHotelName;
+      updateData.hotelId = newHotelId;
+    }
+
+    await db.updateParticipant(participantId, updateData);
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  // Smart Auto-Allocation considering bed counts, family matching, and same-hotel multi-room splits
   const autoAllocateRooms = async () => {
     if (!rooms || rooms.length === 0) {
       alert("Please add room inventory for your booked hotels before running auto-allocation.");
@@ -671,116 +788,283 @@ export default function App() {
       return;
     }
 
-    const roomTracker = rooms.map(r => ({
-      ...r,
-      baseCapacity: parseInt(r.capacity) || 2,
-      remaining: parseInt(r.capacity) || 2,
-      allocated: []
-    }));
+    // Build tracking inventory of rooms with accurate bedCount
+    const roomTracker = rooms.map(r => {
+      const beds = parseInt(r.bedCount) || parseInt(r.capacity) || 2;
+      return {
+        id: r.id,
+        roomNumber: r.roomNumber,
+        roomType: r.roomType || 'Standard Room',
+        floor: r.floor || 'Floor',
+        hotelName: r.hotelName,
+        hotelId: r.hotelId || '',
+        bedCount: beds,
+        remainingBeds: beds,
+        extraMattressAllowed: parseInt(r.extraMattressAllowed) || 0,
+        occupants: []
+      };
+    });
 
     const families = devotees.filter(p => p.type === 'family');
     const individuals = devotees.filter(p => p.type !== 'family');
-    const updates = [];
-    let unallocatedCount = 0;
 
-    // 1. Allocate Families first into dedicated rooms across booked hotels
+    // Sort families descending by size so larger families get dedicated suites first
+    families.sort((a, b) => {
+      const sizeA = (a.familyMembers && a.familyMembers.length) || a.membersCount || 1;
+      const sizeB = (b.familyMembers && b.familyMembers.length) || b.membersCount || 1;
+      return sizeB - sizeA;
+    });
+
+    const participantUpdates = [];
+    let unallocatedDevoteeCount = 0;
+
+    // 1. Allocate Families
     for (const fam of families) {
-      const famSize = (fam.familyMembers && fam.familyMembers.length) || fam.membersCount || 1;
-      
-      const emptyRooms = roomTracker
-        .filter(r => r.allocated.length === 0)
-        .sort((a, b) => Math.abs(a.baseCapacity - famSize) - Math.abs(b.baseCapacity - famSize));
+      const members = (fam.familyMembers && fam.familyMembers.length > 0)
+        ? [...fam.familyMembers]
+        : [{ name: fam.name, relation: 'Self', age: '', phone: fam.phone }];
+      const famSize = members.length;
 
-      if (emptyRooms.length > 0) {
-        const chosen = emptyRooms[0];
-        chosen.remaining -= famSize;
-        chosen.allocated.push(fam);
-        updates.push({
-          id: fam.id,
-          roomId: chosen.id,
-          roomNumber: chosen.roomNumber,
-          hotelName: chosen.hotelName,
-          hotelId: chosen.hotelId || ''
+      // STEP 1A: Look for an empty room that fits the entire family (e.g. 5-bed room for family of 5)
+      const exactEmptyRooms = roomTracker
+        .filter(r => r.occupants.length === 0 && r.remainingBeds >= famSize)
+        .sort((a, b) => a.remainingBeds - b.remainingBeds);
+
+      if (exactEmptyRooms.length > 0) {
+        const chosen = exactEmptyRooms[0];
+        chosen.remainingBeds -= famSize;
+
+        const updatedMembers = members.map(m => {
+          chosen.occupants.push({ name: m.name, famId: fam.id });
+          return {
+            ...m,
+            roomId: chosen.id,
+            roomNumber: chosen.roomNumber,
+            hotelName: chosen.hotelName,
+            hotelId: chosen.hotelId
+          };
         });
-      } else {
-        const anyRoom = roomTracker.find(r => r.remaining >= famSize);
-        if (anyRoom) {
-          anyRoom.remaining -= famSize;
-          anyRoom.allocated.push(fam);
-          updates.push({
-            id: fam.id,
-            roomId: anyRoom.id,
-            roomNumber: anyRoom.roomNumber,
-            hotelName: anyRoom.hotelName,
-            hotelId: anyRoom.hotelId || ''
+
+        participantUpdates.push({
+          id: fam.id,
+          data: {
+            roomId: chosen.id,
+            roomNumber: chosen.roomNumber,
+            hotelName: chosen.hotelName,
+            hotelId: chosen.hotelId,
+            familyMembers: updatedMembers
+          }
+        });
+        continue;
+      }
+
+      // STEP 1B: Multi-Room Split in the SAME Hotel (e.g. 3-bed + 2-bed twin room for family of 5)
+      const hotelNames = Array.from(new Set(roomTracker.map(r => r.hotelName)));
+      let allocatedInSameHotel = false;
+
+      for (const hName of hotelNames) {
+        const hotelAvailableRooms = roomTracker
+          .filter(r => r.hotelName === hName && r.remainingBeds > 0)
+          .sort((a, b) => {
+            if (a.occupants.length === 0 && b.occupants.length > 0) return -1;
+            if (b.occupants.length === 0 && a.occupants.length > 0) return 1;
+            return b.remainingBeds - a.remainingBeds;
           });
-        } else {
-          unallocatedCount++;
-          updates.push({
+
+        const totalHotelBeds = hotelAvailableRooms.reduce((sum, r) => sum + r.remainingBeds, 0);
+        if (totalHotelBeds >= famSize) {
+          let memberIdx = 0;
+          const updatedMembers = [...members];
+          const assignedRooms = [];
+
+          for (const r of hotelAvailableRooms) {
+            if (memberIdx >= famSize) break;
+            const bedsToTake = Math.min(r.remainingBeds, famSize - memberIdx);
+            for (let i = 0; i < bedsToTake; i++) {
+              const m = updatedMembers[memberIdx];
+              updatedMembers[memberIdx] = {
+                ...m,
+                roomId: r.id,
+                roomNumber: r.roomNumber,
+                hotelName: r.hotelName,
+                hotelId: r.hotelId
+              };
+              r.occupants.push({ name: m.name, famId: fam.id });
+              memberIdx++;
+            }
+            r.remainingBeds -= bedsToTake;
+            assignedRooms.push(r);
+          }
+
+          participantUpdates.push({
             id: fam.id,
-            roomId: '',
-            roomNumber: '',
-            hotelName: '',
-            hotelId: ''
+            data: {
+              roomId: assignedRooms[0]?.id || '',
+              roomNumber: assignedRooms[0]?.roomNumber || '',
+              hotelName: assignedRooms[0]?.hotelName || '',
+              hotelId: assignedRooms[0]?.hotelId || '',
+              familyMembers: updatedMembers
+            }
           });
+          allocatedInSameHotel = true;
+          break;
         }
       }
-    }
 
-    // 2. Allocate Individuals into remaining rooms across booked hotels
-    for (const ind of individuals) {
-      const suitable = roomTracker.find(r => r.remaining > 0);
-      if (suitable) {
-        suitable.remaining -= 1;
-        suitable.allocated.push(ind);
-        updates.push({
-          id: ind.id,
-          roomId: suitable.id,
-          roomNumber: suitable.roomNumber,
-          hotelName: suitable.hotelName,
-          hotelId: suitable.hotelId || ''
+      if (allocatedInSameHotel) continue;
+
+      // STEP 1C: General Fallback Split across any available rooms
+      const anyAvailableRooms = roomTracker.filter(r => r.remainingBeds > 0).sort((a, b) => b.remainingBeds - a.remainingBeds);
+      const totalRemaining = anyAvailableRooms.reduce((sum, r) => sum + r.remainingBeds, 0);
+
+      if (totalRemaining >= famSize) {
+        let memberIdx = 0;
+        const updatedMembers = [...members];
+        const assignedRooms = [];
+
+        for (const r of anyAvailableRooms) {
+          if (memberIdx >= famSize) break;
+          const bedsToTake = Math.min(r.remainingBeds, famSize - memberIdx);
+          for (let i = 0; i < bedsToTake; i++) {
+            const m = updatedMembers[memberIdx];
+            updatedMembers[memberIdx] = {
+              ...m,
+              roomId: r.id,
+              roomNumber: r.roomNumber,
+              hotelName: r.hotelName,
+              hotelId: r.hotelId
+            };
+            r.occupants.push({ name: m.name, famId: fam.id });
+            memberIdx++;
+          }
+          r.remainingBeds -= bedsToTake;
+          assignedRooms.push(r);
+        }
+
+        participantUpdates.push({
+          id: fam.id,
+          data: {
+            roomId: assignedRooms[0]?.id || '',
+            roomNumber: assignedRooms[0]?.roomNumber || '',
+            hotelName: assignedRooms[0]?.hotelName || '',
+            hotelId: assignedRooms[0]?.hotelId || '',
+            familyMembers: updatedMembers
+          }
         });
       } else {
-        unallocatedCount++;
-        updates.push({
-          id: ind.id,
+        // Not enough beds
+        unallocatedDevoteeCount += famSize;
+        const updatedMembers = members.map(m => ({
+          ...m,
           roomId: '',
           roomNumber: '',
           hotelName: '',
           hotelId: ''
+        }));
+        participantUpdates.push({
+          id: fam.id,
+          data: {
+            roomId: '',
+            roomNumber: '',
+            hotelName: '',
+            hotelId: '',
+            familyMembers: updatedMembers
+          }
         });
       }
     }
 
-    for (const u of updates) {
-      await db.updateParticipant(u.id, {
-        roomId: u.roomId,
-        roomNumber: u.roomNumber,
-        hotelName: u.hotelName,
-        hotelId: u.hotelId
-      });
+    // 2. Allocate Individuals into remaining beds in twin / triple / quad rooms
+    for (const ind of individuals) {
+      const availableRoom = roomTracker.find(r => r.remainingBeds > 0);
+      if (availableRoom) {
+        availableRoom.remainingBeds -= 1;
+        availableRoom.occupants.push({ name: ind.name, indId: ind.id });
+        participantUpdates.push({
+          id: ind.id,
+          data: {
+            roomId: availableRoom.id,
+            roomNumber: availableRoom.roomNumber,
+            hotelName: availableRoom.hotelName,
+            hotelId: availableRoom.hotelId
+          }
+        });
+      } else {
+        unallocatedDevoteeCount += 1;
+        participantUpdates.push({
+          id: ind.id,
+          data: {
+            roomId: '',
+            roomNumber: '',
+            hotelName: '',
+            hotelId: ''
+          }
+        });
+      }
+    }
+
+    // Save updates
+    for (const u of participantUpdates) {
+      await db.updateParticipant(u.id, u.data);
     }
 
     setRoomAllocationApproved(false);
     setRefreshTrigger(prev => prev + 1);
 
-    if (unallocatedCount > 0) {
-      alert(`Room allocation completed! ${updates.length - unallocatedCount} devotees placed across booked hotels. Notice: ${unallocatedCount} devotees could not be accommodated. Please add more rooms across your booked hotels or guesthouses.`);
+    if (unallocatedDevoteeCount > 0) {
+      alert(`Room allocation completed! ${devotees.length - unallocatedDevoteeCount} devotees placed across booked hotel rooms. Notice: ${unallocatedDevoteeCount} devotee beds could not be accommodated. Please add more rooms across your booked accommodations.`);
     } else {
-      alert(`🎉 Room allocation successful! All ${devotees.length} devotees have been allocated rooms across your booked accommodations. Review assignments below and click 'Approve & Publish' when ready.`);
+      alert(`🎉 Smart room allocation successful! All ${devotees.length} devotees have been allocated rooms matching their bed counts (with families kept together in suites or split into rooms at the same hotel). You can manually fine-tune any room or individual family member below.`);
     }
   };
 
-  const sendRoomWhatsApp = (participant, room, hotel) => {
-    if (!participant || !participant.phone || !room) return;
+  const sendRoomWhatsApp = (participant, currentRoom, hotel) => {
+    if (!participant || !participant.phone) return;
     const phone = participant.phone.replace(/[^0-9]/g, '');
     const cleanPhone = phone.startsWith('91') && phone.length === 12 ? phone : (phone.length === 10 ? '91' + phone : phone);
-    const memberNames = participant.familyMembers && participant.familyMembers.length > 0 
-      ? participant.familyMembers.map(m => m.name).join(', ') 
-      : participant.name;
-    const hotelObj = hotel || hotels.find(h => h.id === room.hotelId || h.name === room.hotelName) || {};
 
-    const text = `🏨 *Hare Krishna ${participant.name}!* \n\nHere are your official *Hotel Room & Stay Details* for *${selectedYatra.name}*:\n\n*Hotel / Guesthouse:* ${hotelObj.name || room.hotelName || 'Yatra Hotel'}\n*Room Number:* ${room.roomNumber} (${room.roomType || 'Standard Room'}, ${room.floor || 'Floor 1'})\n*Allocated For:* ${memberNames}\n*Hotel Address:* ${hotelObj.address || selectedYatra.destination}\n${hotelObj.gmapsLink ? `*Google Maps Link:* ${hotelObj.gmapsLink}\n` : ''}👤 *Hotel Reception/Contact:* ${hotelObj.contactPerson || 'Reception'} (${hotelObj.phone || ''})\n\nYou can also check your room pass anytime in your devotee portal:\n👉 ${window.location.href.split('#')[0]}#/login\n\nHaribol! 🙏`;
+    // Collect all room allocations for this devotee / family
+    const allocatedRooms = [];
+    if (participant.type === 'family' && participant.familyMembers && participant.familyMembers.length > 0) {
+      const roomMap = {};
+      participant.familyMembers.forEach(m => {
+        const rId = m.roomId !== undefined && m.roomId !== '' ? m.roomId : participant.roomId;
+        if (rId) {
+          if (!roomMap[rId]) {
+            const rObj = rooms.find(r => r.id === rId);
+            roomMap[rId] = {
+              room: rObj,
+              hotel: hotels.find(h => h.id === rObj?.hotelId || h.name === rObj?.hotelName) || {},
+              members: []
+            };
+          }
+          roomMap[rId].members.push(m.name);
+        }
+      });
+      Object.values(roomMap).forEach(v => allocatedRooms.push(v));
+    } else if (participant.roomId) {
+      const rObj = rooms.find(r => r.id === participant.roomId);
+      allocatedRooms.push({
+        room: rObj,
+        hotel: hotel || hotels.find(h => h.id === rObj?.hotelId || h.name === rObj?.hotelName) || {},
+        members: [participant.name]
+      });
+    }
+
+    let roomDetailsText = '';
+    if (allocatedRooms.length === 0 && currentRoom) {
+      const hotelObj = hotel || hotels.find(h => h.id === currentRoom.hotelId || h.name === currentRoom.hotelName) || {};
+      roomDetailsText = `*Hotel / Guesthouse:* ${hotelObj.name || currentRoom.hotelName}\n*Room Number:* ${currentRoom.roomNumber} (${currentRoom.roomType || 'Standard Room'}, ${currentRoom.floor || 'Floor 1'})\n*Allocated For:* ${participant.name}`;
+    } else {
+      roomDetailsText = allocatedRooms.map((ar, idx) => {
+        const r = ar.room;
+        const h = ar.hotel;
+        return `📌 *Room Pass ${idx + 1}: Room ${r?.roomNumber || 'TBD'}* (${r?.roomType || 'Room'}, ${r?.floor || 'Floor'})\n*Hotel:* ${h.name || r?.hotelName || 'Yatra Accommodation'}\n*Occupants:* ${ar.members.join(', ')}`;
+      }).join('\n\n');
+    }
+
+    const primaryHotel = allocatedRooms[0]?.hotel || hotel || {};
+    const text = `🏨 *Hare Krishna ${participant.name}!* \n\nHere are your official *Hotel Room & Stay Details* for *${selectedYatra.name}*:\n\n${roomDetailsText}\n\n*Hotel Address:* ${primaryHotel.address || selectedYatra.destination}\n${primaryHotel.gmapsLink ? `*Google Maps Link:* ${primaryHotel.gmapsLink}\n` : ''}👤 *Hotel Reception/Contact:* ${primaryHotel.contactPerson || 'Reception'} (${primaryHotel.phone || ''})\n\nYou can also check your live room pass anytime in your devotee portal:\n👉 ${window.location.href.split('#')[0]}#/login\n\nHaribol! 🙏`;
 
     window.open(`https://api.whatsapp.com/send?phone=${cleanPhone}&text=${encodeURIComponent(text)}`, '_blank');
   };
@@ -2343,9 +2627,81 @@ export default function App() {
 
               const confirmedDevotees = participants.filter(p => p.status === 'confirmed' || p.status === 'interested');
               const totalPax = confirmedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
-              const totalBedCapacity = rooms.reduce((sum, r) => sum + (parseInt(r.capacity) || 0), 0);
-              const allocatedDevotees = confirmedDevotees.filter(p => p.roomId);
-              const totalAllocatedPax = allocatedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+              const totalBedCapacity = rooms.reduce((sum, r) => sum + (parseInt(r.bedCount) || parseInt(r.capacity) || 2), 0);
+
+              // Helper: get all assigned occupants for a specific room (individuals + family members)
+              const getRoomOccupants = (roomId) => {
+                const list = [];
+                confirmedDevotees.forEach(p => {
+                  if (p.type === 'family' && p.familyMembers && p.familyMembers.length > 0) {
+                    p.familyMembers.forEach((m, idx) => {
+                      const assignedRoomId = m.roomId !== undefined && m.roomId !== '' ? m.roomId : p.roomId;
+                      if (assignedRoomId === roomId) {
+                        list.push({
+                          participantId: p.id,
+                          parentParticipant: p,
+                          isFamily: true,
+                          familyName: p.familyName || p.name,
+                          primaryName: p.name,
+                          phone: p.phone,
+                          memberIndex: idx,
+                          name: m.name,
+                          relation: m.relation || 'Member',
+                          age: m.age
+                        });
+                      }
+                    });
+                  } else {
+                    if (p.roomId === roomId) {
+                      list.push({
+                        participantId: p.id,
+                        parentParticipant: p,
+                        isFamily: false,
+                        familyName: '',
+                        primaryName: p.name,
+                        phone: p.phone,
+                        memberIndex: null,
+                        name: p.name,
+                        relation: 'Self',
+                        age: ''
+                      });
+                    }
+                  }
+                });
+                return list;
+              };
+
+              // Calculate unallocated individuals and family members
+              const unallocatedMembers = [];
+              const unallocatedIndividuals = [];
+
+              confirmedDevotees.forEach(p => {
+                if (p.type === 'family' && p.familyMembers && p.familyMembers.length > 0) {
+                  p.familyMembers.forEach((m, idx) => {
+                    const assignedRoomId = m.roomId !== undefined && m.roomId !== '' ? m.roomId : p.roomId;
+                    if (!assignedRoomId) {
+                      unallocatedMembers.push({
+                        participantId: p.id,
+                        memberIndex: idx,
+                        name: m.name,
+                        relation: m.relation || 'Member',
+                        age: m.age,
+                        familyName: p.familyName || p.name,
+                        phone: m.phone || p.phone,
+                        parent: p
+                      });
+                    }
+                  });
+                } else {
+                  if (!p.roomId) {
+                    unallocatedIndividuals.push(p);
+                  }
+                }
+              });
+
+              const totalUnallocatedPax = unallocatedMembers.length + unallocatedIndividuals.length;
+              const totalAllocatedPax = totalPax - totalUnallocatedPax;
+              const vacantRoomsCount = rooms.filter(r => getRoomOccupants(r.id).length === 0).length;
 
               const displayedRooms = selectedHotelFilter === 'all' 
                 ? rooms 
@@ -2364,7 +2720,7 @@ export default function App() {
                         </span>
                       </div>
                       <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                        Stage 3 Confirmed Logistics: Manage inventory across multiple booked hotels & guesthouses. Auto-allocate families into dedicated rooms and individuals into shared twin/triple rooms.
+                        Stage 3 Confirmed Logistics: Precise bed-count room management across multiple hotels. Smart auto-allocation accommodates families in dedicated suites (e.g. 5-bed suite) or multi-room splits (e.g. 3-bed + twin bed at the same hotel), with full admin manual control over every devotee and family member.
                       </p>
                     </div>
                     <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
@@ -2375,8 +2731,10 @@ export default function App() {
                           const defaultHotel = (selectedHotelFilter !== 'all' ? selectedHotelFilter : (bookedHotels[0]?.name || hotels[0]?.name)) || '';
                           setNewRoom({ 
                             roomNumber: '', 
-                            roomType: 'Double Bed', 
+                            roomType: 'Twin Bed (2 Beds)', 
+                            bedCount: 2,
                             capacity: 2, 
+                            extraMattressAllowed: 0,
                             floor: 'Ground Floor', 
                             hotelName: defaultHotel, 
                             hotelId: hotels.find(h => h.name === defaultHotel)?.id || '',
@@ -2397,9 +2755,9 @@ export default function App() {
                         className="btn btn-outline" 
                         style={{ borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
                         onClick={autoAllocateRooms}
-                        title="Intelligently places families together into dedicated rooms and pairs individuals across all booked hotels"
+                        title="Intelligently matches families to rooms by bed count (or same-hotel multi-room splits like 3-bed + 2-bed twin room) and pairs individuals"
                       >
-                        <Shuffle size={16} /> Auto-Allocate Rooms
+                        <Shuffle size={16} /> Auto-Allocate by Beds
                       </button>
                       <button 
                         className={`btn ${roomAllocationApproved ? 'btn-outline' : 'btn-primary'}`} 
@@ -2426,6 +2784,7 @@ export default function App() {
                     </button>
                     {distinctHotels.map(hName => {
                       const hRooms = rooms.filter(r => r.hotelName === hName);
+                      const hBeds = hRooms.reduce((sum, r) => sum + (parseInt(r.bedCount) || parseInt(r.capacity) || 2), 0);
                       const isBooked = hotels.some(h => h.name === hName && h.finalSelected);
                       return (
                         <button
@@ -2440,7 +2799,7 @@ export default function App() {
                           }}
                           onClick={() => setSelectedHotelFilter(hName)}
                         >
-                          🏨 {hName} ({hRooms.length} Rooms){isBooked ? ' ✓' : ''}
+                          🏨 {hName} ({hRooms.length} Rooms • {hBeds} Beds){isBooked ? ' ✓' : ''}
                         </button>
                       );
                     })}
@@ -2451,24 +2810,24 @@ export default function App() {
                     <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--primary)' }}>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Booked Hotels / Guesthouses</span>
                       <h3 style={{ margin: '0.25rem 0', color: 'var(--primary)' }}>{distinctHotels.length} Accommodations</h3>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{rooms.length} total rooms registered</span>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{rooms.length} rooms ({totalBedCapacity} total beds)</span>
                     </div>
                     <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--warning)' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Devotees Requiring Stay</span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Devotees Requiring Beds</span>
                       <h3 style={{ margin: '0.25rem 0', color: 'var(--warning)' }}>{totalPax} Devotees</h3>
                       <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Across {confirmedDevotees.length} booking groups</span>
                     </div>
                     <div className="card" style={{ padding: '1rem', borderLeft: '4px solid var(--success)' }}>
-                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Allocated Devotees</span>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Bed Allocation Status</span>
                       <h3 style={{ margin: '0.25rem 0', color: 'var(--success)' }}>{totalAllocatedPax} / {totalBedCapacity} Beds</h3>
                       <span style={{ fontSize: '0.75rem', color: totalBedCapacity - totalAllocatedPax >= 0 ? 'var(--success)' : 'var(--danger)' }}>
-                        {totalBedCapacity - totalAllocatedPax} beds available
+                        {totalBedCapacity - totalAllocatedPax >= 0 ? `${totalBedCapacity - totalAllocatedPax} standard beds available` : `${totalAllocatedPax - totalBedCapacity} extra mattresses needed`}
                       </span>
                     </div>
                     <div className="card" style={{ padding: '1rem', borderLeft: '4px solid #8b5cf6' }}>
                       <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Vacant Rooms</span>
-                      <h3 style={{ margin: '0.25rem 0', color: '#8b5cf6' }}>{rooms.filter(r => !participants.some(p => p.roomId === r.id)).length} Rooms</h3>
-                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Ready for immediate check-in</span>
+                      <h3 style={{ margin: '0.25rem 0', color: '#8b5cf6' }}>{vacantRoomsCount} Rooms</h3>
+                      <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Available for new check-ins</span>
                     </div>
                   </div>
 
@@ -2478,15 +2837,17 @@ export default function App() {
                       <Bed size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} />
                       <h4>No Hotel Rooms Added Yet</h4>
                       <p style={{ maxWidth: '480px', margin: '0.5rem auto 1.5rem' }}>
-                        Add room inventory for each of your booked hotels or guesthouses (e.g. MVT Guesthouse, Krishna Balaram Residency). Then run <strong>Auto-Allocate</strong> to seat families and individuals into comfortable rooms.
+                        Add room inventory for each of your booked hotels or guesthouses (e.g. MVT Guesthouse, Krishna Balaram Residency). Define bed counts accurately (e.g. 5 Beds, 3 Beds, Twin Beds).
                       </p>
                       <button className="btn btn-primary" onClick={() => {
                         setEditingRoomId(null);
                         const defaultHotel = bookedHotels[0]?.name || hotels[0]?.name || 'Primary Hotel';
                         setNewRoom({ 
                           roomNumber: '101', 
-                          roomType: 'Double Bed', 
+                          roomType: 'Twin Bed (2 Beds)', 
+                          bedCount: 2,
                           capacity: 2, 
+                          extraMattressAllowed: 0,
                           floor: '1st Floor', 
                           hotelName: defaultHotel, 
                           hotelId: hotels.find(h => h.name === defaultHotel)?.id || '',
@@ -2510,9 +2871,8 @@ export default function App() {
                         if (hotelRooms.length === 0 && selectedHotelFilter === 'all') return null;
                         
                         const hotelObj = hotels.find(h => h.name === hotelName) || {};
-                        const hotelBedCapacity = hotelRooms.reduce((sum, r) => sum + (parseInt(r.capacity) || 0), 0);
-                        const hotelOccupants = participants.filter(p => hotelRooms.some(r => r.id === p.roomId));
-                        const hotelOccupiedBeds = hotelOccupants.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                        const hotelBedCapacity = hotelRooms.reduce((sum, r) => sum + (parseInt(r.bedCount) || parseInt(r.capacity) || 2), 0);
+                        const hotelOccupiedBeds = hotelRooms.reduce((sum, r) => sum + getRoomOccupants(r.id).length, 0);
                         const occupancyPercent = hotelBedCapacity > 0 ? Math.min(100, Math.round((hotelOccupiedBeds / hotelBedCapacity) * 100)) : 0;
 
                         return (
@@ -2530,7 +2890,7 @@ export default function App() {
                                       <span className="badge badge-confirmed" style={{ fontSize: '0.7rem' }}>✓ Booked for Yatra</span>
                                     )}
                                     <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>
-                                      {hotelRooms.length} Room{hotelRooms.length > 1 ? 's' : ''} ({hotelBedCapacity} Beds)
+                                      {hotelRooms.length} Room{hotelRooms.length > 1 ? 's' : ''} ({hotelBedCapacity} Total Beds)
                                     </span>
                                   </div>
                                   <div style={{ display: 'flex', gap: '1rem', fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem', flexWrap: 'wrap' }}>
@@ -2550,8 +2910,8 @@ export default function App() {
                               <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
                                 <div style={{ textAlign: 'right', minWidth: '150px' }}>
                                   <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.25rem' }}>
-                                    <span style={{ color: 'var(--text-muted)' }}>Hotel Beds</span>
-                                    <strong>{hotelOccupiedBeds} / {hotelBedCapacity} ({occupancyPercent}%)</strong>
+                                    <span style={{ color: 'var(--text-muted)' }}>Hotel Bed Occupancy</span>
+                                    <strong>{hotelOccupiedBeds} / {hotelBedCapacity} Beds ({occupancyPercent}%)</strong>
                                   </div>
                                   <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--bg)', borderRadius: '4px', overflow: 'hidden' }}>
                                     <div style={{ 
@@ -2570,8 +2930,10 @@ export default function App() {
                                     setEditingRoomId(null);
                                     setNewRoom({ 
                                       roomNumber: '', 
-                                      roomType: 'Double Bed', 
+                                      roomType: 'Twin Bed (2 Beds)', 
+                                      bedCount: 2, 
                                       capacity: 2, 
+                                      extraMattressAllowed: 0,
                                       floor: 'Ground Floor', 
                                       hotelName: hotelName, 
                                       hotelId: hotelObj.id || '',
@@ -2597,67 +2959,117 @@ export default function App() {
                                 No rooms registered under {hotelName} yet. Click '+ Add Room Here' to add inventory.
                               </p>
                             ) : (
-                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '1.25rem' }}>
+                              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: '1.25rem' }}>
                                 {hotelRooms.map(room => {
-                                  const occupants = participants.filter(p => p.roomId === room.id);
-                                  const occupantPax = occupants.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
-                                  const roomCap = parseInt(room.capacity) || 2;
-                                  const isFull = occupantPax >= roomCap;
+                                  const occupants = getRoomOccupants(room.id);
+                                  const occupantCount = occupants.length;
+                                  const bedCount = parseInt(room.bedCount) || parseInt(room.capacity) || 2;
+                                  const extraAllowed = parseInt(room.extraMattressAllowed) || 0;
+                                  const isFull = occupantCount === bedCount;
+                                  const isOver = occupantCount > bedCount;
 
                                   return (
-                                    <div key={room.id} style={{ border: isFull ? '1.5px solid var(--border)' : '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '1rem', backgroundColor: 'var(--card-bg)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                                    <div key={room.id} style={{ border: isFull ? '1.5px solid var(--border)' : isOver ? '1.5px solid var(--warning)' : '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '1rem', backgroundColor: 'var(--card-bg)', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
                                       <div>
-                                        {/* Room Header */}
+                                        {/* Room Header with Bed Count Badge */}
                                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '0.5rem' }}>
                                           <div>
                                             <h4 style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
                                               <Bed size={16} color="var(--primary)" /> Room {room.roomNumber}
                                             </h4>
                                             <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'block', marginTop: '0.15rem' }}>
-                                              {room.floor || 'Floor'} • {room.roomType || 'Standard'}
+                                              {room.floor || 'Floor'} • <strong>{room.roomType || `${bedCount}-Bedded Room`}</strong>
                                             </span>
                                           </div>
-                                          <span className={`badge ${occupantPax === 0 ? 'badge-interested' : isFull ? 'badge-confirmed' : 'badge-warning'}`}>
-                                            {occupantPax === 0 ? 'Vacant' : `${occupantPax} / ${roomCap} Beds`}
+                                          <span className={`badge ${occupantCount === 0 ? 'badge-interested' : isFull ? 'badge-confirmed' : isOver ? 'badge-warning' : 'badge-warning'}`} style={{ whiteSpace: 'nowrap' }}>
+                                            {occupantCount === 0 
+                                              ? `0 / ${bedCount} Beds (Vacant)` 
+                                              : isFull 
+                                              ? `${bedCount} / ${bedCount} Beds (Full)` 
+                                              : isOver 
+                                              ? `${occupantCount} / ${bedCount} Beds (+${occupantCount - bedCount} Mattress)` 
+                                              : `${occupantCount} / ${bedCount} Beds (${bedCount - occupantCount} Open)`}
                                           </span>
                                         </div>
 
-                                        {/* Occupants */}
-                                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', minHeight: '75px', marginBottom: '0.75rem' }}>
-                                          <span style={{ fontSize: '0.75rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px', display: 'block', marginBottom: '0.35rem' }}>
-                                            Assigned Devotees:
-                                          </span>
+                                        {/* Occupants List with Granular Controls */}
+                                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', minHeight: '90px', marginBottom: '0.75rem' }}>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.4rem' }}>
+                                            <span style={{ fontSize: '0.73rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                              Assigned Bed Occupants ({occupantCount} / {bedCount}):
+                                            </span>
+                                          </div>
                                           {occupants.length === 0 ? (
-                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: 0 }}>
-                                              No occupants assigned yet.
+                                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', fontStyle: 'italic', margin: '0.5rem 0' }}>
+                                              No devotees assigned yet. Vacant and ready.
                                             </p>
                                           ) : (
-                                            occupants.map(occ => {
-                                              const occPax = (occ.familyMembers && occ.familyMembers.length) || occ.membersCount || 1;
+                                            occupants.map((occ, oIdx) => {
                                               return (
-                                                <div key={occ.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', fontSize: '0.8rem' }}>
-                                                  <div>
-                                                    <strong>{occ.name}</strong> ({occPax} pax)
-                                                    {occ.familyMembers && occ.familyMembers.length > 0 && (
-                                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
-                                                        {occ.familyMembers.map(m => m.name).join(', ')}
-                                                      </div>
-                                                    )}
+                                                <div key={`${occ.participantId}_${occ.memberIndex !== null ? occ.memberIndex : 'main'}`} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.35rem 0', borderBottom: oIdx < occupants.length - 1 ? '1px dashed var(--border)' : 'none', fontSize: '0.8rem' }}>
+                                                  <div style={{ flex: 1, paddingRight: '0.5rem' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                                      <span style={{ fontSize: '0.75rem', color: 'var(--primary)', fontWeight: 600 }}>🛏️ Bed {oIdx + 1}:</span>
+                                                      <strong>{occ.name}</strong>
+                                                      {occ.age && <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>({occ.age}y)</span>}
+                                                    </div>
+                                                    <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                                                      {occ.isFamily ? `${occ.familyName} • ${occ.relation}` : 'Individual Devotee'}
+                                                    </div>
                                                   </div>
-                                                  <div style={{ display: 'flex', gap: '0.25rem' }}>
+
+                                                  {/* Granular Bed Reassignment & Actions */}
+                                                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                                    {/* Move Bed Dropdown */}
+                                                    <select 
+                                                      className="form-control" 
+                                                      style={{ fontSize: '0.7rem', padding: '0.2rem 0.35rem', width: 'auto', maxWidth: '125px' }}
+                                                      value={room.id}
+                                                      onChange={(e) => {
+                                                        const targetRoomId = e.target.value;
+                                                        if (occ.memberIndex !== null) {
+                                                          handleReassignMemberRoom(occ.participantId, occ.memberIndex, targetRoomId);
+                                                        } else {
+                                                          handleReassignRoom(occ.participantId, targetRoomId);
+                                                        }
+                                                      }}
+                                                      title="Move this devotee to another room / bed"
+                                                    >
+                                                      <option value={room.id} disabled>Move Bed...</option>
+                                                      <option value="">⚠️ Unassign</option>
+                                                      {distinctHotels.map(hName => {
+                                                        const hRms = rooms.filter(r => r.hotelName === hName);
+                                                        return (
+                                                          <optgroup key={hName} label={`🏨 ${hName}`}>
+                                                            {hRms.map(r => (
+                                                              <option key={r.id} value={r.id}>
+                                                                Rm {r.roomNumber} ({parseInt(r.bedCount) || parseInt(r.capacity) || 2} Beds)
+                                                              </option>
+                                                            ))}
+                                                          </optgroup>
+                                                        );
+                                                      })}
+                                                    </select>
+
                                                     <button 
                                                       className="btn btn-outline" 
-                                                      style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem', borderColor: '#25D366', color: '#25D366' }}
-                                                      onClick={() => sendRoomWhatsApp(occ, room, hotelObj)}
+                                                      style={{ padding: '0.15rem 0.35rem', fontSize: '0.7rem', borderColor: '#25D366', color: '#25D366' }}
+                                                      onClick={() => sendRoomWhatsApp(occ.parentParticipant, room, hotelObj)}
                                                       title="Send WhatsApp Room Pass"
                                                     >
                                                       <MessageSquare size={11} /> Pass
                                                     </button>
                                                     <button 
                                                       className="btn btn-outline" 
-                                                      style={{ padding: '0.15rem 0.4rem', fontSize: '0.7rem', color: 'var(--danger)', borderColor: 'var(--border)' }}
-                                                      onClick={() => handleReassignRoom(occ.id, '')}
-                                                      title="Unassign from Room"
+                                                      style={{ padding: '0.15rem 0.35rem', fontSize: '0.7rem', color: 'var(--danger)', borderColor: 'var(--border)' }}
+                                                      onClick={() => {
+                                                        if (occ.memberIndex !== null) {
+                                                          handleReassignMemberRoom(occ.participantId, occ.memberIndex, '');
+                                                        } else {
+                                                          handleReassignRoom(occ.participantId, '');
+                                                        }
+                                                      }}
+                                                      title="Remove/Unassign from this room"
                                                     >
                                                       <X size={11} />
                                                     </button>
@@ -2669,10 +3081,10 @@ export default function App() {
                                         </div>
                                       </div>
 
-                                      {/* Footer with Edit / Delete */}
+                                      {/* Footer with Bed Count Specs, Extra Mattress Info & Edit / Delete */}
                                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.5rem', borderTop: '1px solid var(--border)', fontSize: '0.75rem' }}>
                                         <span style={{ color: 'var(--text-muted)' }}>
-                                          Extra mattress: ₹{room.extraMattressCost || 500}
+                                          🛏️ <strong>{bedCount} Beds</strong> {extraAllowed > 0 ? `• Extra mattress: ₹${room.extraMattressCost || 500}` : ''}
                                         </span>
                                         <div style={{ display: 'flex', gap: '0.35rem' }}>
                                           <button 
@@ -2682,6 +3094,9 @@ export default function App() {
                                               setEditingRoomId(room.id);
                                               setNewRoom({ 
                                                 ...room,
+                                                bedCount: parseInt(room.bedCount) || parseInt(room.capacity) || 2,
+                                                capacity: parseInt(room.bedCount) || parseInt(room.capacity) || 2,
+                                                extraMattressAllowed: parseInt(room.extraMattressAllowed) || 0,
                                                 isCustomHotel: false,
                                                 customHotelName: '',
                                                 customHotelAddress: '',
@@ -2713,69 +3128,121 @@ export default function App() {
                     </div>
                   )}
 
-                  {/* Unallocated Devotees for Room */}
-                  {(() => {
-                    const unallocated = participants.filter(p => !p.roomId && (p.status === 'confirmed' || p.status === 'interested'));
-                    if (unallocated.length === 0) return null;
-                    return (
-                      <div className="card" style={{ marginTop: '2rem', border: '1.5px dashed var(--warning)', backgroundColor: 'var(--warning-light)' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
-                          <AlertTriangle size={18} color="var(--warning)" />
-                          <h4 style={{ margin: 0, color: 'var(--warning)' }}>Unallocated Devotees ({unallocated.length} Groups)</h4>
-                        </div>
-                        <p style={{ fontSize: '0.85rem', color: 'var(--text)', marginBottom: '1rem' }}>
-                          The following devotees need a room assignment. Select a room across your booked accommodations to assign them manually or click 'Auto-Allocate Rooms'.
+                  {/* Unallocated Devotees Section (Granular Family Members + Individuals) */}
+                  {totalUnallocatedPax === 0 ? (
+                    <div className="card" style={{ marginTop: '2rem', border: '1.5px solid var(--success)', backgroundColor: 'var(--success-light)', display: 'flex', alignItems: 'center', gap: '0.75rem', padding: '1rem 1.25rem' }}>
+                      <CheckCircle size={24} color="var(--success)" />
+                      <div>
+                        <h4 style={{ margin: 0, color: 'var(--success)' }}>🎉 All Devotees Fully Allocated!</h4>
+                        <p style={{ margin: '0.15rem 0 0', fontSize: '0.85rem', color: 'var(--text)' }}>
+                          Every confirmed devotee and family member has been successfully allocated a room bed across your booked hotels.
                         </p>
-                        <div className="table-container" style={{ margin: 0 }}>
-                          <table style={{ fontSize: '0.85rem', backgroundColor: 'var(--card-bg)' }}>
-                            <thead>
-                              <tr>
-                                <th>Devotee Name</th>
-                                <th>Group Size</th>
-                                <th>Type</th>
-                                <th>Assign to Room & Hotel</th>
-                              </tr>
-                            </thead>
-                            <tbody>
-                              {unallocated.map(devotee => {
-                                const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
-                                return (
-                                  <tr key={devotee.id}>
-                                    <td><strong>{devotee.name}</strong> ({devotee.phone})</td>
-                                    <td><span className="badge">{devoteePax} Person(s)</span></td>
-                                    <td style={{ textTransform: 'capitalize' }}>{devotee.type}</td>
-                                    <td>
-                                      <select 
-                                        className="form-control" 
-                                        style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
-                                        value=""
-                                        onChange={(e) => handleReassignRoom(devotee.id, e.target.value)}
-                                      >
-                                        <option value="" disabled>-- Assign to Room --</option>
-                                        {distinctHotels.map(hName => {
-                                          const hRooms = rooms.filter(r => r.hotelName === hName);
-                                          if (hRooms.length === 0) return null;
-                                          return (
-                                            <optgroup key={hName} label={`🏨 ${hName}`}>
-                                              {hRooms.map(r => (
-                                                <option key={r.id} value={r.id}>
-                                                  Room {r.roomNumber} ({r.roomType}, {r.capacity} beds)
-                                                </option>
-                                              ))}
-                                            </optgroup>
-                                          );
-                                        })}
-                                      </select>
-                                    </td>
-                                  </tr>
-                                );
-                              })}
-                            </tbody>
-                          </table>
-                        </div>
                       </div>
-                    );
-                  })()}
+                    </div>
+                  ) : (
+                    <div className="card" style={{ marginTop: '2rem', border: '1.5px dashed var(--warning)', backgroundColor: 'var(--warning-light)' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                        <AlertTriangle size={18} color="var(--warning)" />
+                        <h4 style={{ margin: 0, color: 'var(--warning)' }}>Unallocated Devotees ({totalUnallocatedPax} Devotee Beds Pending)</h4>
+                      </div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text)', marginBottom: '1rem' }}>
+                        The following devotees or family members need room bed assignments. You can assign them manually to any room with open beds or click <strong>'Auto-Allocate by Beds'</strong> above.
+                      </p>
+                      <div className="table-container" style={{ margin: 0 }}>
+                        <table style={{ fontSize: '0.85rem', backgroundColor: 'var(--card-bg)' }}>
+                          <thead>
+                            <tr>
+                              <th>Devotee / Member Name</th>
+                              <th>Group / Family</th>
+                              <th>Relation & Age</th>
+                              <th>Assign to Room & Hotel</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {/* Unallocated Family Members */}
+                            {unallocatedMembers.map(m => (
+                              <tr key={`unalloc_mem_${m.participantId}_${m.memberIndex}`}>
+                                <td>
+                                  <strong>{m.name}</strong> ({m.phone})
+                                </td>
+                                <td>
+                                  <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>
+                                    {m.familyName}
+                                  </span>
+                                </td>
+                                <td>{m.relation} {m.age ? `(Age ${m.age})` : ''}</td>
+                                <td>
+                                  <select 
+                                    className="form-control" 
+                                    style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                                    value=""
+                                    onChange={(e) => handleReassignMemberRoom(m.participantId, m.memberIndex, e.target.value)}
+                                  >
+                                    <option value="" disabled>-- Assign Bed to Room --</option>
+                                    {distinctHotels.map(hName => {
+                                      const hRooms = rooms.filter(r => r.hotelName === hName);
+                                      if (hRooms.length === 0) return null;
+                                      return (
+                                        <optgroup key={hName} label={`🏨 ${hName}`}>
+                                          {hRooms.map(r => {
+                                            const occs = getRoomOccupants(r.id);
+                                            const bCount = parseInt(r.bedCount) || parseInt(r.capacity) || 2;
+                                            const openBeds = Math.max(0, bCount - occs.length);
+                                            return (
+                                              <option key={r.id} value={r.id}>
+                                                Room {r.roomNumber} ({r.roomType || `${bCount} Beds`} • {openBeds} Open Beds)
+                                              </option>
+                                            );
+                                          })}
+                                        </optgroup>
+                                      );
+                                    })}
+                                  </select>
+                                </td>
+                              </tr>
+                            ))}
+
+                            {/* Unallocated Individuals */}
+                            {unallocatedIndividuals.map(devotee => (
+                              <tr key={`unalloc_ind_${devotee.id}`}>
+                                <td><strong>{devotee.name}</strong> ({devotee.phone})</td>
+                                <td><span className="badge">Individual Devotee</span></td>
+                                <td>Self</td>
+                                <td>
+                                  <select 
+                                    className="form-control" 
+                                    style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem' }}
+                                    value=""
+                                    onChange={(e) => handleReassignRoom(devotee.id, e.target.value)}
+                                  >
+                                    <option value="" disabled>-- Assign Bed to Room --</option>
+                                    {distinctHotels.map(hName => {
+                                      const hRooms = rooms.filter(r => r.hotelName === hName);
+                                      if (hRooms.length === 0) return null;
+                                      return (
+                                        <optgroup key={hName} label={`🏨 ${hName}`}>
+                                          {hRooms.map(r => {
+                                            const occs = getRoomOccupants(r.id);
+                                            const bCount = parseInt(r.bedCount) || parseInt(r.capacity) || 2;
+                                            const openBeds = Math.max(0, bCount - occs.length);
+                                            return (
+                                              <option key={r.id} value={r.id}>
+                                                Room {r.roomNumber} ({r.roomType || `${bCount} Beds`} • {openBeds} Open Beds)
+                                              </option>
+                                            );
+                                          })}
+                                        </optgroup>
+                                      );
+                                    })}
+                                  </select>
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  )}
                 </div>
               );
             })()}
@@ -4567,72 +5034,118 @@ export default function App() {
                         </div>
                       )}
 
-                      {/* HOTEL ROOM STAY PASS */}
-                      {myRoom ? (
-                        <div className="card" style={{ border: '2px solid var(--success)', backgroundColor: 'var(--card-bg)', position: 'relative', overflow: 'hidden' }}>
-                          <div style={{ position: 'absolute', top: 0, right: 0, backgroundColor: 'var(--success)', color: 'white', padding: '0.25rem 0.85rem', borderBottomLeftRadius: 'var(--radius-sm)', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                            <Bed size={13} /> HOTEL ROOM PASS
-                          </div>
-                          <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', marginTop: '0.5rem' }}>
-                            <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: 'var(--success-light)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                              <Bed size={24} />
-                            </div>
-                            <div style={{ flex: 1 }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                                <h3 style={{ margin: 0, color: 'var(--success)' }}>Room {myRoom.roomNumber}</h3>
-                                <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>{myRoom.roomType || 'Double Bed'}</span>
-                                <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>{myRoom.floor || 'Ground Floor'}</span>
+                      {/* HOTEL ROOM STAY PASSES */}
+                      {(() => {
+                        const allocatedRoomPasses = [];
+                        if (currentDevotee.type === 'family' && currentDevotee.familyMembers && currentDevotee.familyMembers.length > 0) {
+                          const roomMap = {};
+                          currentDevotee.familyMembers.forEach(m => {
+                            const rId = m.roomId !== undefined && m.roomId !== '' ? m.roomId : currentDevotee.roomId;
+                            if (rId) {
+                              if (!roomMap[rId]) {
+                                const rObj = rooms.find(r => r.id === rId);
+                                roomMap[rId] = {
+                                  room: rObj,
+                                  hotel: hotels.find(h => h.id === rObj?.hotelId || h.name === rObj?.hotelName) || hotels.find(h => h.finalSelected) || hotels[0],
+                                  members: []
+                                };
+                              }
+                              roomMap[rId].members.push(m);
+                            }
+                          });
+                          Object.values(roomMap).forEach(v => allocatedRoomPasses.push(v));
+                        } else if (currentDevotee.roomId) {
+                          const rObj = rooms.find(r => r.id === currentDevotee.roomId);
+                          allocatedRoomPasses.push({
+                            room: rObj,
+                            hotel: hotels.find(h => h.id === rObj?.hotelId || h.name === rObj?.hotelName) || hotels.find(h => h.finalSelected) || hotels[0],
+                            members: [{ name: currentDevotee.name, relation: 'Self' }]
+                          });
+                        }
+
+                        if (allocatedRoomPasses.length === 0) {
+                          return (
+                            <div className="card" style={{ borderLeft: '4px solid var(--border)', backgroundColor: 'var(--bg)' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <Bed size={22} style={{ color: 'var(--text-muted)' }} />
+                                <div>
+                                  <h4 style={{ margin: 0, color: 'var(--text)' }}>Hotel Room Key Allocation</h4>
+                                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0.2rem 0 0' }}>
+                                    Room numbers will be issued upon arrival at the hotel reception or once the administrator finalizes the room check-in manifest.
+                                  </p>
+                                </div>
                               </div>
-                              <p style={{ fontSize: '0.85rem', color: 'var(--text)', margin: '0.4rem 0' }}>
-                                <strong>Hotel:</strong> {myRoom.hotelName || myHotel?.name || 'Yatra Hotel Accommodation'}
-                              </p>
-                              {myHotel?.address && (
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0' }}>
-                                  📍 {myHotel.address}
-                                </p>
-                              )}
-                              <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
-                                {myHotel?.gmapsLink && (
-                                  <a 
-                                    href={myHotel.gmapsLink} 
-                                    target="_blank" 
-                                    rel="noopener noreferrer" 
-                                    className="btn btn-outline" 
-                                    style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                                  >
-                                    <MapPin size={13} /> View on Google Maps
-                                  </a>
-                                )}
-                                {myHotel?.phone && (
-                                  <a 
-                                    href={`tel:${myHotel.phone}`} 
-                                    style={{ fontSize: '0.8rem', color: 'var(--text)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
-                                  >
-                                    <Phone size={13} /> Hotel Reception: {myHotel.phone}
-                                  </a>
-                                )}
-                              </div>
-                              {myRoom.notes && (
-                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.5rem 0 0', fontStyle: 'italic' }}>
-                                  ℹ️ {myRoom.notes}
-                                </p>
-                              )}
                             </div>
+                          );
+                        }
+
+                        return (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                            {allocatedRoomPasses.map((pass, pIdx) => {
+                              const rm = pass.room;
+                              const ht = pass.hotel;
+                              if (!rm) return null;
+                              return (
+                                <div key={rm.id || pIdx} className="card" style={{ border: '2px solid var(--success)', backgroundColor: 'var(--card-bg)', position: 'relative', overflow: 'hidden' }}>
+                                  <div style={{ position: 'absolute', top: 0, right: 0, backgroundColor: 'var(--success)', color: 'white', padding: '0.25rem 0.85rem', borderBottomLeftRadius: 'var(--radius-sm)', fontSize: '0.75rem', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                                    <Bed size={13} /> HOTEL ROOM PASS {allocatedRoomPasses.length > 1 ? `#${pIdx + 1}` : ''}
+                                  </div>
+                                  <div style={{ display: 'flex', alignItems: 'flex-start', gap: '1rem', marginTop: '0.5rem' }}>
+                                    <div style={{ width: '48px', height: '48px', borderRadius: '50%', backgroundColor: 'var(--success-light)', color: 'var(--success)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                                      <Bed size={24} />
+                                    </div>
+                                    <div style={{ flex: 1 }}>
+                                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                                        <h3 style={{ margin: 0, color: 'var(--success)' }}>Room {rm.roomNumber}</h3>
+                                        <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>{rm.roomType || 'Standard Room'}</span>
+                                        <span className="badge" style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)' }}>{rm.floor || 'Ground Floor'}</span>
+                                        <span className="badge badge-confirmed">{rm.bedCount || rm.capacity || 2} Beds</span>
+                                      </div>
+                                      <p style={{ fontSize: '0.85rem', color: 'var(--text)', margin: '0.4rem 0' }}>
+                                        <strong>Hotel:</strong> {rm.hotelName || ht?.name || 'Yatra Hotel Accommodation'}
+                                      </p>
+                                      {ht?.address && (
+                                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.2rem 0' }}>
+                                          📍 {ht.address}
+                                        </p>
+                                      )}
+                                      <div style={{ backgroundColor: 'var(--bg)', padding: '0.6rem 0.85rem', borderRadius: 'var(--radius-sm)', marginTop: '0.5rem', fontSize: '0.82rem' }}>
+                                        <strong style={{ color: 'var(--text)' }}>Staying in this Room:</strong> {pass.members.map(m => m.name + (m.relation && m.relation !== 'Self' ? ` (${m.relation})` : '')).join(', ')}
+                                      </div>
+                                      <div style={{ display: 'flex', gap: '1rem', marginTop: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                                        {ht?.gmapsLink && (
+                                          <a 
+                                            href={ht.gmapsLink} 
+                                            target="_blank" 
+                                            rel="noopener noreferrer" 
+                                            className="btn btn-outline" 
+                                            style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                                          >
+                                            <MapPin size={13} /> View on Google Maps
+                                          </a>
+                                        )}
+                                        {ht?.phone && (
+                                          <a 
+                                            href={`tel:${ht.phone}`} 
+                                            style={{ fontSize: '0.8rem', color: 'var(--text)', textDecoration: 'none', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                                          >
+                                            <Phone size={13} /> Hotel Reception: {ht.phone}
+                                          </a>
+                                        )}
+                                      </div>
+                                      {rm.notes && (
+                                        <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: '0.5rem 0 0', fontStyle: 'italic' }}>
+                                          ℹ️ {rm.notes}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                              );
+                            })}
                           </div>
-                        </div>
-                      ) : (
-                        <div className="card" style={{ borderLeft: '4px solid var(--border)', backgroundColor: 'var(--bg)' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            <Bed size={22} style={{ color: 'var(--text-muted)' }} />
-                            <div>
-                              <h4 style={{ margin: 0, color: 'var(--text)' }}>Hotel Room Key Allocation</h4>
-                              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0.2rem 0 0' }}>
-                                Room numbers will be issued upon arrival at the hotel reception or once the administrator finalizes the room check-in manifest.
-                              </p>
-                            </div>
-                          </div>
-                        </div>
-                      )}
+                        );
+                      })()}
                     </div>
                   );
                 })()}
@@ -5616,58 +6129,120 @@ export default function App() {
                 </div>
               </div>
 
-              <div className="grid-cols-2">
-                <div className="form-group">
-                  <label>Room Type</label>
-                  <select 
-                    className="form-control" 
-                    value={newRoom.roomType} 
-                    onChange={(e) => setNewRoom({ ...newRoom, roomType: e.target.value })}
-                  >
-                    <option value="Double Bed">Double Bed (2 Pax)</option>
-                    <option value="Triple Bed">Triple Bed (3 Pax)</option>
-                    <option value="Four Bed / Family Suite">Four Bed / Family Suite (4 Pax)</option>
-                    <option value="Deluxe Suite">Deluxe Suite</option>
-                    <option value="Single Room">Single Room (1 Pax)</option>
-                    <option value="Dormitory Bed">Dormitory Bed</option>
-                  </select>
-                </div>
-                <div className="form-group">
-                  <label>Standard Capacity (Beds) *</label>
-                  <input 
-                    type="number" 
-                    required 
-                    min="1" 
-                    max="10" 
-                    className="form-control" 
-                    placeholder="2" 
-                    value={newRoom.capacity} 
-                    onChange={(e) => setNewRoom({ ...newRoom, capacity: parseInt(e.target.value) || 2 })} 
-                  />
+              {/* Quick Bed Count Presets */}
+              <div className="form-group">
+                <label style={{ fontSize: '0.8rem', fontWeight: 600, display: 'block', marginBottom: '0.35rem' }}>
+                  Quick Bed Count Presets (Select for auto-fill)
+                </label>
+                <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap' }}>
+                  {[
+                    { label: '1 Bed (Single)', count: 1, type: 'Single Bed (1 Bed)' },
+                    { label: '2 Beds (Twin)', count: 2, type: 'Twin Bed (2 Beds)' },
+                    { label: '3 Beds (Triple)', count: 3, type: 'Triple Bed (3 Beds)' },
+                    { label: '4 Beds (Quad)', count: 4, type: 'Quad Bed (4 Beds)' },
+                    { label: '5 Beds (Family Suite)', count: 5, type: '5-Bedded Family Suite (5 Beds)' },
+                    { label: '6 Beds (Large Suite)', count: 6, type: '6-Bedded Large Suite (6 Beds)' }
+                  ].map(preset => {
+                    const isSelected = (newRoom.bedCount || newRoom.capacity) === preset.count;
+                    return (
+                      <button
+                        key={preset.count}
+                        type="button"
+                        className={`btn ${isSelected ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem', borderRadius: '4px' }}
+                        onClick={() => {
+                          setNewRoom({
+                            ...newRoom,
+                            bedCount: preset.count,
+                            capacity: preset.count,
+                            roomType: preset.type
+                          });
+                        }}
+                      >
+                        {preset.label}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
 
               <div className="grid-cols-2">
                 <div className="form-group">
-                  <label>Extra Mattress Allowed / Cost (₹)</label>
+                  <label>Bed Count in Room (Standard Beds) *</label>
+                  <input 
+                    type="number" 
+                    required 
+                    min="1" 
+                    max="15" 
+                    className="form-control" 
+                    placeholder="2" 
+                    value={newRoom.bedCount || newRoom.capacity || 2} 
+                    onChange={(e) => {
+                      const val = parseInt(e.target.value) || 1;
+                      setNewRoom({ ...newRoom, bedCount: val, capacity: val });
+                    }} 
+                  />
+                  <small style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
+                    Accurate bed count used for family matching & auto-allocation
+                  </small>
+                </div>
+                <div className="form-group">
+                  <label>Room Category / Type</label>
+                  <select 
+                    className="form-control" 
+                    value={newRoom.roomType} 
+                    onChange={(e) => setNewRoom({ ...newRoom, roomType: e.target.value })}
+                  >
+                    <option value="Single Bed (1 Bed)">Single Bed (1 Bed)</option>
+                    <option value="Twin Bed (2 Beds)">Twin Bed (2 Beds)</option>
+                    <option value="Triple Bed (3 Beds)">Triple Bed (3 Beds)</option>
+                    <option value="Quad Bed (4 Beds)">Quad Bed (4 Beds)</option>
+                    <option value="5-Bedded Family Suite (5 Beds)">5-Bedded Family Suite (5 Beds)</option>
+                    <option value="6-Bedded Large Suite (6 Beds)">6-Bedded Large Suite (6 Beds)</option>
+                    <option value="Dormitory Bed">Dormitory Bed</option>
+                    <option value="Deluxe Suite">Deluxe Suite</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Extra Mattresses Allowed</label>
+                  <select 
+                    className="form-control" 
+                    value={newRoom.extraMattressAllowed || 0} 
+                    onChange={(e) => setNewRoom({ ...newRoom, extraMattressAllowed: parseInt(e.target.value) || 0 })}
+                  >
+                    <option value="0">0 Extra Mattresses</option>
+                    <option value="1">1 Extra Mattress</option>
+                    <option value="2">2 Extra Mattresses</option>
+                    <option value="3">3 Extra Mattresses</option>
+                  </select>
+                  <small style={{ color: 'var(--text-muted)', fontSize: '0.72rem' }}>
+                    Total Capacity: {(parseInt(newRoom.bedCount) || parseInt(newRoom.capacity) || 2) + (parseInt(newRoom.extraMattressAllowed) || 0)} Pax Max
+                  </small>
+                </div>
+                <div className="form-group">
+                  <label>Extra Mattress Cost (₹ per night)</label>
                   <input 
                     type="number" 
                     className="form-control" 
                     placeholder="500" 
-                    value={newRoom.extraMattressCost} 
+                    value={newRoom.extraMattressCost || 500} 
                     onChange={(e) => setNewRoom({ ...newRoom, extraMattressCost: parseInt(e.target.value) || 0 })} 
                   />
                 </div>
-                <div className="form-group">
-                  <label>Special Amenities / Notes</label>
-                  <input 
-                    type="text" 
-                    className="form-control" 
-                    placeholder="e.g. Attached Geyser, Balcony, Ground Floor" 
-                    value={newRoom.notes} 
-                    onChange={(e) => setNewRoom({ ...newRoom, notes: e.target.value })} 
-                  />
-                </div>
+              </div>
+
+              <div className="form-group">
+                <label>Special Amenities / Notes</label>
+                <input 
+                  type="text" 
+                  className="form-control" 
+                  placeholder="e.g. Attached Geyser, Balcony, Ground Floor for seniors" 
+                  value={newRoom.notes || ''} 
+                  onChange={(e) => setNewRoom({ ...newRoom, notes: e.target.value })} 
+                />
               </div>
 
               <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>

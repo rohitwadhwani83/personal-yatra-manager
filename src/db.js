@@ -213,6 +213,32 @@ const DEMO_DATA = {
       remarks: 'Volunteer coordinator.',
       status: 'confirmed',
       paymentStatus: 'completed'
+    },
+    {
+      id: 'p7',
+      yatraId: 'yatra_vrindavan_2026',
+      name: 'Rajesh Bansal',
+      phone: '9810055443',
+      email: 'rajesh.bansal@gmail.com',
+      location: 'Delhi',
+      type: 'family',
+      familyName: 'Bansal Family',
+      membersCount: 5,
+      familyMembers: [
+        { name: 'Rajesh Bansal', relation: 'Self', age: 52, phone: '9810055443' },
+        { name: 'Meenakshi Bansal', relation: 'Spouse', age: 48, phone: '' },
+        { name: 'Rohan Bansal', relation: 'Son', age: 22, phone: '' },
+        { name: 'Pooja Bansal', relation: 'Daughter', age: 19, phone: '' },
+        { name: 'Shanti Devi Bansal', relation: 'Mother', age: 74, phone: '' }
+      ],
+      memberDetails: 'Rajesh (52), Meenakshi (48), Rohan (22), Pooja (19), Shanti Devi (74)',
+      travelMode: 'organised',
+      travelType: '',
+      boardingStation: '',
+      droppingStation: '',
+      remarks: 'Requires ground floor for elderly mother. Family of 5.',
+      status: 'confirmed',
+      paymentStatus: 'completed'
     }
   ],
   devotee_profiles: [
@@ -425,18 +451,18 @@ const DEMO_DATA = {
     }
   ],
   rooms: [
-    { id: 'rm_101', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '101', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', extraMattressCost: 500 },
-    { id: 'rm_102', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '102', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', extraMattressCost: 500 },
-    { id: 'rm_103', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '103', roomType: 'Triple Bed', capacity: 3, floor: 'Ground Floor', extraMattressCost: 500 },
-    { id: 'rm_201', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '201', roomType: 'Family Suite', capacity: 4, floor: '1st Floor', extraMattressCost: 500 },
-    { id: 'rm_202', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '202', roomType: 'Family Suite', capacity: 4, floor: '1st Floor', extraMattressCost: 500 },
-    { id: 'rm_203', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '203', roomType: 'Triple Bed', capacity: 3, floor: '1st Floor', extraMattressCost: 500 },
-    { id: 'rm_204', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '204', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', extraMattressCost: 500 },
-    { id: 'rm_205', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '205', roomType: 'Double Bed', capacity: 2, floor: '1st Floor', extraMattressCost: 500 },
-    { id: 'rm_kb_101', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '101', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', extraMattressCost: 400 },
-    { id: 'rm_kb_102', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '102', roomType: 'Double Bed', capacity: 2, floor: 'Ground Floor', extraMattressCost: 400 },
-    { id: 'rm_kb_201', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '201', roomType: 'Triple Bed', capacity: 3, floor: '1st Floor', extraMattressCost: 400 },
-    { id: 'rm_kb_202', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '202', roomType: 'Family Suite', capacity: 4, floor: '1st Floor', extraMattressCost: 400 }
+    { id: 'rm_101', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '101', roomType: 'Twin Bed', bedCount: 2, capacity: 2, floor: 'Ground Floor', extraMattressCost: 500, extraMattressAllowed: 0 },
+    { id: 'rm_102', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '102', roomType: 'Twin Bed', bedCount: 2, capacity: 2, floor: 'Ground Floor', extraMattressCost: 500, extraMattressAllowed: 0 },
+    { id: 'rm_103', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '103', roomType: 'Triple Bed', bedCount: 3, capacity: 3, floor: 'Ground Floor', extraMattressCost: 500, extraMattressAllowed: 1 },
+    { id: 'rm_201', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '201', roomType: '5-Bedded Family Suite', bedCount: 5, capacity: 5, floor: '1st Floor', extraMattressCost: 500, extraMattressAllowed: 1 },
+    { id: 'rm_202', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '202', roomType: 'Quad Bed (4 Beds)', bedCount: 4, capacity: 4, floor: '1st Floor', extraMattressCost: 500, extraMattressAllowed: 0 },
+    { id: 'rm_203', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '203', roomType: 'Triple Bed', bedCount: 3, capacity: 3, floor: '1st Floor', extraMattressCost: 500, extraMattressAllowed: 0 },
+    { id: 'rm_204', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '204', roomType: 'Twin Bed', bedCount: 2, capacity: 2, floor: '1st Floor', extraMattressCost: 500, extraMattressAllowed: 0 },
+    { id: 'rm_205', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '205', roomType: 'Twin Bed', bedCount: 2, capacity: 2, floor: '1st Floor', extraMattressCost: 500, extraMattressAllowed: 0 },
+    { id: 'rm_kb_101', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '101', roomType: 'Twin Bed', bedCount: 2, capacity: 2, floor: 'Ground Floor', extraMattressCost: 400, extraMattressAllowed: 0 },
+    { id: 'rm_kb_102', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '102', roomType: 'Twin Bed', bedCount: 2, capacity: 2, floor: 'Ground Floor', extraMattressCost: 400, extraMattressAllowed: 0 },
+    { id: 'rm_kb_201', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '201', roomType: 'Triple Bed', bedCount: 3, capacity: 3, floor: '1st Floor', extraMattressCost: 400, extraMattressAllowed: 0 },
+    { id: 'rm_kb_202', yatraId: 'yatra_vrindavan_2026', hotelId: 'h2', hotelName: 'Krishna Balaram Residency', roomNumber: '202', roomType: '5-Bedded Family Suite', bedCount: 5, capacity: 5, floor: '1st Floor', extraMattressCost: 400, extraMattressAllowed: 1 }
   ]
 };
 
@@ -469,6 +495,46 @@ class Database {
         localStorage.setItem(storageKey, JSON.stringify(DEMO_DATA[key]));
       }
     });
+
+    // Auto-migration: ensure existing room records have bedCount, and include p7 if missing
+    try {
+      const roomsRaw = localStorage.getItem('yatra_mgr_rooms');
+      if (roomsRaw) {
+        const parsed = JSON.parse(roomsRaw);
+        let changed = false;
+        parsed.forEach(r => {
+          if (!r.bedCount) {
+            r.bedCount = parseInt(r.capacity) || 2;
+            changed = true;
+          }
+          if (r.extraMattressAllowed === undefined) {
+            r.extraMattressAllowed = 0;
+            changed = true;
+          }
+        });
+        // Check if demo 5-bedded suite exists in MVT
+        if (!parsed.some(r => r.bedCount >= 5)) {
+          parsed.push({ id: 'rm_201', yatraId: 'yatra_vrindavan_2026', hotelId: 'h1', hotelName: 'MVT Guesthouse', roomNumber: '201', roomType: '5-Bedded Family Suite', bedCount: 5, capacity: 5, floor: '1st Floor', extraMattressCost: 500, extraMattressAllowed: 1 });
+          changed = true;
+        }
+        if (changed) {
+          localStorage.setItem('yatra_mgr_rooms', JSON.stringify(parsed));
+        }
+      }
+      const partsRaw = localStorage.getItem('yatra_mgr_participants');
+      if (partsRaw) {
+        const parts = JSON.parse(partsRaw);
+        if (!parts.some(p => p.id === 'p7')) {
+          const p7 = DEMO_DATA.participants.find(p => p.id === 'p7');
+          if (p7) {
+            parts.push(p7);
+            localStorage.setItem('yatra_mgr_participants', JSON.stringify(parts));
+          }
+        }
+      }
+    } catch (e) {
+      console.warn("Storage migration notice", e);
+    }
   }
 
   initializeFirebase(config) {
