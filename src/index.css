@@ -754,6 +754,67 @@ a:hover {
 /* ========================================================= */
 /* PRINTABLE DEVOTEE BADGES & PASSES                         */
 /* ========================================================= */
+.badges-modal-overlay {
+  display: flex !important;
+  align-items: flex-start !important;
+  justify-content: center !important;
+  overflow-y: auto !important;
+  -webkit-overflow-scrolling: touch !important;
+  padding: 2.5rem 1rem !important;
+  z-index: 10000 !important;
+}
+
+.badges-modal-container {
+  max-width: 980px;
+  width: 100%;
+  margin: 0 auto;
+  background-color: var(--bg-card);
+  border-radius: var(--radius-lg);
+  padding: 1.75rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
+  border: 1px solid var(--border);
+  position: relative;
+}
+
+.badges-modal-sticky-header {
+  position: sticky;
+  top: -1.75rem;
+  z-index: 50;
+  background-color: var(--bg-card);
+  border-bottom: 1px solid var(--border);
+  padding: 0.85rem 0;
+  margin-top: -0.75rem;
+  margin-bottom: 1.5rem;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.04);
+}
+
+.floating-close-badge-btn {
+  position: fixed;
+  top: 1.25rem;
+  right: 1.75rem;
+  z-index: 10005;
+  background: var(--bg-card);
+  color: var(--text);
+  border: 1.5px solid var(--border);
+  box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+  border-radius: 999px;
+  padding: 0.5rem 1.15rem;
+  font-weight: 700;
+  font-size: 0.85rem;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  cursor: pointer;
+  transition: var(--transition);
+}
+
+.floating-close-badge-btn:hover {
+  background: var(--danger-light);
+  color: var(--danger);
+  border-color: var(--danger);
+  transform: translateY(-2px);
+}
+
 .badge-cut-guide {
   border: 1.5px dashed #cbd5e1;
   border-radius: 12px;

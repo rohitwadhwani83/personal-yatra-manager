@@ -266,6 +266,18 @@ export default function App() {
     cleanupExpiredSandboxes();
   }, []);
 
+  // Close badges modal on Escape key press
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === 'Escape' && isPrintBadgesOpen) {
+        setIsPrintBadgesOpen(false);
+        setSingleBadgeParticipant(null);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [isPrintBadgesOpen]);
+
   // --- Custom Router Effect ---
   useEffect(() => {
     const handleHash = () => {
@@ -8098,12 +8110,32 @@ export default function App() {
         });
 
         return (
-          <div className="modal-overlay badges-modal-overlay" style={{ zIndex: 9999, overflowY: 'auto', padding: '1rem' }}>
-            <div style={{ maxWidth: '960px', width: '100%', margin: '0 auto', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-md)', padding: '1.5rem', boxShadow: 'var(--shadow-lg)' }}>
-              
-              {/* Top Control Toolbar (Hidden in print) */}
-              <div className="no-print" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+          <div 
+            className="modal-overlay badges-modal-overlay"
+            onClick={(e) => {
+              if (e.target === e.currentTarget) {
+                setIsPrintBadgesOpen(false);
+                setSingleBadgeParticipant(null);
+              }
+            }}
+          >
+            {/* Always-visible Floating Top-Right Close Button */}
+            <button 
+              type="button" 
+              className="floating-close-badge-btn no-print"
+              onClick={() => {
+                setIsPrintBadgesOpen(false);
+                setSingleBadgeParticipant(null);
+              }}
+              title="Close Preview (or press Esc)"
+            >
+              ✕ Close Preview
+            </button>
+
+            <div className="badges-modal-container">
+              {/* Sticky Top Control Toolbar (Always stays pinned on screen) */}
+              <div className="no-print badges-modal-sticky-header">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '0.75rem' }}>
                   <div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <Printer size={22} style={{ color: 'var(--primary)' }} />
@@ -8129,12 +8161,13 @@ export default function App() {
                     <button 
                       type="button"
                       className="btn btn-outline" 
+                      style={{ padding: '0.55rem 1rem', fontSize: '0.9rem', fontWeight: 600 }}
                       onClick={() => {
                         setIsPrintBadgesOpen(false);
                         setSingleBadgeParticipant(null);
                       }}
                     >
-                      ✕ Close
+                      ✕ Close Preview
                     </button>
                   </div>
                 </div>
@@ -8315,6 +8348,29 @@ export default function App() {
                     </div>
                   </div>
                 ))}
+              </div>
+
+              {/* Bottom Action Footer (Hidden in print) */}
+              <div className="no-print" style={{ display: 'flex', justifyContent: 'center', gap: '1rem', marginTop: '2.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)', flexWrap: 'wrap' }}>
+                <button 
+                  type="button" 
+                  className="btn btn-primary" 
+                  style={{ padding: '0.65rem 1.5rem', fontWeight: 600, fontSize: '0.9rem' }} 
+                  onClick={() => window.print()}
+                >
+                  <Printer size={16} /> Print Now (A4 / Cardstock)
+                </button>
+                <button 
+                  type="button" 
+                  className="btn btn-outline" 
+                  style={{ padding: '0.65rem 1.5rem', fontWeight: 600, fontSize: '0.9rem' }} 
+                  onClick={() => {
+                    setIsPrintBadgesOpen(false);
+                    setSingleBadgeParticipant(null);
+                  }}
+                >
+                  ✕ Close Preview / Cancel
+                </button>
               </div>
 
             </div>
