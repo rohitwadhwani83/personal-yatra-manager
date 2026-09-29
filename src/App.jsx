@@ -2471,136 +2471,179 @@ export default function App() {
         {/* ======================================= */}
         {currentRoute.path === 'yatra' && selectedYatra && currentUser && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', borderBottom: '1px solid var(--border)', paddingBottom: '1rem' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                <button className="btn btn-outline btn-icon" onClick={() => navigateTo('dashboard')}>
-                  <ArrowLeft size={16} />
+            {/* EXECUTIVE YATRA WORKSPACE HEADER */}
+            <div className="yatra-workspace-header">
+              {/* Top Sub-Bar: Navigation Breadcrumb + Administrative Tools */}
+              <div className="yatra-header-top">
+                <button 
+                  type="button" 
+                  className="btn-back-breadcrumb"
+                  onClick={() => navigateTo('dashboard')}
+                  title="Return to Yatras Dashboard"
+                >
+                  <ArrowLeft size={14} /> Back to Yatras
                 </button>
-                <div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
-                    <h2 style={{ fontSize: '1.75rem', margin: 0 }}>{selectedYatra.name}</h2>
-                    <span 
-                      className={`badge badge-${selectedYatra.status}`}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '0.3rem',
-                        textTransform: 'uppercase',
-                        fontWeight: '700',
-                        fontSize: '0.75rem',
-                        padding: '0.25rem 0.6rem',
-                        backgroundColor: selectedYatra.status === 'planning' ? '#fef3c7' : (selectedYatra.status === 'registration_open' ? 'var(--primary-light)' : (selectedYatra.status === 'confirmed' ? 'var(--success-light)' : '#f1f5f9')),
-                        color: selectedYatra.status === 'planning' ? '#b45309' : (selectedYatra.status === 'registration_open' ? 'var(--primary)' : (selectedYatra.status === 'confirmed' ? 'var(--success)' : '#475569')),
-                        border: `1px solid ${selectedYatra.status === 'planning' ? '#fde68a' : (selectedYatra.status === 'registration_open' ? 'var(--primary)' : (selectedYatra.status === 'confirmed' ? 'var(--success-border)' : 'var(--border)'))}`
+
+                {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
+                  <div className="yatra-header-admin-tools">
+                    <button 
+                      type="button"
+                      className="btn btn-outline" 
+                      style={{ padding: '0.35rem 0.65rem', fontSize: '0.78rem' }}
+                      onClick={() => {
+                        setEditingYatraId(selectedYatra.id);
+                        setNewYatra({
+                          name: selectedYatra.name,
+                          destination: selectedYatra.destination,
+                          startDate: selectedYatra.startDate,
+                          endDate: selectedYatra.endDate,
+                          expectedParticipants: selectedYatra.expectedParticipants || 30,
+                          pricePerPerson: selectedYatra.pricePerPerson || '',
+                          customQrImageUrl: selectedYatra.customQrImageUrl || '',
+                          upiId: selectedYatra.upiId,
+                          upiName: selectedYatra.upiName,
+                          registrationDeadline: selectedYatra.registrationDeadline || ''
+                        });
+                        setIsCreateYatraOpen(true);
                       }}
                     >
-                      {selectedYatra.status === 'planning' && <Clock size={13} />}
-                      {selectedYatra.status === 'registration_open' && <Share2 size={13} />}
-                      {selectedYatra.status === 'confirmed' && <CheckCircle size={13} />}
-                      {selectedYatra.status === 'completed' && <Compass size={13} />}
-                      {selectedYatra.status === 'planning' ? 'Planning Stage' : (selectedYatra.status === 'registration_open' ? 'Registration Open' : (selectedYatra.status === 'confirmed' ? 'Yatra Confirmed' : 'Yatra Completed'))}
-                    </span>
-                  </div>
-                  <p style={{ color: 'var(--text-muted)' }}>📍 {selectedYatra.destination} | 📅 {selectedYatra.startDate} to {selectedYatra.endDate}</p>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
-                  <>
-                    <button className="btn btn-outline" onClick={() => {
-                      setEditingYatraId(selectedYatra.id);
-                      setNewYatra({
-                        name: selectedYatra.name,
-                        destination: selectedYatra.destination,
-                        startDate: selectedYatra.startDate,
-                        endDate: selectedYatra.endDate,
-                        expectedParticipants: selectedYatra.expectedParticipants || 30,
-                        pricePerPerson: selectedYatra.pricePerPerson || '',
-                        customQrImageUrl: selectedYatra.customQrImageUrl || '',
-                        upiId: selectedYatra.upiId,
-                        upiName: selectedYatra.upiName,
-                        registrationDeadline: selectedYatra.registrationDeadline || ''
-                      });
-                      setIsCreateYatraOpen(true);
-                    }}>
-                      <Edit2 size={16} /> Edit
+                      <Edit2 size={13} /> Edit
                     </button>
+
                     {!selectedYatra.isDeleted && (
-                      <button className="btn btn-danger" onClick={() => handleDeleteYatra(selectedYatra.id)}>
-                        <Trash2 size={16} /> Delete
+                      <button 
+                        type="button"
+                        className="btn btn-outline" 
+                        style={{ padding: '0.35rem 0.65rem', fontSize: '0.78rem', color: '#dc2626', borderColor: '#fca5a5' }}
+                        onClick={() => handleDeleteYatra(selectedYatra.id)}
+                        title="Delete this Yatra"
+                      >
+                        <Trash2 size={13} /> Delete
                       </button>
                     )}
+
                     {selectedYatra.isDeleted && currentUser.role === 'super_admin' && (
-                      <button className="btn btn-primary" style={{ backgroundColor: 'var(--success)' }} onClick={() => handleRestoreYatra(selectedYatra.id)}>
-                        <RefreshCw size={16} /> Restore
+                      <button 
+                        type="button"
+                        className="btn btn-primary" 
+                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.78rem', backgroundColor: 'var(--success)' }} 
+                        onClick={() => handleRestoreYatra(selectedYatra.id)}
+                      >
+                        <RefreshCw size={13} /> Restore
                       </button>
                     )}
-                  </>
+                  </div>
                 )}
-                {selectedYatra.status === 'planning' ? (
-                  <button 
-                    className="btn btn-outline" 
-                    style={{ borderColor: 'var(--warning)', color: 'var(--warning)', display: 'inline-flex', alignItems: 'center', gap: '0.4rem', opacity: 0.85 }} 
-                    onClick={() => alert("Registration link is locked during Planning stage. Finalize Yatra essentials (price, hotels, estimated devotees), then switch stage to 'Registration Open' to enable public registrations.")}
-                    title="Registration link locked during Planning stage"
-                  >
-                    <Lock size={15} /> Reg. Link (Locked - Planning)
-                  </button>
-                ) : selectedYatra.status === 'confirmed' ? (
-                  <button 
-                    className="btn btn-outline" 
-                    style={{ borderColor: 'var(--success)', color: 'var(--success)', display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }} 
-                    onClick={() => alert("This Yatra is Confirmed, so public registration is now closed. Admins can still add devotees individually from the Participants tab.")}
-                    title="Public registration closed (Yatra Confirmed)"
-                  >
-                    <CheckCircle size={15} /> Yatra Confirmed (Public Closed)
-                  </button>
-                ) : selectedYatra.status === 'completed' ? (
-                  <button 
-                    className="btn btn-outline" 
-                    disabled 
-                    style={{ opacity: 0.6, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
-                  >
-                    <Compass size={15} /> Yatra Completed
-                  </button>
-                ) : (
-                  <button className="btn btn-primary" style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }} onClick={() => {
-                    const baseUrl = window.location.href.split('#')[0];
-                    navigator.clipboard.writeText(`${baseUrl}#/register/${selectedYatra.id}`);
-                    alert("Copied public registration link to clipboard! Devotees can now register.");
-                  }}>
-                    <Share2 size={16} /> Share Registration Link
-                  </button>
-                )}
-                <button 
-                  type="button"
-                  className="btn btn-outline" 
-                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
-                  onClick={() => {
-                    setSingleBadgeParticipant(null);
-                    setBadgeFilterBus('all');
-                    setBadgeFilterHotel('all');
-                    setIsPrintBadgesOpen(true);
-                  }}
-                  title="Print Wearable Devotee Badges / ID Passes"
-                >
-                  <Printer size={16} /> {t('printBadges')}
-                </button>
-                <select 
-                  value={selectedYatra.status}
-                  onChange={async (e) => {
-                    const newStatus = e.target.value;
-                    const updated = await db.updateYatra(selectedYatra.id, { status: newStatus });
-                    setSelectedYatra(updated);
-                    setRefreshTrigger(prev => prev + 1);
-                  }}
-                  style={{ width: 'auto', padding: '0.5rem 2rem 0.5rem 0.75rem', fontWeight: '600' }}
-                >
-                  <option value="planning">Stage 1: Planning</option>
-                  <option value="registration_open">Stage 2: Registration Open</option>
-                  <option value="confirmed">Stage 3: Confirmed</option>
-                  <option value="completed">Stage 4: Completed</option>
-                </select>
+              </div>
+
+              {/* Main Showcase Bar: Title, Metadata, Stage Controller & Primary Action Tools */}
+              <div className="yatra-header-main">
+                <div className="yatra-header-info">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                    <h2 className="yatra-title">{selectedYatra.name}</h2>
+                  </div>
+                  <div className="yatra-meta-badges">
+                    <span className="yatra-meta-pill">
+                      📍 {selectedYatra.destination}
+                    </span>
+                    <span className="yatra-meta-pill">
+                      📅 {selectedYatra.startDate} to {selectedYatra.endDate}
+                    </span>
+                    {selectedYatra.expectedParticipants && (
+                      <span className="yatra-meta-pill">
+                        👥 {selectedYatra.expectedParticipants} Pilgrims Target
+                      </span>
+                    )}
+                    {selectedYatra.pricePerPerson && (
+                      <span className="yatra-meta-pill yatra-price-pill">
+                        💰 ₹{parseFloat(selectedYatra.pricePerPerson).toLocaleString()} / seat
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Right Side: Interactive Lifecycle Controller & Actions */}
+                <div className="yatra-header-actions">
+                  <div className="yatra-stage-box">
+                    <span className="yatra-stage-label">Yatra Lifecycle</span>
+                    <select 
+                      className={`yatra-stage-dropdown stage-badge-${selectedYatra.status}`}
+                      value={selectedYatra.status}
+                      onChange={async (e) => {
+                        const newStatus = e.target.value;
+                        const updated = await db.updateYatra(selectedYatra.id, { status: newStatus });
+                        setSelectedYatra(updated);
+                        setRefreshTrigger(prev => prev + 1);
+                      }}
+                    >
+                      <option value="planning">🕒 Stage 1: Planning</option>
+                      <option value="registration_open">🔗 Stage 2: Registration Open</option>
+                      <option value="confirmed">✓ Stage 3: Confirmed</option>
+                      <option value="completed">🏁 Stage 4: Completed</option>
+                    </select>
+                  </div>
+
+                  <div className="yatra-action-buttons">
+                    {selectedYatra.status === 'planning' ? (
+                      <button 
+                        type="button"
+                        className="btn btn-outline" 
+                        style={{ borderColor: '#fde68a', backgroundColor: '#fef3c7', color: '#b45309', fontSize: '0.82rem', padding: '0.45rem 0.8rem' }} 
+                        onClick={() => alert("Registration link is locked during Planning stage. Finalize Yatra essentials (price, hotels, estimated devotees), then switch stage to 'Registration Open' to enable public registrations.")}
+                        title="Registration link locked during Planning stage"
+                      >
+                        <Lock size={14} /> Reg. Link (Locked)
+                      </button>
+                    ) : selectedYatra.status === 'confirmed' ? (
+                      <button 
+                        type="button"
+                        className="btn btn-outline" 
+                        style={{ borderColor: 'var(--success-border)', backgroundColor: 'var(--success-light)', color: 'var(--success)', fontSize: '0.82rem', padding: '0.45rem 0.8rem' }} 
+                        onClick={() => alert("This Yatra is Confirmed, so public registration is now closed. Admins can still add devotees individually from the Participants tab.")}
+                        title="Public registration closed (Yatra Confirmed)"
+                      >
+                        <CheckCircle size={14} /> Confirmed (Closed)
+                      </button>
+                    ) : selectedYatra.status === 'completed' ? (
+                      <button 
+                        type="button"
+                        className="btn btn-outline" 
+                        disabled 
+                        style={{ opacity: 0.6, fontSize: '0.82rem', padding: '0.45rem 0.8rem' }}
+                      >
+                        <Compass size={14} /> Completed
+                      </button>
+                    ) : (
+                      <button 
+                        type="button"
+                        className="btn btn-primary" 
+                        style={{ fontSize: '0.82rem', padding: '0.45rem 0.85rem' }} 
+                        onClick={() => {
+                          const baseUrl = window.location.href.split('#')[0];
+                          navigator.clipboard.writeText(`${baseUrl}#/register/${selectedYatra.id}`);
+                          alert("Copied public registration link to clipboard! Devotees can now register.");
+                        }}
+                      >
+                        <Share2 size={14} /> Share Reg. Link
+                      </button>
+                    )}
+
+                    <button 
+                      type="button"
+                      className="btn btn-outline" 
+                      style={{ fontSize: '0.82rem', padding: '0.45rem 0.8rem', borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
+                      onClick={() => {
+                        setSingleBadgeParticipant(null);
+                        setBadgeFilterBus('all');
+                        setBadgeFilterHotel('all');
+                        setIsPrintBadgesOpen(true);
+                      }}
+                      title="Print Wearable Devotee Badges / ID Passes"
+                    >
+                      <Printer size={14} /> {t('printBadges')}
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -2859,7 +2902,7 @@ export default function App() {
                   </div>
 
                   {/* BOTTOM ROW: LOGISTICS, HOTEL & SCANNER */}
-                  <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '1.5rem' }}>
+                  <div className="grid-overview-bottom">
                     {/* TRAVEL LOGISTICS SNAPSHOT */}
                     <div className="card">
                       <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
