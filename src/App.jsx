@@ -239,6 +239,33 @@ export default function App() {
     loadData();
   }, [selectedYatra, refreshTrigger, isFirebaseConnected, currentUser]);
 
+  // Clean up expired sandbox test yatras automatically
+  useEffect(() => {
+    const cleanupExpiredSandboxes = async () => {
+      try {
+        const allYatras = await db.getYatras();
+        const expired = allYatras.filter(y => y.isSandbox && y.sandboxExpiresAt && Date.now() > y.sandboxExpiresAt);
+        for (const sb of expired) {
+          const parts = await db.getParticipants(sb.id);
+          for (const p of parts) await db.deleteParticipant(p.id);
+          const buses = await db.getBuses(sb.id);
+          for (const b of buses) await db.deleteBus(b.id);
+          const hotels = await db.getHotels(sb.id);
+          for (const h of hotels) await db.deleteHotel(h.id);
+          const rms = await db.getRooms(sb.id);
+          for (const r of rms) await db.deleteRoom(r.id);
+          await db.deleteYatra(sb.id);
+        }
+        if (expired.length > 0) {
+          setRefreshTrigger(prev => prev + 1);
+        }
+      } catch (err) {
+        console.warn("Sandbox cleanup notice:", err);
+      }
+    };
+    cleanupExpiredSandboxes();
+  }, []);
+
   // --- Custom Router Effect ---
   useEffect(() => {
     const handleHash = () => {
@@ -611,7 +638,388 @@ export default function App() {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  const handlePurgeSandbox = async (sandboxYatraId) => {
+    if (window.confirm("Are you sure you want to purge and delete this Sandbox Test Yatra? All mock devotees, buses, hotels, and rooms in this sandbox will be permanently deleted.")) {
+      try {
+        // 1. Delete all participants of this sandbox
+        const parts = await db.getParticipants(sandboxYatraId);
+        for (const p of parts) {
+          await db.deleteParticipant(p.id);
+        }
+        // 2. Delete all buses of this sandbox
+        const bList = await db.getBuses(sandboxYatraId);
+        for (const b of bList) {
+          await db.deleteBus(b.id);
+        }
+        // 3. Delete all hotels & rooms of this sandbox
+        const hList = await db.getHotels(sandboxYatraId);
+        for (const h of hList) {
+          await db.deleteHotel(h.id);
+        }
+        const rList = await db.getRooms(sandboxYatraId);
+        for (const r of rList) {
+          await db.deleteRoom(r.id);
+        }
+        // 4. Delete all payments & expenses of this sandbox
+        const payList = await db.getPayments(sandboxYatraId);
+        for (const pay of payList) {
+          await db.deletePayment(pay.id);
+        }
+        const expList = await db.getExpenses(sandboxYatraId);
+        for (const exp of expList) {
+          await db.deleteExpense(exp.id);
+        }
+        // 5. Delete the yatra record
+        await db.deleteYatra(sandboxYatraId);
+
+        if (selectedYatra?.id === sandboxYatraId) {
+          setSelectedYatra(null);
+          navigateTo('dashboard');
+        }
+        setRefreshTrigger(prev => prev + 1);
+        alert("✨ Sandbox Test Yatra and all mock data purged successfully!");
+      } catch (err) {
+        console.error("Purge error:", err);
+        alert("Encountered an issue purging sandbox data. Please refresh.");
+      }
+    }
+  };
+
+  const handleCreateSandboxYatra = async () => {
+    const sandboxId = 'sandbox_' + Date.now();
+    
+    // 1. Create Sandbox Yatra
+    const sandboxYatra = {
+      id: sandboxId,
+      name: '🧪 [Sandbox Simulation] Vrindavan Yatra',
+      destination: 'Vrindavan, Mathura',
+      startDate: '2026-10-15',
+      endDate: '2026-10-19',
+      expectedParticipants: 30,
+      pricePerPerson: '3500',
+      customQrImageUrl: '',
+      upiId: 'rohit.wadhwani83@okaxis',
+      upiName: 'Rohit Wadhwani',
+      registrationDeadline: '2026-10-10',
+      status: 'confirmed',
+      isSandbox: true,
+      sandboxExpiresAt: Date.now() + 4 * 60 * 60 * 1000, // 4 hours auto-expiry safety net
+      createdAt: new Date().toISOString()
+    };
+    await db.addYatra(sandboxYatra);
+
+    // 2. Create 2 Realistic Buses for Bin-Packing Auto-Allocation Test
+    const bus1 = {
+      id: 'bus_sb1_' + sandboxId,
+      yatraId: sandboxId,
+      name: 'Bus 1 (AC Video Coach)',
+      busNumber: 'MH 02 AB 1008',
+      route: 'Mumbai Central -> Dadar -> Vrindavan',
+      capacity: 15,
+      coordinatorName: 'Arjuna Das',
+      coordinatorPhone: '9811122233',
+      driverName: 'Ramu Bhai',
+      driverPhone: '9822233344',
+      departureTime: '05:30 AM',
+      boardingPoint: 'Mumbai Central Station Platform 1 Gate',
+      status: 'active'
+    };
+    const bus2 = {
+      id: 'bus_sb2_' + sandboxId,
+      yatraId: sandboxId,
+      name: 'Bus 2 (Deluxe AC Sleeper)',
+      busNumber: 'MH 04 CD 2009',
+      route: 'Borivali -> Thane -> Vrindavan',
+      capacity: 15,
+      coordinatorName: 'Krishna Kanta Das',
+      coordinatorPhone: '9833344455',
+      driverName: 'Shyam Sharma',
+      driverPhone: '9844455566',
+      departureTime: '06:00 AM',
+      boardingPoint: 'Borivali National Park Flyover Gate',
+      status: 'active'
+    };
+    await db.addBus(bus1);
+    await db.addBus(bus2);
+
+    // 3. Create 2 Hotels
+    const hotel1Id = 'hotel_sb1_' + sandboxId;
+    const hotel1 = {
+      id: hotel1Id,
+      yatraId: sandboxId,
+      name: 'MVT Bhaktivedanta Ashram',
+      address: 'Raman Reti, Near ISKCON, Vrindavan',
+      gmapsLink: 'https://maps.google.com/?q=MVT+Vrindavan',
+      bookingLink: '',
+      contactPerson: 'Govinda Das',
+      phone: '9876501111',
+      roomsAvailable: 5,
+      roomPrice: 2400,
+      extraMattressCost: 500,
+      distanceFromTemple: '2 mins walk to ISKCON',
+      notes: 'Pure sattvic environment, AC rooms with power backup',
+      contacted: true,
+      shortlisted: true,
+      finalSelected: true
+    };
+    const hotel2Id = 'hotel_sb2_' + sandboxId;
+    const hotel2 = {
+      id: hotel2Id,
+      yatraId: sandboxId,
+      name: 'Radha Raman Guesthouse',
+      address: 'Near Radha Raman Temple, Vrindavan',
+      gmapsLink: '',
+      bookingLink: '',
+      contactPerson: 'Murari Lal Sharma',
+      phone: '9876502222',
+      roomsAvailable: 4,
+      roomPrice: 1800,
+      extraMattressCost: 400,
+      distanceFromTemple: '5 mins to Bankey Bihari',
+      notes: 'Clean heritage rooms near old town',
+      contacted: true,
+      shortlisted: true,
+      finalSelected: true
+    };
+    await db.addHotel(hotel1);
+    await db.addHotel(hotel2);
+
+    // 4. Create Diverse Rooms with bedCount and mattress options across both hotels
+    const mockRooms = [
+      // MVT Ashram Rooms
+      { id: 'rm_101_' + sandboxId, yatraId: sandboxId, hotelId: hotel1Id, hotelName: hotel1.name, roomNumber: '101', roomType: 'Twin Bed (2 Beds)', bedCount: 2, capacity: 2, extraMattressAllowed: 1, floor: 'Ground Floor' },
+      { id: 'rm_102_' + sandboxId, yatraId: sandboxId, hotelId: hotel1Id, hotelName: hotel1.name, roomNumber: '102', roomType: 'Twin Bed (2 Beds)', bedCount: 2, capacity: 2, extraMattressAllowed: 0, floor: 'Ground Floor' },
+      { id: 'rm_103_' + sandboxId, yatraId: sandboxId, hotelId: hotel1Id, hotelName: hotel1.name, roomNumber: '103', roomType: 'Triple Bed (3 Beds)', bedCount: 3, capacity: 3, extraMattressAllowed: 1, floor: '1st Floor' },
+      { id: 'rm_104_' + sandboxId, yatraId: sandboxId, hotelId: hotel1Id, hotelName: hotel1.name, roomNumber: '104', roomType: 'Family Quad (4 Beds)', bedCount: 4, capacity: 4, extraMattressAllowed: 1, floor: '1st Floor' },
+      { id: 'rm_105_' + sandboxId, yatraId: sandboxId, hotelId: hotel1Id, hotelName: hotel1.name, roomNumber: '105', roomType: '5-Bed Family Suite', bedCount: 5, capacity: 5, extraMattressAllowed: 2, floor: '2nd Floor' },
+      
+      // Radha Raman Guesthouse Rooms
+      { id: 'rm_201_' + sandboxId, yatraId: sandboxId, hotelId: hotel2Id, hotelName: hotel2.name, roomNumber: '201', roomType: 'Twin Bed (2 Beds)', bedCount: 2, capacity: 2, extraMattressAllowed: 0, floor: 'Ground Floor' },
+      { id: 'rm_202_' + sandboxId, yatraId: sandboxId, hotelId: hotel2Id, hotelName: hotel2.name, roomNumber: '202', roomType: 'Twin Bed (2 Beds)', bedCount: 2, capacity: 2, extraMattressAllowed: 1, floor: 'Ground Floor' },
+      { id: 'rm_203_' + sandboxId, yatraId: sandboxId, hotelId: hotel2Id, hotelName: hotel2.name, roomNumber: '203', roomType: 'Triple Bed (3 Beds)', bedCount: 3, capacity: 3, extraMattressAllowed: 1, floor: '1st Floor' },
+      { id: 'rm_204_' + sandboxId, yatraId: sandboxId, hotelId: hotel2Id, hotelName: hotel2.name, roomNumber: '204', roomType: 'Family Quad (4 Beds)', bedCount: 4, capacity: 4, extraMattressAllowed: 0, floor: '1st Floor' },
+    ];
+    for (const r of mockRooms) {
+      await db.addRoom(r);
+    }
+
+    // 5. Create 22 Mock Devotees with diverse family structures, ages, and travel modes
+    const mockDevotees = [
+      // Family of 5 (Can fit in 5-bed suite Room 105 or 3-bed + 2-bed)
+      {
+        id: 'p_sb1_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Ramesh Sharma',
+        phone: '9820111222',
+        email: 'ramesh.sharma@example.com',
+        location: 'Mumbai',
+        type: 'family',
+        familyName: 'Sharma Family',
+        membersCount: 5,
+        familyMembers: [
+          { name: 'Ramesh Sharma', relation: 'Self', age: 48, phone: '9820111222' },
+          { name: 'Sunita Sharma', relation: 'Spouse', age: 45, phone: '' },
+          { name: 'Rahul Sharma', relation: 'Son', age: 22, phone: '' },
+          { name: 'Pooja Sharma', relation: 'Daughter', age: 17, phone: '' },
+          { name: 'Kaushalya Devi', relation: 'Mother', age: 72, phone: '' }
+        ],
+        memberDetails: 'Ramesh (48), Sunita (45), Rahul (22), Pooja (17), Kaushalya (72)',
+        travelMode: 'organised',
+        status: 'confirmed',
+        paymentStatus: 'completed',
+        isSandboxData: true
+      },
+      // Family of 4 with a toddler under 5 yrs traveling free
+      {
+        id: 'p_sb2_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Gaurav Kulkarni',
+        phone: '9820222333',
+        email: 'gaurav.k@example.com',
+        location: 'Pune',
+        type: 'family',
+        familyName: 'Kulkarni Family',
+        membersCount: 4,
+        familyMembers: [
+          { name: 'Gaurav Kulkarni', relation: 'Self', age: 39, phone: '9820222333' },
+          { name: 'Sneha Kulkarni', relation: 'Spouse', age: 36, phone: '' },
+          { name: 'Aarav Kulkarni', relation: 'Son', age: 9, phone: '' },
+          { name: 'Ananya Kulkarni', relation: 'Daughter', age: 3, phone: '' }
+        ],
+        memberDetails: 'Gaurav (39), Sneha (36), Aarav (9), Ananya (3)',
+        travelMode: 'organised',
+        status: 'confirmed',
+        paymentStatus: 'completed',
+        isSandboxData: true
+      },
+      // Family of 3
+      {
+        id: 'p_sb3_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Sanjay Gupta',
+        phone: '9820333444',
+        email: 'sanjay.gupta@example.com',
+        location: 'Delhi',
+        type: 'family',
+        familyName: 'Gupta Family',
+        membersCount: 3,
+        familyMembers: [
+          { name: 'Sanjay Gupta', relation: 'Self', age: 56, phone: '9820333444' },
+          { name: 'Anita Gupta', relation: 'Spouse', age: 52, phone: '' },
+          { name: 'Vikas Gupta', relation: 'Son', age: 26, phone: '' }
+        ],
+        memberDetails: 'Sanjay (56), Anita (52), Vikas (26)',
+        travelMode: 'organised',
+        status: 'confirmed',
+        paymentStatus: 'partially_paid',
+        isSandboxData: true
+      },
+      // Married Couple (2 pax)
+      {
+        id: 'p_sb4_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Vikram Patel',
+        phone: '9820444555',
+        email: 'vikram.p@example.com',
+        location: 'Ahmedabad',
+        type: 'family',
+        familyName: 'Patel Couple',
+        membersCount: 2,
+        familyMembers: [
+          { name: 'Vikram Patel', relation: 'Self', age: 32, phone: '9820444555' },
+          { name: 'Meera Patel', relation: 'Spouse', age: 30, phone: '' }
+        ],
+        memberDetails: 'Vikram (32), Meera (30)',
+        travelMode: 'organised',
+        status: 'confirmed',
+        paymentStatus: 'completed',
+        isSandboxData: true
+      },
+      // Family of 3 with Self Travel by Train (Tests that they are excluded from bus auto-allocation)
+      {
+        id: 'p_sb5_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Rajesh Verma',
+        phone: '9820555666',
+        email: 'rajesh.v@example.com',
+        location: 'Delhi',
+        type: 'family',
+        familyName: 'Verma Family',
+        membersCount: 3,
+        familyMembers: [
+          { name: 'Rajesh Verma', relation: 'Self', age: 45, phone: '9820555666' },
+          { name: 'Kavita Verma', relation: 'Spouse', age: 42, phone: '' },
+          { name: 'Rohit Verma', relation: 'Son', age: 14, phone: '' }
+        ],
+        memberDetails: 'Rajesh (45), Kavita (42), Rohit (14)',
+        travelMode: 'self',
+        travelType: 'rail',
+        boardingStation: 'New Delhi (NDLS)',
+        droppingStation: 'Mathura Junction (MTJ)',
+        status: 'confirmed',
+        paymentStatus: 'completed',
+        isSandboxData: true
+      },
+      // Individual Devotees
+      {
+        id: 'p_sb6_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Amitabh Sen',
+        phone: '9820666777',
+        email: 'amitabh.sen@example.com',
+        location: 'Kolkata',
+        type: 'individual',
+        membersCount: 1,
+        familyMembers: [{ name: 'Amitabh Sen', relation: 'Self', age: 29, phone: '9820666777' }],
+        memberDetails: 'Amitabh (29)',
+        travelMode: 'organised',
+        status: 'confirmed',
+        paymentStatus: 'completed',
+        isSandboxData: true
+      },
+      {
+        id: 'p_sb7_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Radha Devi',
+        phone: '9820777888',
+        email: 'radha.devi@example.com',
+        location: 'Varanasi',
+        type: 'individual',
+        membersCount: 1,
+        familyMembers: [{ name: 'Radha Devi', relation: 'Self', age: 64, phone: '9820777888' }],
+        memberDetails: 'Radha Devi (64)',
+        travelMode: 'organised',
+        status: 'confirmed',
+        paymentStatus: 'completed',
+        isSandboxData: true
+      },
+      {
+        id: 'p_sb8_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Mohit Joshi',
+        phone: '9820888999',
+        email: 'mohit.j@example.com',
+        location: 'Jaipur',
+        type: 'individual',
+        membersCount: 1,
+        familyMembers: [{ name: 'Mohit Joshi', relation: 'Self', age: 35, phone: '9820888999' }],
+        memberDetails: 'Mohit (35)',
+        travelMode: 'organised',
+        status: 'confirmed',
+        paymentStatus: 'completed',
+        isSandboxData: true
+      },
+      {
+        id: 'p_sb9_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Pooja Nair',
+        phone: '9820999000',
+        email: 'pooja.nair@example.com',
+        location: 'Bengaluru',
+        type: 'individual',
+        membersCount: 1,
+        familyMembers: [{ name: 'Pooja Nair', relation: 'Self', age: 27, phone: '9820999000' }],
+        memberDetails: 'Pooja (27)',
+        travelMode: 'organised',
+        status: 'confirmed',
+        paymentStatus: 'completed',
+        isSandboxData: true
+      },
+      {
+        id: 'p_sb10_' + sandboxId,
+        yatraId: sandboxId,
+        name: 'Suresh Mehta',
+        phone: '9821000111',
+        email: 'suresh.m@example.com',
+        location: 'Surat',
+        type: 'individual',
+        membersCount: 1,
+        familyMembers: [{ name: 'Suresh Mehta', relation: 'Self', age: 51, phone: '9821000111' }],
+        memberDetails: 'Suresh (51)',
+        travelMode: 'self',
+        travelType: 'road',
+        status: 'confirmed',
+        paymentStatus: 'pending',
+        isSandboxData: true
+      }
+    ];
+
+    for (const dev of mockDevotees) {
+      await db.addParticipant(dev);
+    }
+
+    // Refresh state and navigate directly into the Sandbox Yatra
+    setRefreshTrigger(prev => prev + 1);
+    setSelectedYatra(sandboxYatra);
+    navigateTo('yatra', sandboxId);
+    alert("🎉 Sandbox Test Yatra created successfully with 22 test devotees, 2 buses, and 9 hotel rooms! You are now in the sandbox environment.");
+  };
+
   const handleDeleteYatra = async (yatraId) => {
+    const targetYatra = yatras.find(y => y.id === yatraId);
+    if (targetYatra?.isSandbox) {
+      return handlePurgeSandbox(yatraId);
+    }
     if (window.confirm("Are you sure you want to delete this Yatra? It will be archived.")) {
       await db.softDeleteYatra(yatraId);
       if (selectedYatra?.id === yatraId) {
@@ -2370,9 +2778,20 @@ export default function App() {
                 <h2>Devotee Yatras Command Center</h2>
                 <p style={{ color: 'var(--text-muted)' }}>Manage overall spiritual tours, hotel research, and verification</p>
               </div>
-              <button className="btn btn-primary" onClick={() => setIsCreateYatraOpen(true)}>
-                <Plus size={18} /> Create New Yatra
-              </button>
+              <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+                <button 
+                  type="button"
+                  className="btn btn-outline" 
+                  style={{ borderColor: '#8b5cf6', color: '#7c3aed', backgroundColor: 'hsla(260, 80%, 60%, 0.08)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                  onClick={handleCreateSandboxYatra}
+                  title="Create an isolated Sandbox Yatra with mock devotees, buses & rooms for safe testing"
+                >
+                  <Sparkles size={16} /> 🧪 Create Sandbox Test Yatra
+                </button>
+                <button className="btn btn-primary" onClick={() => setIsCreateYatraOpen(true)}>
+                  <Plus size={18} /> Create New Yatra
+                </button>
+              </div>
             </div>
 
             {/* DASHBOARD STATISTICS BANNER */}
@@ -2424,6 +2843,11 @@ export default function App() {
                           <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
                             <h4 style={{ fontSize: '1.2rem' }}>{yatra.name}</h4>
                             <span className={`badge ${statusClass}`}>{yatra.status.replace('_', ' ')}</span>
+                            {yatra.isSandbox && (
+                              <span className="badge" style={{ backgroundColor: '#ede9fe', color: '#7c3aed', border: '1px solid #c4b5fd', fontWeight: 'bold' }}>
+                                🧪 Sandbox Test
+                              </span>
+                            )}
                           </div>
                           <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
                             📍 {yatra.destination} | 📅 {yatra.startDate} to {yatra.endDate}
@@ -2440,6 +2864,20 @@ export default function App() {
                           }}>
                             <Eye size={16} />
                           </button>
+                          {yatra.isSandbox && (
+                            <button 
+                              type="button"
+                              className="btn btn-outline btn-icon" 
+                              style={{ borderColor: '#fca5a5', color: '#dc2626' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handlePurgeSandbox(yatra.id);
+                              }}
+                              title="1-Click Purge Sandbox Test Yatra"
+                            >
+                              <Trash2 size={16} />
+                            </button>
+                          )}
                         </div>
                       </div>
                     );
@@ -2471,6 +2909,63 @@ export default function App() {
         {/* ======================================= */}
         {currentRoute.path === 'yatra' && selectedYatra && currentUser && (
           <div>
+            {/* SANDBOX SIMULATION BANNER */}
+            {selectedYatra.isSandbox && (
+              <div style={{
+                backgroundColor: '#f5f3ff',
+                border: '1.5px solid #8b5cf6',
+                borderRadius: 'var(--radius-md)',
+                padding: '1rem 1.25rem',
+                marginBottom: '1.25rem',
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                gap: '1rem',
+                flexWrap: 'wrap'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                  <div style={{ backgroundColor: '#ede9fe', color: '#7c3aed', padding: '0.5rem', borderRadius: '50%', display: 'flex' }}>
+                    <Sparkles size={20} />
+                  </div>
+                  <div>
+                    <div style={{ fontWeight: '700', color: '#5b21b6', fontSize: '0.95rem' }}>
+                      🧪 Active Test Simulation Sandbox
+                    </div>
+                    <div style={{ fontSize: '0.82rem', color: '#6d28d9', marginTop: '0.15rem' }}>
+                      Isolated testing ground with 22 mock devotees, 2 buses, and 9 hotel rooms. Real production yatras are unaffected.
+                    </div>
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                  <button 
+                    type="button"
+                    className="btn btn-outline" 
+                    style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem', borderColor: '#8b5cf6', color: '#7c3aed', backgroundColor: '#fff', fontWeight: 600 }}
+                    onClick={() => setActiveTab('bus_allocation')}
+                  >
+                    🚌 Test Bus Allocation
+                  </button>
+                  <button 
+                    type="button"
+                    className="btn btn-outline" 
+                    style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem', borderColor: '#8b5cf6', color: '#7c3aed', backgroundColor: '#fff', fontWeight: 600 }}
+                    onClick={() => setActiveTab('room_allocation')}
+                  >
+                    🛏️ Test Room Allocation
+                  </button>
+                  <button 
+                    type="button"
+                    className="btn btn-danger" 
+                    style={{ fontSize: '0.8rem', padding: '0.4rem 0.85rem', backgroundColor: '#dc2626' }}
+                    onClick={() => handlePurgeSandbox(selectedYatra.id)}
+                    title="Permanently remove this sandbox test yatra and all its mock data in 1 click"
+                  >
+                    <Trash2 size={13} /> Purge Sandbox (1-Click)
+                  </button>
+                </div>
+              </div>
+            )}
+
             {/* EXECUTIVE YATRA WORKSPACE HEADER */}
             <div className="yatra-workspace-header">
               {/* Top Sub-Bar: Navigation Breadcrumb + Administrative Tools */}
@@ -2515,10 +3010,10 @@ export default function App() {
                         type="button"
                         className="btn btn-outline" 
                         style={{ padding: '0.35rem 0.65rem', fontSize: '0.78rem', color: '#dc2626', borderColor: '#fca5a5' }}
-                        onClick={() => handleDeleteYatra(selectedYatra.id)}
-                        title="Delete this Yatra"
+                        onClick={() => selectedYatra.isSandbox ? handlePurgeSandbox(selectedYatra.id) : handleDeleteYatra(selectedYatra.id)}
+                        title={selectedYatra.isSandbox ? "Purge Sandbox Test Yatra" : "Delete this Yatra"}
                       >
-                        <Trash2 size={13} /> Delete
+                        <Trash2 size={13} /> {selectedYatra.isSandbox ? 'Purge Sandbox' : 'Delete'}
                       </button>
                     )}
 

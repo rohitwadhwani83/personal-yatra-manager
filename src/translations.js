@@ -35,6 +35,9 @@ export const translations = {
     deleteDevotee: 'Delete Devotee',
     editDevoteeTitle: 'Edit Devotee Registration',
     saveChanges: 'Save Changes',
+    createSandboxYatra: 'Create Sandbox Test Yatra',
+    purgeSandbox: 'Purge Sandbox',
+    sandboxActive: 'Sandbox Simulation Active',
 
     // Yatra Lifecycle Stages
     planning: 'Planning Stage',
@@ -165,6 +168,9 @@ export const translations = {
     deleteDevotee: 'भक्त पंजीकरण हटाएं',
     editDevoteeTitle: 'भक्त पंजीकरण संपादित करें',
     saveChanges: 'परिवर्तन सुरक्षित करें',
+    createSandboxYatra: 'सैंडबॉक्स टेस्ट यात्रा बनाएं',
+    purgeSandbox: 'सैंडबॉक्स हटाएं',
+    sandboxActive: 'सैंडबॉक्स सिमुलेशन सक्रिय',
 
     // Yatra Lifecycle Stages
     planning: 'योजना चरण (Planning)',
