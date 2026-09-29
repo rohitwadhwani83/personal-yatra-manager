@@ -849,6 +849,40 @@ class Database {
   async updateRoom(id, updates) { return this.updateDocument('rooms', id, updates); }
   async deleteRoom(id) { return this.deleteDocument('rooms', id); }
 
+  // Complete Database Backup (JSON)
+  async getFullBackup() {
+    const backup = {
+      version: '2.0',
+      exportedAt: new Date().toISOString(),
+      collections: {}
+    };
+    const collectionKeys = ['yatras', 'hotels', 'rooms', 'buses', 'participants', 'expenses', 'payments', 'photos', 'users', 'devotee_profiles'];
+    for (const key of collectionKeys) {
+      backup.collections[key] = await this.getCollection(key);
+    }
+    return backup;
+  }
+
+  // Restore Complete Database Backup (JSON)
+  async restoreFullBackup(backupData) {
+    if (!backupData || !backupData.collections) {
+      throw new Error('Invalid backup file format.');
+    }
+    for (const [key, items] of Object.entries(backupData.collections)) {
+      if (Array.isArray(items)) {
+        localStorage.setItem(`yatra_mgr_${key}`, JSON.stringify(items));
+        if (this.isFirebaseReady) {
+          for (const item of items) {
+            if (item.id) {
+              await this.setDocument(key, item.id, item);
+            }
+          }
+        }
+      }
+    }
+    return true;
+  }
+
   // Sync Local Storage Data to Firestore (called when connecting Firebase)
   async syncLocalToFirestore() {
     if (!this.isFirebaseReady) return false;

@@ -1331,13 +1331,48 @@ export default function App() {
     setRefreshTrigger(prev => prev + 1);
   };
 
-  // Image upload handler (base64 converter)
+  // Image upload handler with intelligent client-side canvas compression (prevents LocalStorage QuotaExceeded errors)
   const handleImageUpload = (file, callback) => {
+    if (!file) return;
     const reader = new FileReader();
-    reader.onloadend = () => {
-      callback(reader.result);
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const maxDim = 1200;
+          let width = img.width;
+          let height = img.height;
+
+          if (width > maxDim || height > maxDim) {
+            if (width > height) {
+              height = Math.round((height * maxDim) / width);
+              width = maxDim;
+            } else {
+              width = Math.round((width * maxDim) / height);
+              height = maxDim;
+            }
+          }
+
+          const canvas = document.createElement('canvas');
+          canvas.width = width;
+          canvas.height = height;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(img, 0, 0, width, height);
+
+          // Compress to JPEG with 0.8 quality
+          const compressed = canvas.toDataURL('image/jpeg', 0.8);
+          callback(compressed);
+        } catch (err) {
+          // Fallback to uncompressed dataURL if canvas fails
+          callback(reader.result);
+        }
+      };
+      img.onerror = () => {
+        callback(reader.result);
+      };
+      img.src = e.target.result;
     };
-    if (file) reader.readAsDataURL(file);
+    reader.readAsDataURL(file);
   };
 
   // --- Public Participant Actions ---
@@ -1778,6 +1813,49 @@ export default function App() {
     alert("Disconnected from Firebase. Using local storage.");
     setIsSettingsOpen(false);
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  // --- Complete System Backup & Disaster Recovery ---
+  const handleExportFullBackup = async () => {
+    try {
+      const backup = await db.getFullBackup();
+      const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute("href", dataStr);
+      downloadAnchor.setAttribute("download", `Spiritual_Yatra_System_Backup_${new Date().toISOString().split('T')[0]}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+      alert("✅ Full Database Backup downloaded successfully! Keep this JSON file in a safe location.");
+    } catch (err) {
+      alert("Failed to export database backup: " + err.message);
+    }
+  };
+
+  const handleImportFullBackup = (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+
+    if (!window.confirm("⚠️ WARNING: Restoring from a backup will overwrite current database records with the contents of this file. Do you wish to continue?")) {
+      e.target.value = '';
+      return;
+    }
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+      try {
+        const parsed = JSON.parse(event.target.result);
+        await db.restoreFullBackup(parsed);
+        alert("🎉 Database restored successfully from backup!");
+        setIsSettingsOpen(false);
+        setRefreshTrigger(prev => prev + 1);
+      } catch (err) {
+        alert("Failed to restore database. Ensure the file is a valid JSON backup. Error: " + err.message);
+      } finally {
+        e.target.value = '';
+      }
+    };
+    reader.readAsText(file);
   };
 
   // --- Search Filtering ---
@@ -7004,6 +7082,53 @@ export default function App() {
                 <Plus size={16} /> Add Administrator
               </button>
             </form>
+
+            <hr style={{ margin: '2rem 0', borderColor: 'var(--border)' }} />
+
+            <div style={{ marginBottom: '1rem' }}>
+              <h3>Data Backup & Disaster Recovery</h3>
+              <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+                Download a complete, offline JSON snapshot of all yatras, devotees, bus routes, hotel rooms, payments, and system users, or restore the database from a previous backup.
+              </p>
+            </div>
+
+            <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <strong>Export Full Database Backup</strong>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Downloads all system collections into a single portable .json file.</div>
+                </div>
+                <button 
+                  type="button" 
+                  className="btn btn-outline" 
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem' }}
+                  onClick={handleExportFullBackup}
+                >
+                  <Download size={15} /> Download Backup (.json)
+                </button>
+              </div>
+
+              <hr style={{ borderColor: 'var(--border)', margin: 0 }} />
+
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem' }}>
+                <div>
+                  <strong>Restore Database from Backup</strong>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Upload and restore a previously saved .json backup file.</div>
+                </div>
+                <label 
+                  className="btn btn-outline" 
+                  style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', cursor: 'pointer', margin: 0 }}
+                >
+                  <Upload size={15} /> Select Backup File
+                  <input 
+                    type="file" 
+                    accept=".json" 
+                    style={{ display: 'none' }} 
+                    onChange={handleImportFullBackup} 
+                  />
+                </label>
+              </div>
+            </div>
 
           </div>
         </div>
