@@ -1,13 +1,13 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Compass, Hotel, Users, CheckCircle, CreditCard, Receipt, Image as ImageIcon, 
   FileText, BarChart2, MessageSquare, Plus, Trash2, Edit2, Search, Download, 
-  Check, X, LogOut, ArrowLeft, Eye, RefreshCw, AlertTriangle, QrCode, 
+  Check, X, LogOut, ArrowLeft, Eye, RefreshCw, AlertTriangle, 
   ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink,
-  Sparkles, UserCheck, Lock, Clock, ArrowRight,
+  Sparkles, UserCheck, Lock, Clock,
   Bus, Bed, Shuffle,
   Key, EyeOff, Copy, ShieldCheck,
-  Printer, Languages, Globe, BookOpen
+  Printer, Languages, BookOpen
 } from 'lucide-react';
 import db from './db';
 import JSZip from 'jszip';
@@ -2458,12 +2458,14 @@ export default function App() {
         )}
 
         {currentRoute.path === 'login' && !currentUser && (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-            <div className="card" style={{ width: '100%', maxWidth: '420px', padding: '2.5rem' }}>
-              <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
-                <Compass size={48} style={{ color: 'var(--primary)', marginBottom: '0.5rem' }} />
-                <h2>{t('hareKrishna')}</h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{t('loginHeading')}</p>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '65vh', padding: '1rem 0', width: '100%', boxSizing: 'border-box' }}>
+            <div className="card login-card">
+              <div style={{ textAlign: 'center', marginBottom: '1.75rem' }}>
+                <div style={{ width: '60px', height: '60px', borderRadius: '50%', backgroundColor: 'var(--primary-light)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', marginBottom: '0.65rem', boxShadow: '0 4px 12px hsla(24, 90%, 54%, 0.15)' }}>
+                  <Compass size={34} />
+                </div>
+                <h2 style={{ fontSize: '1.55rem', fontWeight: 700, marginBottom: '0.25rem' }}>{t('hareKrishna')}</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>{t('loginHeading')}</p>
               </div>
 
               {loginError && (
@@ -2473,25 +2475,25 @@ export default function App() {
                 </div>
               )}
 
-              <div style={{ display: 'flex', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '0.25rem', marginBottom: '1.5rem' }}>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '0.25rem', marginBottom: '1.5rem', gap: '0.25rem' }}>
                 <button 
                   type="button" 
                   className={`btn ${loginRole === 'admin' ? 'btn-primary' : ''}`} 
-                  style={{ flex: 1, padding: '0.5rem', background: loginRole === 'admin' ? '' : 'none', color: loginRole === 'admin' ? '' : 'var(--text-muted)' }}
+                  style={{ padding: '0.45rem 0.2rem', fontSize: '0.82rem', fontWeight: 600, background: loginRole === 'admin' ? '' : 'transparent', color: loginRole === 'admin' ? '' : 'var(--text-muted)', border: 'none', textAlign: 'center' }}
                   onClick={() => setLoginRole('admin')}
-                >{t('admin')}</button>
+                >{t('tabAdmin')}</button>
                 <button 
                   type="button" 
                   className={`btn ${loginRole === 'super_admin' ? 'btn-primary' : ''}`} 
-                  style={{ flex: 1, padding: '0.5rem', background: loginRole === 'super_admin' ? '' : 'none', color: loginRole === 'super_admin' ? '' : 'var(--text-muted)' }}
+                  style={{ padding: '0.45rem 0.2rem', fontSize: '0.82rem', fontWeight: 600, background: loginRole === 'super_admin' ? '' : 'transparent', color: loginRole === 'super_admin' ? '' : 'var(--text-muted)', border: 'none', textAlign: 'center' }}
                   onClick={() => setLoginRole('super_admin')}
-                >{t('superAdmin')}</button>
+                >{t('tabSuperAdmin')}</button>
                 <button 
                   type="button" 
                   className={`btn ${loginRole === 'participant' ? 'btn-primary' : ''}`} 
-                  style={{ flex: 1, padding: '0.5rem', background: loginRole === 'participant' ? '' : 'none', color: loginRole === 'participant' ? '' : 'var(--text-muted)' }}
+                  style={{ padding: '0.45rem 0.2rem', fontSize: '0.82rem', fontWeight: 600, background: loginRole === 'participant' ? '' : 'transparent', color: loginRole === 'participant' ? '' : 'var(--text-muted)', border: 'none', textAlign: 'center' }}
                   onClick={() => setLoginRole('participant')}
-                >{t('devotee')}</button>
+                >{t('tabDevotee')}</button>
               </div>
 
               <form onSubmit={handleLogin} autoComplete="off">
@@ -2523,7 +2525,7 @@ export default function App() {
                       />
                     </div>
                     <div className="form-group">
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem', flexWrap: 'wrap', gap: '0.25rem' }}>
                         <label style={{ margin: 0 }}>{t('password')}</label>
                         <button 
                           type="button" 
@@ -2589,8 +2591,8 @@ export default function App() {
         {/* VIEW: FORGOT PASSWORD */}
         {/* ======================================= */}
         {currentRoute.path === 'forgot-password' && (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-            <div className="card" style={{ width: '100%', maxWidth: '440px', padding: '2.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '65vh', padding: '1rem 0' }}>
+            <div className="card login-card">
               <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
                 <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'hsla(38, 92%, 50%, 0.12)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', marginBottom: '0.75rem' }}>
                   <Key size={30} />
@@ -2704,8 +2706,8 @@ export default function App() {
         {/* VIEW: RESET PASSWORD FORM */}
         {/* ======================================= */}
         {currentRoute.path === 'reset-password' && (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '60vh' }}>
-            <div className="card" style={{ width: '100%', maxWidth: '440px', padding: '2.5rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '65vh', padding: '1rem 0' }}>
+            <div className="card login-card">
               <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
                 <div style={{ width: '56px', height: '56px', borderRadius: '50%', backgroundColor: 'hsla(38, 92%, 50%, 0.12)', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', color: 'var(--primary)', marginBottom: '0.75rem' }}>
                   <ShieldCheck size={30} />
