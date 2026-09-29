@@ -7,7 +7,7 @@ import {
   Sparkles, UserCheck, Lock, Clock, ArrowRight,
   Bus, Bed, Shuffle,
   Key, EyeOff, Copy, ShieldCheck,
-  Printer, Languages, Globe
+  Printer, Languages, Globe, BookOpen
 } from 'lucide-react';
 import db from './db';
 import JSZip from 'jszip';
@@ -2564,6 +2564,22 @@ export default function App() {
                 <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
                   {loginRole === 'participant' ? t('findRegistration') : t('signIn')}
                 </button>
+
+                <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
+                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+                    {loginRole === 'participant' ? 'Need help with registration or passes?' : 'Need guidance with organizer operations?'}
+                  </div>
+                  <a 
+                    href={loginRole === 'participant' ? "./guides/Devotee_Pilgrim_User_Guide.pdf" : "./guides/Admin_Organizer_Operations_Guide.pdf"}
+                    target="_blank" 
+                    rel="noreferrer" 
+                    download={loginRole === 'participant' ? "Devotee_Pilgrim_User_Guide.pdf" : "Admin_Organizer_Operations_Guide.pdf"}
+                    style={{ fontSize: '0.82rem', color: 'var(--primary)', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                  >
+                    <FileText size={14} />
+                    <span>{loginRole === 'participant' ? t('devoteeGuidePdf') : t('adminGuidePdf')}</span>
+                  </a>
+                </div>
               </form>
             </div>
           </div>
@@ -2909,6 +2925,37 @@ export default function App() {
                   <div>
                     <h5>Self-Service Registration URL</h5>
                     <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Devotees can register themselves via links generated for each specific yatra in the detail workspace.</p>
+                  </div>
+                  <hr style={{ borderColor: 'var(--border)' }} />
+                  <div>
+                    <h5>{t('userGuides')}</h5>
+                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.65rem' }}>
+                      {t('downloadGuidesDesc')}
+                    </p>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                      <a 
+                        href="./guides/Devotee_Pilgrim_User_Guide.pdf" 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        download="Devotee_Pilgrim_User_Guide.pdf"
+                        className="btn btn-outline" 
+                        style={{ fontSize: '0.8rem', padding: '0.45rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.45rem', justifyContent: 'flex-start', textDecoration: 'none' }}
+                      >
+                        <FileText size={15} color="var(--primary)" />
+                        <span>{t('devoteeGuidePdf')}</span>
+                      </a>
+                      <a 
+                        href="./guides/Admin_Organizer_Operations_Guide.pdf" 
+                        target="_blank" 
+                        rel="noreferrer" 
+                        download="Admin_Organizer_Operations_Guide.pdf"
+                        className="btn btn-outline" 
+                        style={{ fontSize: '0.8rem', padding: '0.45rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.45rem', justifyContent: 'flex-start', textDecoration: 'none' }}
+                      >
+                        <BookOpen size={15} color="#2563eb" />
+                        <span>{t('adminGuidePdf')}</span>
+                      </a>
+                    </div>
                   </div>
                 </div>
               </div>

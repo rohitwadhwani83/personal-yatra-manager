@@ -132,6 +132,10 @@ export const translations = {
     filterByHotel: 'Filter by Hotel',
     allDevotees: 'All Devotees',
     printInstructions: 'Printing Tip: Set layout to Portrait and scale to 100% in your print dialog. Badges fit neatly 4 per A4 sheet with cutting guides.',
+    userGuides: 'Official User Guides',
+    downloadGuidesDesc: 'Bilingual (English & हिंदी) step-by-step PDF manuals for pilgrims and organizers.',
+    devoteeGuidePdf: 'Devotee Pilgrimage Guide (PDF)',
+    adminGuidePdf: 'Admin Operations Manual (PDF)',
   },
 
   hi: {
@@ -265,6 +269,10 @@ export const translations = {
     filterByHotel: 'होटल के अनुसार फ़िल्टर करें',
     allDevotees: 'सभी भक्तगण',
     printInstructions: 'प्रिंटिंग सुझाव: प्रिंट विंडो में पोर्ट्रेट लेआउट चुनें। A4 पेपर पर 4 बैज कटिंग लाइन्स के साथ प्रिंट होंगे।',
+    userGuides: 'आधिकारिक उपयोगकर्ता मार्गदर्शिका',
+    downloadGuidesDesc: 'श्रद्धालुओं और आयोजकों के लिए द्विभाषी (अंग्रेजी और हिंदी) चरण-दर-चरण पीडीएफ मार्गदर्शिका।',
+    devoteeGuidePdf: 'भक्त यात्रा मार्गदर्शिका (PDF)',
+    adminGuidePdf: 'व्यवस्थापक संचालन नियमावली (PDF)',
   }
 };
 
