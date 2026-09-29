@@ -31,6 +31,10 @@ export const translations = {
     printBadges: 'Print Devotee Badges',
     printBadge: 'Print Badge',
     printAllBadges: 'Print All Devotee Badges',
+    editDevotee: 'Edit Devotee',
+    deleteDevotee: 'Delete Devotee',
+    editDevoteeTitle: 'Edit Devotee Registration',
+    saveChanges: 'Save Changes',
 
     // Yatra Lifecycle Stages
     planning: 'Planning Stage',
@@ -157,6 +161,10 @@ export const translations = {
     printBadges: 'भक्त पहचान पत्र (बैज) प्रिंट करें',
     printBadge: 'बैज प्रिंट करें',
     printAllBadges: 'सभी भक्त पहचान पत्र प्रिंट करें',
+    editDevotee: 'भक्त विवरण संपादित करें',
+    deleteDevotee: 'भक्त पंजीकरण हटाएं',
+    editDevoteeTitle: 'भक्त पंजीकरण संपादित करें',
+    saveChanges: 'परिवर्तन सुरक्षित करें',
 
     // Yatra Lifecycle Stages
     planning: 'योजना चरण (Planning)',

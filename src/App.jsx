@@ -117,6 +117,7 @@ export default function App() {
   const [editingYatraId, setEditingYatraId] = useState(null);
   const [isAddHotelOpen, setIsAddHotelOpen] = useState(false);
   const [isAddParticipantOpen, setIsAddParticipantOpen] = useState(false);
+  const [editingParticipantId, setEditingParticipantId] = useState(null);
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isUploadDocOpen, setIsUploadDocOpen] = useState(false);
@@ -682,15 +683,79 @@ export default function App() {
     }
   };
 
+  const handleOpenEditParticipant = (part) => {
+    setEditingParticipantId(part.id);
+    const members = part.familyMembers && Array.isArray(part.familyMembers) && part.familyMembers.length > 0
+      ? JSON.parse(JSON.stringify(part.familyMembers))
+      : (part.type === 'individual' 
+          ? [{ name: part.name || '', relation: 'Self', age: '', phone: part.phone || '' }] 
+          : [{ name: part.name || '', relation: 'Self', age: '', phone: part.phone || '' }]);
+
+    setNewParticipant({
+      name: part.name || '',
+      phone: part.phone || '',
+      email: part.email || '',
+      location: part.location || '',
+      type: part.type || 'individual',
+      familyName: part.familyName || '',
+      membersCount: part.membersCount || members.length || 1,
+      familyMembers: members,
+      memberDetails: part.memberDetails || '',
+      travelMode: part.travelMode || 'organised',
+      travelType: part.travelType || '',
+      boardingStation: part.boardingStation || '',
+      droppingStation: part.droppingStation || '',
+      remarks: part.remarks || '',
+      status: part.status || 'interested',
+      paymentStatus: part.paymentStatus || 'pending',
+      customPrice: part.customPrice || '',
+      busId: part.busId || '',
+      busName: part.busName || '',
+      busNumber: part.busNumber || '',
+      roomId: part.roomId || '',
+      roomNumber: part.roomNumber || '',
+      hotelName: part.hotelName || '',
+      hotelId: part.hotelId || ''
+    });
+    setAdminAutoFilledDevotee(null);
+    setIsAddParticipantOpen(true);
+  };
+
+  const handleDeleteParticipant = async (participantId, participantName) => {
+    if (window.confirm(`Are you sure you want to delete registration for ${participantName || 'this devotee'}? This will remove them from participants, bus, and room lists.`)) {
+      await db.deleteParticipant(participantId);
+      setRefreshTrigger(prev => prev + 1);
+    }
+  };
+
   const handleAddParticipant = async (e) => {
     e.preventDefault();
     if (newParticipant.type === 'family' && (!newParticipant.familyMembers || newParticipant.familyMembers.length === 0)) {
       alert("Please add at least one family member (including the primary devotee) before registering.");
       return;
     }
-    const partToSave = { ...newParticipant, yatraId: selectedYatra.id };
-    await db.addParticipant(partToSave);
-    await db.saveDevoteeProfile(newParticipant);
+    const memberDetails = newParticipant.type === 'family' && newParticipant.familyMembers && newParticipant.familyMembers.length > 0
+      ? newParticipant.familyMembers.map(m => `${m.name}${m.age ? ` (${m.age})` : ''}`).join(', ')
+      : newParticipant.memberDetails || '';
+
+    const membersCount = newParticipant.type === 'family' && newParticipant.familyMembers && newParticipant.familyMembers.length > 0
+      ? newParticipant.familyMembers.length
+      : (newParticipant.membersCount || 1);
+
+    const partToSave = { 
+      ...newParticipant, 
+      memberDetails,
+      membersCount,
+      yatraId: selectedYatra.id 
+    };
+
+    if (editingParticipantId) {
+      await db.updateParticipant(editingParticipantId, partToSave);
+      setEditingParticipantId(null);
+    } else {
+      await db.addParticipant(partToSave);
+      await db.saveDevoteeProfile(newParticipant);
+    }
     setIsAddParticipantOpen(false);
     setAdminAutoFilledDevotee(null);
     setNewParticipant({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
@@ -4090,7 +4155,14 @@ export default function App() {
                         </button>
                       </div>
 
-                      <button className="btn btn-primary" onClick={() => setIsAddParticipantOpen(true)}>
+                      <button 
+                        className="btn btn-primary" 
+                        onClick={() => {
+                          setEditingParticipantId(null);
+                          setNewParticipant({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
+                          setIsAddParticipantOpen(true);
+                        }}
+                      >
                         <Plus size={16} /> Register Devotee
                       </button>
                     </div>
@@ -4229,6 +4301,16 @@ export default function App() {
                                         type="button"
                                         className="btn btn-outline" 
                                         style={{ padding: '0.3rem 0.45rem', fontSize: '0.75rem', borderColor: 'var(--primary)', color: 'var(--primary)' }} 
+                                        onClick={() => handleOpenEditParticipant(part)}
+                                        title={t('editDevotee') || "Edit Devotee"}
+                                      >
+                                        <Edit2 size={13} />
+                                      </button>
+
+                                      <button 
+                                        type="button"
+                                        className="btn btn-outline" 
+                                        style={{ padding: '0.3rem 0.45rem', fontSize: '0.75rem', borderColor: 'var(--primary)', color: 'var(--primary)' }} 
                                         onClick={() => {
                                           setSingleBadgeParticipant(part);
                                           setIsPrintBadgesOpen(true);
@@ -4239,14 +4321,11 @@ export default function App() {
                                       </button>
 
                                       <button 
+                                        type="button"
                                         className="btn btn-danger btn-icon" 
                                         style={{ padding: '0.3rem' }}
-                                        onClick={() => {
-                                          if (window.confirm(`Delete devotee registration for ${part.name}?`)) {
-                                            db.deleteParticipant(part.id).then(() => setRefreshTrigger(prev => prev + 1));
-                                          }
-                                        }}
-                                        title="Delete Participant"
+                                        onClick={() => handleDeleteParticipant(part.id, part.name)}
+                                        title={t('deleteDevotee') || "Delete Participant"}
                                       >
                                         <Trash2 size={13} />
                                       </button>
@@ -4360,6 +4439,22 @@ export default function App() {
                                             <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: '#4338ca' }} onClick={() => sendWhatsApp(part, 'itinerary_update')}>
                                               📢 Itinerary Update
                                             </button>
+                                            <button 
+                                              type="button"
+                                              className="btn btn-outline" 
+                                              style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: 'var(--primary)', borderColor: 'var(--primary)' }} 
+                                              onClick={() => handleOpenEditParticipant(part)}
+                                            >
+                                              <Edit2 size={12} style={{ display: 'inline', marginRight: '3px' }} /> {t('editDevotee') || 'Edit Devotee'}
+                                            </button>
+                                            <button 
+                                              type="button"
+                                              className="btn btn-outline" 
+                                              style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: '#dc2626', borderColor: '#fca5a5' }} 
+                                              onClick={() => handleDeleteParticipant(part.id, part.name)}
+                                            >
+                                              <Trash2 size={12} style={{ display: 'inline', marginRight: '3px' }} /> {t('deleteDevotee') || 'Delete Devotee'}
+                                            </button>
                                           </div>
                                         </div>
                                       </div>
@@ -4443,6 +4538,15 @@ export default function App() {
                               </span>
 
                               <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                <button 
+                                  type="button"
+                                  className="btn btn-outline" 
+                                  style={{ padding: '0.25rem 0.45rem', fontSize: '0.75rem', borderColor: 'var(--primary)', color: 'var(--primary)' }} 
+                                  onClick={() => handleOpenEditParticipant(part)}
+                                  title={t('editDevotee') || 'Edit Devotee'}
+                                >
+                                  <Edit2 size={13} />
+                                </button>
                                 <button className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={() => sendWhatsApp(part, dynamicPaymentStatus === 'completed' ? 'payment_verified' : 'payment_reminder')}>
                                   WhatsApp
                                 </button>
@@ -4459,13 +4563,11 @@ export default function App() {
                                   <Printer size={13} />
                                 </button>
                                 <button 
+                                  type="button"
                                   className="btn btn-danger btn-icon" 
                                   style={{ padding: '0.25rem' }}
-                                  onClick={() => {
-                                    if (window.confirm(`Delete ${part.name}?`)) {
-                                      db.deleteParticipant(part.id).then(() => setRefreshTrigger(prev => prev + 1));
-                                    }
-                                  }}
+                                  onClick={() => handleDeleteParticipant(part.id, part.name)}
+                                  title={t('deleteDevotee') || 'Delete Devotee'}
                                 >
                                   <Trash2 size={13} />
                                 </button>
@@ -6164,8 +6266,8 @@ export default function App() {
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
-              <h3>Register Devotee Details</h3>
-              <button className="modal-close" onClick={() => { setIsAddParticipantOpen(false); setAdminAutoFilledDevotee(null); }}>×</button>
+              <h3>{editingParticipantId ? (t('editDevoteeTitle') || 'Edit Devotee Registration') : 'Register Devotee Details'}</h3>
+              <button className="modal-close" onClick={() => { setIsAddParticipantOpen(false); setEditingParticipantId(null); setAdminAutoFilledDevotee(null); }}>×</button>
             </div>
             <form onSubmit={handleAddParticipant}>
               {/* Returning Devotee Banner */}
@@ -6419,7 +6521,9 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>Register Devotee</button>
+              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>
+                {editingParticipantId ? `💾 ${t('saveChanges') || 'Save Changes'}` : 'Register Devotee'}
+              </button>
             </form>
           </div>
         </div>
