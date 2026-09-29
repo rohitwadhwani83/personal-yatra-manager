@@ -6,10 +6,12 @@ import {
   ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink,
   Sparkles, UserCheck, Lock, Clock, ArrowRight,
   Bus, Bed, Shuffle,
-  Key, EyeOff, Copy, ShieldCheck
+  Key, EyeOff, Copy, ShieldCheck,
+  Printer, Languages, Globe
 } from 'lucide-react';
 import db from './db';
 import JSZip from 'jszip';
+import { getTranslation } from './translations';
 
 // Dynamic QR code API helper
 const getUPIQRCodeUrl = (upiId, name, amount = 0, memo = 'Yatra Payment') => {
@@ -46,6 +48,21 @@ export default function App() {
   const [selectedYatra, setSelectedYatra] = useState(null);
   const [activeTab, setActiveTab] = useState('overview');
   const [searchQuery, setSearchQuery] = useState('');
+
+  // Language Localization State (English 'en' | Hindi 'hi')
+  const [lang, setLang] = useState(() => localStorage.getItem('yatra_lang') || 'en');
+  const t = (key) => getTranslation(key, lang);
+  const toggleLanguage = (selectedLang) => {
+    const newLang = selectedLang || (lang === 'en' ? 'hi' : 'en');
+    setLang(newLang);
+    localStorage.setItem('yatra_lang', newLang);
+  };
+
+  // Printable Badges State
+  const [isPrintBadgesOpen, setIsPrintBadgesOpen] = useState(false);
+  const [badgeFilterBus, setBadgeFilterBus] = useState('all');
+  const [badgeFilterHotel, setBadgeFilterHotel] = useState('all');
+  const [singleBadgeParticipant, setSingleBadgeParticipant] = useState(null);
   
   // Login Form
   const [loginEmail, setLoginEmail] = useState('');
@@ -1877,11 +1894,23 @@ export default function App() {
         <div className="header-title-group" style={{ cursor: 'pointer' }} onClick={() => currentUser ? navigateTo('dashboard') : null}>
           <Compass className="logo-icon" />
           <div>
-            <h1>Spiritual Yatra Management System</h1>
+            <h1>{t('appName')}</h1>
             {currentUser && <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Logged in as: <strong>{currentUser.name}</strong> ({currentUser.role})</span>}
           </div>
         </div>
-        <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
+        <div style={{ display: 'flex', gap: '0.6rem', alignItems: 'center' }}>
+          {/* Universal Language Switcher Toggle */}
+          <button 
+            type="button"
+            className="btn btn-outline" 
+            style={{ padding: '0.4rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.82rem', fontWeight: 600, borderColor: 'var(--primary)', color: 'var(--primary)' }}
+            onClick={() => toggleLanguage()}
+            title="Switch Language / भाषा बदलें"
+          >
+            <Languages size={15} />
+            <span>{lang === 'en' ? '🇮🇳 हिंदी' : '🇬🇧 English'}</span>
+          </button>
+
           {currentUser && (
             <>
               {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
@@ -1948,8 +1977,8 @@ export default function App() {
             <div className="card" style={{ width: '100%', maxWidth: '420px', padding: '2.5rem' }}>
               <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
                 <Compass size={48} style={{ color: 'var(--primary)', marginBottom: '0.5rem' }} />
-                <h2>Hare Krishna</h2>
-                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>Sign in to manage spiritual devotee yatras</p>
+                <h2>{t('hareKrishna')}</h2>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.9rem' }}>{t('loginHeading')}</p>
               </div>
 
               {loginError && (
@@ -1965,31 +1994,32 @@ export default function App() {
                   className={`btn ${loginRole === 'admin' ? 'btn-primary' : ''}`} 
                   style={{ flex: 1, padding: '0.5rem', background: loginRole === 'admin' ? '' : 'none', color: loginRole === 'admin' ? '' : 'var(--text-muted)' }}
                   onClick={() => setLoginRole('admin')}
-                >Admin</button>
+                >{t('admin')}</button>
                 <button 
                   type="button" 
                   className={`btn ${loginRole === 'super_admin' ? 'btn-primary' : ''}`} 
                   style={{ flex: 1, padding: '0.5rem', background: loginRole === 'super_admin' ? '' : 'none', color: loginRole === 'super_admin' ? '' : 'var(--text-muted)' }}
                   onClick={() => setLoginRole('super_admin')}
-                >Super Admin</button>
+                >{t('superAdmin')}</button>
                 <button 
                   type="button" 
                   className={`btn ${loginRole === 'participant' ? 'btn-primary' : ''}`} 
                   style={{ flex: 1, padding: '0.5rem', background: loginRole === 'participant' ? '' : 'none', color: loginRole === 'participant' ? '' : 'var(--text-muted)' }}
                   onClick={() => setLoginRole('participant')}
-                >Devotee</button>
+                >{t('devotee')}</button>
               </div>
 
               <form onSubmit={handleLogin} autoComplete="off">
                 {loginRole === 'participant' ? (
                   <div className="form-group">
-                    <label>Enter Registered Mobile Number</label>
+                    <label>{t('enterMobile')}</label>
                     <div style={{ display: 'flex', gap: '0.5rem' }}>
                       <span style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.625rem', display: 'flex', alignItems: 'center', backgroundColor: 'var(--bg)' }}>+91</span>
                       <input 
                         type="tel" 
                         className="form-control" 
                         autoComplete="off"
+                        placeholder={t('mobilePlaceholder')}
                         value={loginPhone}
                         onChange={(e) => setLoginPhone(e.target.value)}
                       />
@@ -1998,7 +2028,7 @@ export default function App() {
                 ) : (
                   <>
                     <div className="form-group">
-                      <label>Email Address</label>
+                      <label>{t('emailAddress')}</label>
                       <input 
                         type="email" 
                         className="form-control" 
@@ -2009,7 +2039,7 @@ export default function App() {
                     </div>
                     <div className="form-group">
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
-                        <label style={{ margin: 0 }}>Password</label>
+                        <label style={{ margin: 0 }}>{t('password')}</label>
                         <button 
                           type="button" 
                           onClick={() => {
@@ -2021,7 +2051,7 @@ export default function App() {
                           }}
                           style={{ background: 'none', border: 'none', color: 'var(--primary)', cursor: 'pointer', fontSize: '0.8rem', padding: 0, fontWeight: 500 }}
                         >
-                          Forgot Password?
+                          {t('forgotPassword')}
                         </button>
                       </div>
                       <div style={{ position: 'relative' }}>
@@ -2047,7 +2077,7 @@ export default function App() {
                 )}
 
                 <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
-                  {loginRole === 'participant' ? 'Find My Registration' : 'Sign In'}
+                  {loginRole === 'participant' ? t('findRegistration') : t('signIn')}
                 </button>
               </form>
             </div>
@@ -2477,6 +2507,20 @@ export default function App() {
                     <Share2 size={16} /> Share Registration Link
                   </button>
                 )}
+                <button 
+                  type="button"
+                  className="btn btn-outline" 
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
+                  onClick={() => {
+                    setSingleBadgeParticipant(null);
+                    setBadgeFilterBus('all');
+                    setBadgeFilterHotel('all');
+                    setIsPrintBadgesOpen(true);
+                  }}
+                  title="Print Wearable Devotee Badges / ID Passes"
+                >
+                  <Printer size={16} /> {t('printBadges')}
+                </button>
                 <select 
                   value={selectedYatra.status}
                   onChange={async (e) => {
@@ -4174,11 +4218,24 @@ export default function App() {
 
                                       <button 
                                         className="btn btn-outline" 
-                                        style={{ padding: '0.3rem 0.45rem', fontSize: '0.75rem' }}
+                                        style={{ padding: '0.3rem 0.45rem', fontSize: '0.75rem' }} 
                                         onClick={() => sendWhatsApp(part, dynamicPaymentStatus === 'completed' ? 'payment_verified' : 'payment_reminder')}
                                         title="Send WhatsApp Message"
                                       >
                                         💬
+                                      </button>
+
+                                      <button 
+                                        type="button"
+                                        className="btn btn-outline" 
+                                        style={{ padding: '0.3rem 0.45rem', fontSize: '0.75rem', borderColor: 'var(--primary)', color: 'var(--primary)' }} 
+                                        onClick={() => {
+                                          setSingleBadgeParticipant(part);
+                                          setIsPrintBadgesOpen(true);
+                                        }}
+                                        title={t('printBadge')}
+                                      >
+                                        <Printer size={13} />
                                       </button>
 
                                       <button 
@@ -4388,6 +4445,18 @@ export default function App() {
                               <div style={{ display: 'flex', gap: '0.35rem' }}>
                                 <button className="btn btn-outline" style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }} onClick={() => sendWhatsApp(part, dynamicPaymentStatus === 'completed' ? 'payment_verified' : 'payment_reminder')}>
                                   WhatsApp
+                                </button>
+                                <button 
+                                  type="button"
+                                  className="btn btn-outline" 
+                                  style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', borderColor: 'var(--primary)', color: 'var(--primary)' }} 
+                                  onClick={() => {
+                                    setSingleBadgeParticipant(part);
+                                    setIsPrintBadgesOpen(true);
+                                  }}
+                                  title={t('printBadge')}
+                                >
+                                  <Printer size={13} />
                                 </button>
                                 <button 
                                   className="btn btn-danger btn-icon" 
@@ -4972,12 +5041,25 @@ export default function App() {
         {currentRoute.path === 'register' && selectedYatra && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
             <div className="card" style={{ width: '100%', maxWidth: '600px', padding: '2.5rem' }}>
+              <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
+                <button 
+                  type="button"
+                  className="btn btn-outline" 
+                  style={{ padding: '0.35rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', fontWeight: 600, borderColor: 'var(--primary)', color: 'var(--primary)' }}
+                  onClick={() => toggleLanguage()}
+                  title="Switch Language / भाषा बदलें"
+                >
+                  <Languages size={14} />
+                  <span>{lang === 'en' ? '🇮🇳 हिंदी में भरें' : '🇬🇧 Switch to English'}</span>
+                </button>
+              </div>
+
               <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
                 <Compass size={40} style={{ color: 'var(--primary)', marginBottom: '0.5rem' }} />
-                <h2>Spiritual Devotee Registration Form</h2>
-                <h4>Join us for {selectedYatra.name}</h4>
-                <p style={{ color: 'var(--text-muted)' }}>📍 Destination: {selectedYatra.destination}</p>
-                <p style={{ color: 'var(--text-muted)' }}>📅 Dates: {selectedYatra.startDate} to {selectedYatra.endDate}</p>
+                <h2>{t('publicRegTitle')}</h2>
+                <h4>{selectedYatra.name}</h4>
+                <p style={{ color: 'var(--text-muted)' }}>📍 {selectedYatra.destination}</p>
+                <p style={{ color: 'var(--text-muted)' }}>📅 {selectedYatra.startDate} to {selectedYatra.endDate}</p>
               </div>
 
               {/* STAGE 1: PLANNING (Registration link not active) */}
@@ -5533,7 +5615,18 @@ export default function App() {
                 <h2>Hare Krishna, {myParticipantData.name}!</h2>
                 <p style={{ color: 'var(--text-muted)' }}>Devotee Space for <strong>{selectedYatra.name}</strong></p>
               </div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                <button 
+                  type="button"
+                  className="btn btn-outline" 
+                  style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.85rem', borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
+                  onClick={() => {
+                    setSingleBadgeParticipant(myParticipantData);
+                    setIsPrintBadgesOpen(true);
+                  }}
+                >
+                  <Printer size={15} /> {t('printBadge')}
+                </button>
                 <span className={`badge badge-${myParticipantData.status}`}>{myParticipantData.status}</span>
                 <span className="badge" style={{ backgroundColor: myParticipantData.paymentStatus === 'completed' ? 'var(--success-light)' : 'var(--warning-light)', color: myParticipantData.paymentStatus === 'completed' ? 'var(--success)' : 'var(--warning)' }}>
                   Payment: {myParticipantData.paymentStatus}
@@ -7289,6 +7382,303 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* ========================================================= */}
+      {/* MODAL: PRINTABLE DEVOTEE BADGES & LANYARD PASSES          */}
+      {/* ========================================================= */}
+      {isPrintBadgesOpen && selectedYatra && (() => {
+        // Determine devotee list
+        const sourceParticipants = singleBadgeParticipant 
+          ? [singleBadgeParticipant]
+          : participants.filter(p => p.status !== 'cancelled');
+
+        // Filter by bus
+        const busFiltered = badgeFilterBus === 'all' 
+          ? sourceParticipants 
+          : sourceParticipants.filter(p => p.busId === badgeFilterBus);
+
+        // Filter by hotel
+        const hotelFiltered = badgeFilterHotel === 'all'
+          ? busFiltered
+          : busFiltered.filter(p => {
+              if (p.roomId) {
+                const r = rooms.find(room => room.id === p.roomId);
+                return r && (r.hotelId === badgeFilterHotel || r.hotelName === badgeFilterHotel);
+              }
+              return false;
+            });
+
+        // Expand families into individual badges so each member gets their own lanyard pass
+        const badgeCards = [];
+        hotelFiltered.forEach(p => {
+          const pBus = buses.find(b => b.id === p.busId);
+          const pRoom = rooms.find(r => r.id === p.roomId);
+          const pHotel = hotels.find(h => h.id === pRoom?.hotelId || h.name === pRoom?.hotelName) || hotels.find(h => h.finalSelected) || hotels[0];
+
+          if (p.type === 'family' && p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
+            p.familyMembers.forEach((m, mIdx) => {
+              const mRoomId = m.roomId || p.roomId;
+              const mRoom = rooms.find(r => r.id === mRoomId) || pRoom;
+              const mHotel = hotels.find(h => h.id === mRoom?.hotelId || h.name === mRoom?.hotelName) || pHotel;
+
+              badgeCards.push({
+                badgeId: `${p.id}_${mIdx}`,
+                regNumber: `YTR-${selectedYatra.id.slice(-4).toUpperCase()}-${p.id.slice(-4).toUpperCase()}-${mIdx + 1}`,
+                name: m.name || `${p.name} (Member ${mIdx + 1})`,
+                role: m.relation === 'Self' ? 'Primary Devotee' : 'Family Pilgrim',
+                subText: `${p.familyName || p.name} • ${m.relation || 'Member'}${m.age ? ` (${m.age} yrs)` : ''}`,
+                phone: m.phone || p.phone,
+                location: p.location || selectedYatra.destination,
+                travelMode: p.travelMode,
+                bus: pBus,
+                hotel: mHotel,
+                room: mRoom,
+                qrUrl: `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${window.location.origin}${window.location.pathname}#/login`)}`
+              });
+            });
+          } else {
+            // Individual devotee
+            badgeCards.push({
+              badgeId: p.id,
+              regNumber: `YTR-${selectedYatra.id.slice(-4).toUpperCase()}-${p.id.slice(-4).toUpperCase()}`,
+              name: p.name,
+              role: 'Yatra Pilgrim',
+              subText: `${p.location || 'Pilgrim'} • Individual Seat`,
+              phone: p.phone,
+              location: p.location || selectedYatra.destination,
+              travelMode: p.travelMode,
+              bus: pBus,
+              hotel: pHotel,
+              room: pRoom,
+              qrUrl: `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(`${window.location.origin}${window.location.pathname}#/login`)}`
+            });
+          }
+        });
+
+        return (
+          <div className="modal-overlay badges-modal-overlay" style={{ zIndex: 9999, overflowY: 'auto', padding: '1rem' }}>
+            <div style={{ maxWidth: '960px', width: '100%', margin: '0 auto', backgroundColor: 'var(--bg-card)', borderRadius: 'var(--radius-md)', padding: '1.5rem', boxShadow: 'var(--shadow-lg)' }}>
+              
+              {/* Top Control Toolbar (Hidden in print) */}
+              <div className="no-print" style={{ borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '1.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', marginBottom: '1rem' }}>
+                  <div>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                      <Printer size={22} style={{ color: 'var(--primary)' }} />
+                      <h3 style={{ margin: 0 }}>{t('printBadges')}</h3>
+                      <span className="badge badge-confirmed">{badgeCards.length} {badgeCards.length === 1 ? 'Badge' : 'Badges'}</span>
+                    </div>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.82rem', margin: '0.2rem 0 0' }}>
+                      {singleBadgeParticipant 
+                        ? `Printing badge for ${singleBadgeParticipant.name} (${badgeCards.length} member pass${badgeCards.length > 1 ? 'es' : ''})`
+                        : `Generating printable badges for ${selectedYatra.name}`}
+                    </p>
+                  </div>
+                  
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button 
+                      type="button"
+                      className="btn btn-primary" 
+                      style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', padding: '0.55rem 1.1rem', fontSize: '0.9rem', fontWeight: 600 }}
+                      onClick={() => window.print()}
+                    >
+                      <Printer size={16} /> Print Now (A4 / Cardstock)
+                    </button>
+                    <button 
+                      type="button"
+                      className="btn btn-outline" 
+                      onClick={() => {
+                        setIsPrintBadgesOpen(false);
+                        setSingleBadgeParticipant(null);
+                      }}
+                    >
+                      ✕ Close
+                    </button>
+                  </div>
+                </div>
+
+                {/* Filters Bar (Only shown when printing all) */}
+                {!singleBadgeParticipant && (
+                  <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', backgroundColor: 'var(--bg)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)' }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      <strong>Filter Bus:</strong>
+                      <select 
+                        className="form-control" 
+                        style={{ width: 'auto', padding: '0.3rem 0.6rem', fontSize: '0.82rem' }}
+                        value={badgeFilterBus} 
+                        onChange={(e) => setBadgeFilterBus(e.target.value)}
+                      >
+                        <option value="all">All Buses ({buses.length})</option>
+                        {buses.map(b => (
+                          <option key={b.id} value={b.id}>{b.name} ({b.busNumber || 'Coach'})</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                      <strong>Filter Hotel:</strong>
+                      <select 
+                        className="form-control" 
+                        style={{ width: 'auto', padding: '0.3rem 0.6rem', fontSize: '0.82rem' }}
+                        value={badgeFilterHotel} 
+                        onChange={(e) => setBadgeFilterHotel(e.target.value)}
+                      >
+                        <option value="all">All Hotels ({hotels.length})</option>
+                        {hotels.map(h => (
+                          <option key={h.id} value={h.id}>{h.name}</option>
+                        ))}
+                      </select>
+                    </div>
+
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginLeft: 'auto' }}>
+                      💡 Tip: Set layout to <strong>Portrait</strong> in print dialog. Badges print 4 per page with cutting guides.
+                    </span>
+                  </div>
+                )}
+              </div>
+
+              {/* Printable Badges Container */}
+              <div className="badges-print-view" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(340px, 1fr))', gap: '1.5rem', justifyContent: 'center' }}>
+                {badgeCards.map((b) => (
+                  <div 
+                    key={b.badgeId} 
+                    className="badge-cut-guide"
+                    style={{
+                      width: '100%',
+                      maxWidth: '380px',
+                      margin: '0 auto',
+                      border: '2px dashed #94a3b8',
+                      borderRadius: '12px',
+                      backgroundColor: '#ffffff',
+                      color: '#1e293b',
+                      overflow: 'hidden',
+                      boxShadow: '0 4px 10px rgba(0,0,0,0.06)',
+                      display: 'flex',
+                      flexDirection: 'column'
+                    }}
+                  >
+                    {/* Spiritual Saffron Top Header */}
+                    <div style={{
+                      background: 'linear-gradient(135deg, #b45309 0%, #d97706 50%, #92400e 100%)',
+                      color: '#ffffff',
+                      padding: '0.75rem 1rem',
+                      textAlign: 'center',
+                      position: 'relative'
+                    }}>
+                      <div style={{ fontSize: '0.68rem', letterSpacing: '1.5px', fontWeight: '700', textTransform: 'uppercase', color: '#fef3c7', marginBottom: '0.15rem' }}>
+                        {t('badgeHeader')}
+                      </div>
+                      <h3 style={{ margin: 0, fontSize: '1.15rem', color: '#ffffff', fontWeight: 800 }}>
+                        {selectedYatra.name}
+                      </h3>
+                      <div style={{ fontSize: '0.72rem', color: '#fef3c7', marginTop: '0.15rem' }}>
+                        📍 {selectedYatra.destination} • 📅 {selectedYatra.startDate} to {selectedYatra.endDate}
+                      </div>
+                    </div>
+
+                    {/* Devotee Identity Band */}
+                    <div style={{ padding: '0.85rem 1rem', textAlign: 'center', borderBottom: '1px solid #e2e8f0', backgroundColor: '#fffbeb' }}>
+                      <span style={{ fontSize: '0.7rem', textTransform: 'uppercase', fontWeight: 700, letterSpacing: '0.5px', color: '#b45309', backgroundColor: '#fef3c7', padding: '0.2rem 0.6rem', borderRadius: '1rem', border: '1px solid #fde68a' }}>
+                        {b.role}
+                      </span>
+                      <h2 style={{ margin: '0.35rem 0 0.15rem', fontSize: '1.35rem', color: '#1e293b', fontWeight: 800 }}>
+                        {b.name}
+                      </h2>
+                      <div style={{ fontSize: '0.78rem', color: '#64748b', fontWeight: 600 }}>
+                        {b.subText}
+                      </div>
+                      <div style={{ fontSize: '0.72rem', fontFamily: 'monospace', color: '#94a3b8', marginTop: '0.25rem' }}>
+                        {b.regNumber}
+                      </div>
+                    </div>
+
+                    {/* Logistics Assignment Cards (Bus & Hotel) */}
+                    <div style={{ padding: '0.85rem 1rem', display: 'flex', flexDirection: 'column', gap: '0.6rem', flex: 1, backgroundColor: '#ffffff' }}>
+                      
+                      {/* BUS CARD */}
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.6rem 0.75rem', backgroundColor: '#f8fafc', display: 'flex', alignItems: 'flex-start', gap: '0.65rem' }}>
+                        <span style={{ fontSize: '1.4rem' }}>🚌</span>
+                        <div style={{ flex: 1, fontSize: '0.8rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ color: '#0f172a', fontSize: '0.85rem' }}>
+                              {b.travelMode === 'self' ? 'Self Travel Arrangement' : (b.bus?.name || 'Bus Seat Allocated')}
+                            </strong>
+                            {b.bus?.busNumber && (
+                              <span style={{ backgroundColor: '#e2e8f0', color: '#334155', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>
+                                {b.bus.busNumber}
+                              </span>
+                            )}
+                          </div>
+                          {b.travelMode === 'self' ? (
+                            <div style={{ color: '#64748b', fontSize: '0.75rem', marginTop: '0.15rem' }}>Independent Travel to {selectedYatra.destination}</div>
+                          ) : (
+                            <>
+                              <div style={{ color: '#475569', fontSize: '0.75rem', marginTop: '0.15rem' }}>
+                                ⏰ Departs: <strong>{b.bus?.departureTime || '06:00 AM (Day 1)'}</strong> | 📍 {b.bus?.boardingPoint || 'Assembly Point'}
+                              </div>
+                              {b.bus?.coordinatorName && (
+                                <div style={{ color: '#64748b', fontSize: '0.72rem', marginTop: '0.15rem' }}>
+                                  Coord: {b.bus.coordinatorName} ({b.bus.coordinatorPhone || '—'})
+                                </div>
+                              )}
+                            </>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* HOTEL & ROOM CARD */}
+                      <div style={{ border: '1px solid #e2e8f0', borderRadius: '8px', padding: '0.6rem 0.75rem', backgroundColor: '#f8fafc', display: 'flex', alignItems: 'flex-start', gap: '0.65rem' }}>
+                        <span style={{ fontSize: '1.4rem' }}>🏨</span>
+                        <div style={{ flex: 1, fontSize: '0.8rem' }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                            <strong style={{ color: '#0f172a', fontSize: '0.85rem' }}>
+                              {b.hotel?.name || 'Yatra Hotel / Guesthouse'}
+                            </strong>
+                            <span style={{ backgroundColor: '#dcfce7', color: '#166534', padding: '0.1rem 0.4rem', borderRadius: '4px', fontSize: '0.7rem', fontWeight: 700 }}>
+                              {b.room ? `Room ${b.room.roomNumber}` : 'Stay Allocated'}
+                            </span>
+                          </div>
+                          <div style={{ color: '#475569', fontSize: '0.75rem', marginTop: '0.15rem' }}>
+                            {b.room?.roomType || 'Standard Room'}{b.room?.bedCount ? ` (${b.room.bedCount} Beds)` : ''} {b.room?.floor ? `• ${b.room.floor}` : ''}
+                          </div>
+                          <div style={{ color: '#64748b', fontSize: '0.72rem', marginTop: '0.15rem' }}>
+                            {b.hotel?.address || selectedYatra.destination} {b.hotel?.phone ? `• Ph: ${b.hotel.phone}` : ''}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* QR CODE & VERIFICATION BAND */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', borderTop: '1px solid #f1f5f9', paddingTop: '0.5rem', marginTop: '0.2rem' }}>
+                        <img 
+                          src={b.qrUrl} 
+                          alt="Devotee Pass QR" 
+                          style={{ width: '64px', height: '64px', borderRadius: '4px', border: '1px solid #e2e8f0' }} 
+                        />
+                        <div style={{ fontSize: '0.72rem', color: '#64748b', lineHeight: '1.3' }}>
+                          <strong style={{ color: '#0f172a', display: 'block', fontSize: '0.76rem' }}>{t('scanForLivePass')}</strong>
+                          Scan with any phone camera to verify seat & room reservation.
+                          <div style={{ color: '#059669', fontWeight: 600, marginTop: '0.15rem' }}>✓ Official Pilgrimage Badge</div>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Footer Mantra & Emergency Helpline */}
+                    <div style={{ backgroundColor: '#f1f5f9', borderTop: '1px solid #e2e8f0', padding: '0.5rem 0.75rem', textAlign: 'center', fontSize: '0.68rem', color: '#475569' }}>
+                      <div style={{ fontWeight: 700, color: '#d97706', marginBottom: '0.15rem' }}>
+                        {t('badgeMantra')}
+                      </div>
+                      <div style={{ color: '#64748b', fontSize: '0.65rem' }}>
+                        🚨 {t('badgeEmergency')}: <strong>+91 {selectedYatra.upiName || 'Admin'}</strong>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
     </div>
   );
 }
