@@ -652,6 +652,9 @@ export default function App() {
     setCurrentUser(null);
     setSelectedYatra(null);
     setMyParticipantData(null);
+    setDevoteeCashPromiseAmount('');
+    setDevoteeCashPromiseDate('');
+    setDevoteeCashPromiseNotes('');
     navigateTo('login');
   };
 
@@ -2041,7 +2044,12 @@ export default function App() {
       alert("Please select your promised payment date.");
       return;
     }
-    const cleanAmount = parseFloat(devoteeCashPromiseAmount) || defaultFee;
+    const enteredAmount = parseFloat(devoteeCashPromiseAmount);
+    const cleanAmount = !isNaN(enteredAmount) ? enteredAmount : (defaultFee > 0 ? defaultFee : 0);
+    if (!cleanAmount || cleanAmount <= 0) {
+      alert("Please enter a valid payment amount greater than ₹0.");
+      return;
+    }
     const updates = {
       cashPromiseDate: devoteeCashPromiseDate,
       cashPromiseAmount: cleanAmount,
@@ -7159,7 +7167,7 @@ export default function App() {
                             </p>
                             <div style={{ backgroundColor: '#fef3c7', padding: '0.55rem 0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: '#78350f', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
                               <div>📅 <strong>Promised Payment Date:</strong> {new Date(myParticipantData.cashPromiseDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
-                              <div>💰 <strong>Committed Amount:</strong> ₹{(myParticipantData.cashPromiseAmount || calculatedFee).toLocaleString()}</div>
+                              <div>💰 <strong>Committed Amount:</strong> {myParticipantData.cashPromiseAmount ? `₹${parseFloat(myParticipantData.cashPromiseAmount).toLocaleString()}` : (calculatedFee > 0 ? `₹${calculatedFee.toLocaleString()}` : 'To be confirmed')}</div>
                               {myParticipantData.cashPromiseNotes && <div>📝 <strong>Handover Notes:</strong> {myParticipantData.cashPromiseNotes}</div>}
                               <div>⏳ <strong>Status:</strong> Awaiting Cash Collection by Admin</div>
                             </div>
@@ -7182,11 +7190,15 @@ export default function App() {
                             style={{ flex: 1, padding: '0.5rem', fontSize: '0.82rem', fontWeight: 600, background: devoteePayTab === 'cash' ? '' : 'none', color: devoteePayTab === 'cash' ? '' : 'var(--text-muted)', border: 'none' }}
                             onClick={() => {
                               setDevoteePayTab('cash');
-                              if (!devoteeCashPromiseDate) {
-                                setDevoteeCashPromiseDate(myParticipantData.cashPromiseDate || '');
+                              if (!devoteeCashPromiseDate && myParticipantData.cashPromiseDate) {
+                                setDevoteeCashPromiseDate(myParticipantData.cashPromiseDate);
                               }
-                              if (!devoteeCashPromiseAmount) {
-                                setDevoteeCashPromiseAmount((myParticipantData.cashPromiseAmount || calculatedFee).toString());
+                              if (devoteeCashPromiseAmount === '') {
+                                if (myParticipantData.cashPromiseAmount && parseFloat(myParticipantData.cashPromiseAmount) > 0) {
+                                  setDevoteeCashPromiseAmount(myParticipantData.cashPromiseAmount.toString());
+                                } else if (calculatedFee > 0) {
+                                  setDevoteeCashPromiseAmount(calculatedFee.toString());
+                                }
                               }
                             }}
                           >
@@ -7242,13 +7254,15 @@ export default function App() {
 
                             <div className="form-group" style={{ marginBottom: '0.75rem' }}>
                               <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>
-                                Amount to Pay (₹)
+                                Amount to Pay (₹) <span style={{ color: 'var(--danger)' }}>*</span>
                               </label>
                               <input
                                 type="number"
                                 required
+                                min="1"
                                 className="form-control"
-                                value={devoteeCashPromiseAmount || calculatedFee}
+                                placeholder={calculatedFee > 0 ? calculatedFee.toString() : "Enter amount (₹)"}
+                                value={devoteeCashPromiseAmount}
                                 onChange={(e) => setDevoteeCashPromiseAmount(e.target.value)}
                                 style={{ fontWeight: 'bold', color: 'var(--primary)' }}
                               />
