@@ -150,9 +150,20 @@ export default function App() {
   const defaultDeadline = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
   const [newYatra, setNewYatra] = useState({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, pricePerPerson: '', customQrImageUrl: '', upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
   const [newHotel, setNewHotel] = useState({ name: '', address: '', gmapsLink: '', bookingLink: '', contactPerson: '', phone: '', roomsAvailable: 10, roomPrice: 2000, extraMattressCost: 500, distanceFromTemple: '', notes: '', contacted: false, shortlisted: false, finalSelected: false, quoteImageUrl: '' });
-  const [newParticipant, setNewParticipant] = useState({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
+  const [newParticipant, setNewParticipant] = useState({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending', approvalStatus: 'pending', isApproved: false });
   const [newExpense, setNewExpense] = useState({ date: new Date().toISOString().split('T')[0], category: 'hotel', amount: '', paidBy: '', remarks: '', appliesTo: 'everyone', targetIds: [], billImageUrl: '' });
   const [newDocument, setNewDocument] = useState({ name: '', fileUrl: '', type: 'pdf' });
+
+  // Eligibility Helper: Devotee can pay only after admin approval
+  const isDevoteeApproved = (p) => {
+    if (!p) return false;
+    if (p.approvalStatus === 'approved' || p.isApproved === true) return true;
+    if (p.approvalStatus === 'pending' || p.approvalStatus === 'rejected') return false;
+    if (p.isApproved === false) return false;
+    // Backward compatibility: existing confirmed/paid devotees in mock/database are treated as approved
+    if (p.status === 'confirmed' || p.paymentStatus === 'completed' || p.paymentStatus === 'partially_paid') return true;
+    return false;
+  };
   
   // Public registration form states
   const [publicRegStatus, setPublicRegStatus] = useState(null); // 'success' | null
@@ -1128,6 +1139,8 @@ export default function App() {
       remarks: part.remarks || '',
       status: part.status || 'interested',
       paymentStatus: part.paymentStatus || 'pending',
+      approvalStatus: part.approvalStatus || (isDevoteeApproved(part) ? 'approved' : 'pending'),
+      isApproved: isDevoteeApproved(part),
       customPrice: part.customPrice || '',
       busId: part.busId || '',
       busName: part.busName || '',
@@ -1148,6 +1161,38 @@ export default function App() {
     }
   };
 
+  const handleApproveEligibility = async (participant) => {
+    await db.updateParticipant(participant.id, {
+      approvalStatus: 'approved',
+      isApproved: true
+    });
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleRevokeEligibility = async (participant) => {
+    if (window.confirm(`Revoke Yatra eligibility approval for ${participant.name || 'this devotee'}? This will lock payment options for them.`)) {
+      await db.updateParticipant(participant.id, {
+        approvalStatus: 'pending',
+        isApproved: false
+      });
+      setRefreshTrigger(prev => prev + 1);
+    }
+  };
+
+  const handleApproveAllPending = async () => {
+    const pendingParticipants = participants.filter(p => !isDevoteeApproved(p));
+    if (pendingParticipants.length === 0) return;
+    if (window.confirm(`Approve all ${pendingParticipants.length} pending devotee registration(s) for ${selectedYatra?.name || 'this Yatra'}? This will enable payment options for all of them.`)) {
+      for (const p of pendingParticipants) {
+        await db.updateParticipant(p.id, {
+          approvalStatus: 'approved',
+          isApproved: true
+        });
+      }
+      setRefreshTrigger(prev => prev + 1);
+    }
+  };
+
   const handleAddParticipant = async (e) => {
     e.preventDefault();
     if (newParticipant.type === 'family' && (!newParticipant.familyMembers || newParticipant.familyMembers.length === 0)) {
@@ -1162,10 +1207,13 @@ export default function App() {
       ? newParticipant.familyMembers.length
       : (newParticipant.membersCount || 1);
 
+    const isAppr = newParticipant.approvalStatus === 'approved' || newParticipant.isApproved === true;
     const partToSave = { 
       ...newParticipant, 
       memberDetails,
       membersCount,
+      approvalStatus: isAppr ? 'approved' : 'pending',
+      isApproved: isAppr,
       yatraId: selectedYatra.id 
     };
 
@@ -1178,7 +1226,7 @@ export default function App() {
     }
     setIsAddParticipantOpen(false);
     setAdminAutoFilledDevotee(null);
-    setNewParticipant({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
+    setNewParticipant({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending', approvalStatus: 'pending', isApproved: false });
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -1890,7 +1938,10 @@ export default function App() {
       id: pId,
       yatraId: selectedYatra.id,
       status: 'interested',
-      paymentStatus: 'pending'
+      approvalStatus: 'pending',
+      isApproved: false,
+      paymentStatus: 'pending',
+      registeredAt: new Date().toISOString()
     };
     await db.addParticipant(participantRecord);
     await db.saveDevoteeProfile(participantRecord);
@@ -2076,6 +2127,12 @@ export default function App() {
     switch (template) {
       case 'welcome':
         text = `🙏 *Hare Krishna ${participant.name}!* \n\nThank you for registering for the sacred *${selectedYatra.name}* to *${selectedYatra.destination}* (${selectedYatra.startDate} to ${selectedYatra.endDate}).\n\n📌 *Booking Details:*\n- Type: ${participant.type === 'family' ? `Family Group (${participant.familyName || participant.name})` : 'Individual Traveller'}\n- Registered Members: ${participant.membersCount || 1}\n- Total Yatra Contribution: ₹${totalDue.toLocaleString('en-IN')}\n\n💳 *Payment & Receipt Submission:*\nPlease complete your contribution and upload your screenshot here:\n👉 ${paymentUrl}\n\nUPI ID: *${selectedYatra.upiId}* (${selectedYatra.upiName})\n\nLooking forward to having you on this divine journey! Haribol! 🙏`;
+        break;
+      case 'interest_received':
+        text = `🙏 *Hare Krishna ${participant.name}!* \n\nThank you for submitting your interest for the sacred *${selectedYatra.name}* to *${selectedYatra.destination}* (${selectedYatra.startDate} to ${selectedYatra.endDate}).\n\n📋 *Registration Status:* Received & Under Organizer Review\n\n📌 *Details:*\n- Type: ${participant.type === 'family' ? `Family Group (${participant.familyName || participant.name})` : 'Individual Traveller'}\n- Registered Members: ${participant.membersCount || 1}\n\nOur Yatra organizing team is reviewing registrations. Once your eligibility is approved, payment options will be activated in your Devotee Portal:\n👉 ${portalUrl}\n\nHaribol! 🙏`;
+        break;
+      case 'eligibility_approved':
+        text = `🎉 *Hare Krishna ${participant.name}!* \n\nWonderful news! Your registration eligibility for *${selectedYatra.name}* to *${selectedYatra.destination}* has been *APPROVED* by the organizers! ✅\n\n💳 *Payment Options Activated:*\nYou can now complete your Yatra contribution and confirm your seats via UPI or Cash:\n👉 ${paymentUrl}\n\nUPI ID: *${selectedYatra.upiId}* (${selectedYatra.upiName})\nTotal Contribution: ₹${totalDue.toLocaleString('en-IN')}\n\nDevotee Portal: ${portalUrl}\n\nHaribol! 🙏`;
         break;
       case 'payment_reminder':
         text = `🙏 *Hare Krishna ${participant.name}!* \n\nThis is a gentle reminder regarding your seat confirmation for *${selectedYatra.name}*.\n\n📊 *Your Contribution Status:*\n- Total Amount: ₹${totalDue.toLocaleString('en-IN')}\n- Paid So Far: ₹${paidSoFar.toLocaleString('en-IN')}\n- *Pending Balance: ₹${balance.toLocaleString('en-IN')}*\n\n💳 *UPI Details:*\nUPI ID: *${selectedYatra.upiId}*\nName: ${selectedYatra.upiName}\n\nKindly submit your payment screenshot here to confirm your seats:\n👉 ${paymentUrl}\n\nThank you! Haribol! 🙏`;
@@ -4656,12 +4713,16 @@ export default function App() {
                 const devStatus = (split?.dynamicPaymentStatus === 'completed' && p.status === 'interested') ? 'confirmed' : (split?.dynamicDevoteeStatus || p.status);
                 const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
                 
+                if (participantFilter === 'pending_approval') return !isDevoteeApproved(p);
+                if (participantFilter === 'approved') return isDevoteeApproved(p);
                 if (participantFilter === 'confirmed') return devStatus === 'confirmed';
                 if (participantFilter === 'interested') return devStatus === 'interested';
                 if (participantFilter === 'partially_paid') return payStatus === 'partially_paid';
                 if (participantFilter === 'completed') return payStatus === 'completed';
                 return true; // 'all'
               });
+
+              const pendingCount = participants.filter(p => !isDevoteeApproved(p)).length;
 
               return (
                 <div>
@@ -4691,6 +4752,25 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* PENDING ELIGIBILITY APPROVAL ALERT BANNER */}
+                  {pendingCount > 0 && (
+                    <div style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.85rem 1.15rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                        <Clock size={20} style={{ color: '#d97706', flexShrink: 0 }} />
+                        <span style={{ fontSize: '0.88rem', color: '#92400e' }}>
+                          <strong>{pendingCount} Devotee(s) Pending Eligibility Review:</strong> Devotees submitted interest with no upfront payment. Once approved, UPI payment options unlock in their portal.
+                        </span>
+                      </div>
+                      <button 
+                        className="btn btn-primary" 
+                        style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', backgroundColor: '#16a34a', borderColor: '#15803d', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                        onClick={handleApproveAllPending}
+                      >
+                        <CheckCircle size={14} /> {t('approveAllPending') || 'Approve All Pending'}
+                      </button>
+                    </div>
+                  )}
+
                   {/* TOP TOOLBAR: COUNTS, FILTERS, VIEW TOGGLE & REGISTER */}
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
                     {/* Filter Pills */}
@@ -4702,6 +4782,20 @@ export default function App() {
                         onClick={() => setParticipantFilter('all')}
                       >
                         All ({participants.length})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'pending_approval' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'pending_approval' ? '' : '#f59e0b', color: participantFilter === 'pending_approval' ? '' : '#b45309' }}
+                        onClick={() => setParticipantFilter('pending_approval')}
+                      >
+                        ⏳ {t('filterPendingApproval') || 'Pending Approval'} ({pendingCount})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'approved' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'approved' ? '' : '#10b981', color: participantFilter === 'approved' ? '' : '#059669' }}
+                        onClick={() => setParticipantFilter('approved')}
+                      >
+                        ✓ {t('filterApproved') || 'Approved'} ({participants.filter(p => isDevoteeApproved(p)).length})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'confirmed' ? 'btn-primary' : 'btn-outline'}`}
@@ -4758,7 +4852,7 @@ export default function App() {
                         className="btn btn-primary" 
                         onClick={() => {
                           setEditingParticipantId(null);
-                          setNewParticipant({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending' });
+                          setNewParticipant({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending', approvalStatus: 'pending', isApproved: false });
                           setIsAddParticipantOpen(true);
                         }}
                       >
@@ -4773,12 +4867,13 @@ export default function App() {
                       <table style={{ borderCollapse: 'separate', borderSpacing: '0 0.4rem' }}>
                         <thead>
                           <tr>
-                            <th style={{ width: '22%' }}>Devotee</th>
-                            <th style={{ width: '16%' }}>Group / Seats</th>
-                            <th style={{ width: '14%' }}>Travel</th>
+                            <th style={{ width: '18%' }}>Devotee</th>
+                            <th style={{ width: '14%' }}>Group / Seats</th>
+                            <th style={{ width: '12%' }}>Travel</th>
                             <th style={{ width: '10%' }}>Status</th>
-                            <th style={{ width: '14%' }}>Yatra Fee</th>
-                            <th style={{ width: '14%' }}>Payment</th>
+                            <th style={{ width: '14%' }}>Eligibility</th>
+                            <th style={{ width: '11%' }}>Yatra Fee</th>
+                            <th style={{ width: '11%' }}>Payment</th>
                             <th style={{ width: '10%', textAlign: 'right' }}>Actions</th>
                           </tr>
                         </thead>
@@ -4841,6 +4936,40 @@ export default function App() {
                                     >
                                       {effectiveDevoteeStatus}
                                     </button>
+                                  </td>
+
+                                  {/* Eligibility & Admin Approval */}
+                                  <td>
+                                    {isDevoteeApproved(part) ? (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start' }}>
+                                        <span className="badge" style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', border: '1px solid var(--success-border)', fontWeight: '600' }}>
+                                          ✓ {t('approvedEligible') || 'Approved'}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRevokeEligibility(part)}
+                                          style={{ background: 'none', border: 'none', color: '#b91c1c', fontSize: '0.7rem', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}
+                                          title="Revoke approval to lock payment"
+                                        >
+                                          {t('revokeApproval') || 'Revoke'}
+                                        </button>
+                                      </div>
+                                    ) : (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.3rem', alignItems: 'flex-start' }}>
+                                        <span className="badge" style={{ backgroundColor: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', fontWeight: '600' }}>
+                                          ⏳ {t('pendingApproval') || 'Pending'}
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className="btn btn-primary"
+                                          style={{ padding: '0.2rem 0.5rem', fontSize: '0.72rem', backgroundColor: '#16a34a', borderColor: '#15803d', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}
+                                          onClick={() => handleApproveEligibility(part)}
+                                          title="Approve for Yatra (enables payment options)"
+                                        >
+                                          <Check size={12} /> {t('approveDevotee') || 'Approve'}
+                                        </button>
+                                      </div>
+                                    )}
                                   </td>
 
                                   {/* Yatra Amount */}
@@ -4935,7 +5064,7 @@ export default function App() {
                                 {/* EXPANDED DETAILS DRAWER SUB-ROW */}
                                 {isExpanded && (
                                   <tr style={{ backgroundColor: 'var(--bg)' }}>
-                                    <td colSpan={7} style={{ padding: '1rem 1.25rem', borderTop: 'none', borderBottom: '2px solid var(--border)' }}>
+                                    <td colSpan={8} style={{ padding: '1rem 1.25rem', borderTop: 'none', borderBottom: '2px solid var(--border)' }}>
                                       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '1.5rem', backgroundColor: 'var(--card-bg)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
                                         {/* SECTION A: FAMILY MEMBERS ROSTER */}
                                         <div>
@@ -5114,6 +5243,36 @@ export default function App() {
                                   <strong>Members:</strong> {part.familyMembers.map(m => m.name).filter(Boolean).join(', ')}
                                 </div>
                               )}
+
+                              {/* Eligibility Status Block */}
+                              <div style={{ backgroundColor: isDevoteeApproved(part) ? 'var(--success-light)' : '#fffbeb', border: `1px solid ${isDevoteeApproved(part) ? 'var(--success-border)' : '#fde68a'}`, padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                                <div>
+                                  <span style={{ fontSize: '0.78rem', fontWeight: 'bold', color: isDevoteeApproved(part) ? 'var(--success)' : '#b45309' }}>
+                                    {isDevoteeApproved(part) ? `✓ ${t('approvedEligible') || 'Approved for Yatra'}` : `⏳ ${t('pendingApproval') || 'Eligibility Pending'}`}
+                                  </span>
+                                  <div style={{ fontSize: '0.7rem', color: isDevoteeApproved(part) ? '#047857' : '#92400e', marginTop: '0.1rem' }}>
+                                    {isDevoteeApproved(part) ? 'Payment options enabled' : 'Payment options locked'}
+                                  </div>
+                                </div>
+                                {isDevoteeApproved(part) ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleRevokeEligibility(part)}
+                                    style={{ background: 'none', border: 'none', color: '#b91c1c', fontSize: '0.72rem', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}
+                                  >
+                                    {t('revokeApproval') || 'Revoke'}
+                                  </button>
+                                ) : (
+                                  <button
+                                    type="button"
+                                    className="btn btn-primary"
+                                    style={{ padding: '0.2rem 0.55rem', fontSize: '0.72rem', backgroundColor: '#16a34a', borderColor: '#15803d', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}
+                                    onClick={() => handleApproveEligibility(part)}
+                                  >
+                                    <Check size={12} /> {t('approveDevotee') || 'Approve'}
+                                  </button>
+                                )}
+                              </div>
 
                               {/* Financial Pill Box */}
                               <div style={{ backgroundColor: 'var(--primary-light)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '0.75rem' }}>
@@ -5827,14 +5986,28 @@ export default function App() {
                 </div>
               ) : publicRegStatus === 'success' ? (
                 <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
-                  <div style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', width: '3.5rem', height: '3.5rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justify: 'center', margin: '0 auto 1.5rem', justifyContent: 'center' }}>
-                    <Check size={28} />
+                  <div style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', width: '3.75rem', height: '3.75rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem' }}>
+                    <Check size={32} />
                   </div>
-                  <h3>Registration Successful!</h3>
-                  <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem', marginBottom: '2rem' }}>Your registration is received. Please proceed to payment to confirm your seats.</p>
-                  <button className="btn btn-primary" onClick={() => navigateTo('payment', publicRegId)}>
-                    Proceed to Payment
-                  </button>
+                  <h3 style={{ fontSize: '1.35rem', color: 'var(--text)' }}>
+                    {t('interestSubmittedTitle') || 'Registration & Interest Submitted! 🙏'}
+                  </h3>
+                  <div style={{ maxWidth: '460px', margin: '1.25rem auto 1.5rem', backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '1.1rem', textAlign: 'left', fontSize: '0.88rem', color: '#92400e', lineHeight: '1.5' }}>
+                    <div style={{ fontWeight: 'bold', display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.4rem', color: '#b45309', fontSize: '0.92rem' }}>
+                      <Clock size={17} /> {t('pendingEligibilityBadge') || 'Pending Eligibility Review (No Payment Taken Upfront)'}
+                    </div>
+                    <p style={{ margin: 0 }}>
+                      {t('noUpfrontPaymentDesc') || 'Your registration details have been securely recorded. To ensure smooth logistics, organizers review registrations before opening payment collection. Once approved, payment options will be activated in your Devotee Portal.'}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button className="btn btn-primary" onClick={() => navigateTo('login')}>
+                      {t('goToDevoteePortal') || 'Go to Devotee Portal'}
+                    </button>
+                    <button className="btn btn-outline" onClick={() => navigateTo('public')}>
+                      {t('backToYatras') || 'Back to Yatras'}
+                    </button>
+                  </div>
                 </div>
               ) : (
                 <form onSubmit={handlePublicRegister}>
@@ -6114,8 +6287,18 @@ export default function App() {
                     <textarea className="form-control" rows={2} placeholder="Any other details you want us to know..." value={newParticipant.remarks} onChange={(e) => setNewParticipant({...newParticipant, remarks: e.target.value})} />
                   </div>
 
-                  <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
-                    Register & Continue to Payment
+                  <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.85rem 1rem', marginTop: '1rem', marginBottom: '0.5rem', fontSize: '0.84rem', color: '#92400e', lineHeight: '1.45', display: 'flex', gap: '0.6rem', alignItems: 'flex-start' }}>
+                    <Clock size={18} style={{ flexShrink: 0, marginTop: '2px', color: '#d97706' }} />
+                    <div>
+                      <strong>{t('noUpfrontPaymentNotice') || 'No Upfront Payment Required'}</strong>
+                      <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', color: '#b45309' }}>
+                        {t('noUpfrontPaymentDesc') || 'Submit your registration and express your interest. Organizers will review devotee eligibility, after which payment options will be activated in your Devotee Portal.'}
+                      </p>
+                    </div>
+                  </div>
+
+                  <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '0.75rem', padding: '0.75rem', fontSize: '0.95rem', fontWeight: '600' }}>
+                    {t('submitInterestBtn') || 'Submit Yatra Registration (No Upfront Payment)'}
                   </button>
                 </form>
               )}
@@ -6126,12 +6309,45 @@ export default function App() {
         {/* ======================================= */}
         {/* VIEW 5: PUBLIC UPI QR PAYMENT */}
         {/* ======================================= */}
-        {currentRoute.path === 'payment' && selectedYatra && (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
-            <div className="card" style={{ width: '100%', maxWidth: '500px', padding: '2.5rem', textAlign: 'center' }}>
-              <Compass size={40} style={{ color: 'var(--primary)', marginBottom: '0.5rem', display: 'inline-block' }} />
-              <h2>Yatra Payment</h2>
-              <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Complete your yatra fees payment to confirm booking</p>
+        {currentRoute.path === 'payment' && selectedYatra && (() => {
+          const pObj = paymentParticipant || participants.find(p => p.id === currentRoute.id);
+          const isApproved = isDevoteeApproved(pObj);
+
+          if (pObj && !isApproved) {
+            return (
+              <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
+                <div className="card" style={{ width: '100%', maxWidth: '520px', padding: '2.5rem', textAlign: 'center' }}>
+                  <div style={{ backgroundColor: '#fffbeb', color: '#d97706', width: '3.75rem', height: '3.75rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem' }}>
+                    <Clock size={32} />
+                  </div>
+                  <h2 style={{ fontSize: '1.4rem' }}>{t('approvalPendingDirectPay') || 'Registration Pending Eligibility Approval'}</h2>
+                  <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '1.1rem', margin: '1.25rem 0 1.75rem', textAlign: 'left', fontSize: '0.88rem', color: '#92400e', lineHeight: '1.5' }}>
+                    <div style={{ fontWeight: 'bold', marginBottom: '0.35rem', color: '#b45309' }}>
+                      Devotee: {pObj.name} {pObj.type === 'family' ? `(${pObj.familyName || 'Family Group'})` : ''}
+                    </div>
+                    <p style={{ margin: 0, fontSize: '0.84rem' }}>
+                      {t('approvalPendingDirectPayDesc') || 'Hare Krishna! Payment options for this devotee registration are not yet enabled because registration is currently under review by the Yatra organizing committee. Once approved by the admin, UPI QR code and payment receipt submission will unlock automatically.'}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button className="btn btn-primary" onClick={() => navigateTo('login')}>
+                      {t('goToDevoteePortal') || 'Devotee Portal Login'}
+                    </button>
+                    <button className="btn btn-outline" onClick={() => navigateTo('public')}>
+                      {t('backToYatras') || 'Browse Yatras'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          }
+
+          return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
+              <div className="card" style={{ width: '100%', maxWidth: '500px', padding: '2.5rem', textAlign: 'center' }}>
+                <Compass size={40} style={{ color: 'var(--primary)', marginBottom: '0.5rem', display: 'inline-block' }} />
+                <h2>Yatra Payment</h2>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Complete your yatra fees payment to confirm booking</p>
 
               {publicPayStatus === 'success' ? (
                 <div style={{ padding: '1.5rem 0' }}>
@@ -6304,7 +6520,7 @@ export default function App() {
               )}
             </div>
           </div>
-        )}
+        ); })()}
 
         {/* ======================================= */}
         {/* VIEW 6: DEVOTEE PORTAL / MY YATRA */}
@@ -6329,6 +6545,15 @@ export default function App() {
                   <Printer size={15} /> {t('printBadge')}
                 </button>
                 <span className={`badge badge-${myParticipantData.status}`}>{myParticipantData.status}</span>
+                {isDevoteeApproved(myParticipantData) ? (
+                  <span className="badge" style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', border: '1px solid var(--success-border)', fontWeight: 600 }}>
+                    ✓ {t('approvedEligible') || 'Eligible for Yatra'}
+                  </span>
+                ) : (
+                  <span className="badge" style={{ backgroundColor: '#fffbeb', color: '#b45309', border: '1px solid #fde68a', fontWeight: 600 }}>
+                    ⏳ {t('pendingApproval') || 'Pending Eligibility Approval'}
+                  </span>
+                )}
                 <span className="badge" style={{ backgroundColor: myParticipantData.paymentStatus === 'completed' ? 'var(--success-light)' : 'var(--warning-light)', color: myParticipantData.paymentStatus === 'completed' ? 'var(--success)' : 'var(--warning)' }}>
                   Payment: {myParticipantData.paymentStatus}
                 </span>
@@ -6629,9 +6854,28 @@ export default function App() {
                       <h4 style={{ color: 'var(--success)' }}>Confirmed Booking</h4>
                       <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>We have successfully received and verified your payment.</p>
                     </div>
+                  ) : !isDevoteeApproved(myParticipantData) ? (
+                    <div style={{ padding: '1rem 0' }}>
+                      <div style={{ backgroundColor: '#fffbeb', color: '#d97706', width: '3.5rem', height: '3.5rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1rem' }}>
+                        <Clock size={28} />
+                      </div>
+                      <h4 style={{ color: '#b45309', margin: '0 0 0.5rem 0' }}>
+                        {t('paymentLockedNotice') || 'Eligibility Review in Progress'}
+                      </h4>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', lineHeight: '1.5', marginBottom: '1.25rem' }}>
+                        {t('paymentLockedDesc') || 'Hare Krishna! Your interest has been submitted. The Yatra organizing team is reviewing devotee eligibility. Payment options (UPI QR and receipt submission) will be automatically unlocked here as soon as the organizers approve your registration.'}
+                      </p>
+                      <div style={{ backgroundColor: 'var(--bg)', border: '1px dashed var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.75rem', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                        🔒 Payment collection options currently locked pending admin approval
+                      </div>
+                    </div>
                   ) : (
                     <div>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0.5rem 0 1.25rem' }}>Your payment is currently pending verification. Scan the UPI QR code below, pay manually, and submit your receipt details.</p>
+                      <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid var(--success-border)', borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.75rem', marginBottom: '1rem', fontSize: '0.82rem', color: 'var(--success)', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
+                        <CheckCircle size={16} />
+                        <span>{t('eligibilityApprovedBanner') || 'Registration Approved! Payment options are unlocked.'}</span>
+                      </div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0.5rem 0 1.25rem' }}>Your registration is approved. Scan the UPI QR code below, pay manually, and submit your receipt details.</p>
                       
                       <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', display: 'inline-block', marginBottom: '1rem', border: '1px solid var(--border)' }}>
                         <img 
@@ -6899,7 +7143,7 @@ export default function App() {
                         type: 'individual', familyName: '', membersCount: 1, familyMembers: [],
                         memberDetails: '', travelMode: 'organised', travelType: '',
                         boardingStation: '', droppingStation: '', remarks: '',
-                        status: 'interested', paymentStatus: 'pending'
+                        status: 'interested', paymentStatus: 'pending', approvalStatus: 'pending', isApproved: false
                       });
                     }}
                   >
@@ -7102,7 +7346,21 @@ export default function App() {
                 <label>Remarks</label>
                 <input type="text" className="form-control" value={newParticipant.remarks} onChange={(e) => setNewParticipant({...newParticipant, remarks: e.target.value})} />
               </div>
-              <div className="grid-cols-2">
+              <div className="grid-cols-3">
+                <div className="form-group">
+                  <label>{t('eligibilityStatus') || 'Yatra Eligibility'}</label>
+                  <select 
+                    value={newParticipant.approvalStatus || (newParticipant.isApproved ? 'approved' : 'pending')} 
+                    onChange={(e) => setNewParticipant({
+                      ...newParticipant, 
+                      approvalStatus: e.target.value,
+                      isApproved: e.target.value === 'approved'
+                    })}
+                  >
+                    <option value="pending">{t('pendingApproval') || '⏳ Pending Approval (Locked)'}</option>
+                    <option value="approved">{t('approvedEligible') || '✓ Approved Eligible (Open)'}</option>
+                  </select>
+                </div>
                 <div className="form-group">
                   <label>Verification Status</label>
                   <select value={newParticipant.status} onChange={(e) => setNewParticipant({...newParticipant, status: e.target.value})}>

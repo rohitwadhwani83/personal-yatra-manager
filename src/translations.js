@@ -139,6 +139,28 @@ export const translations = {
     downloadGuidesDesc: 'Bilingual (English & हिंदी) step-by-step PDF manuals for pilgrims and organizers.',
     devoteeGuidePdf: 'Devotee Pilgrimage Guide (PDF)',
     adminGuidePdf: 'Admin Operations Manual (PDF)',
+
+    // Registration & Approval Flow
+    noUpfrontPaymentNotice: 'No Upfront Payment Required',
+    noUpfrontPaymentDesc: 'Submit your interest today. Organizers will review your application. Once approved, contribution payment options will be activated in your Devotee Portal.',
+    submitInterestBtn: 'Submit Yatra Interest & Register',
+    pendingEligibilityBadge: 'Interest Submitted • Pending Admin Approval',
+    interestSubmittedTitle: 'Yatra Interest Submitted Successfully!',
+    goToDevoteePortal: 'Go to Devotee Portal Login',
+    backToYatras: 'Browse Other Yatras',
+    eligibilityStatus: 'Eligibility & Approval',
+    pendingApproval: 'Pending Review',
+    approvedEligible: 'Approved & Eligible',
+    approveDevotee: 'Approve for Yatra',
+    revokeApproval: 'Revoke',
+    approveAllPending: 'Approve All Pending',
+    filterPendingApproval: 'Pending Approval',
+    filterApproved: 'Approved (Eligible)',
+    paymentLockedNotice: 'Payment Options Locked (Awaiting Admin Eligibility Approval)',
+    paymentLockedDesc: 'No upfront payment is taken. Once the administrator confirms your eligibility for this Yatra, UPI QR payment and receipt submission will be unlocked here.',
+    eligibilityApprovedBanner: '🎉 Approved for Yatra! Your eligibility is confirmed. Please complete your contribution below to confirm seats.',
+    approvalPendingDirectPay: 'Yatra Eligibility Approval Pending',
+    approvalPendingDirectPayDesc: 'Your registration interest has been submitted. The organizers have not yet approved your eligibility for this Yatra. Payment options will be activated automatically once approved.',
   },
 
   hi: {
@@ -279,6 +301,28 @@ export const translations = {
     downloadGuidesDesc: 'श्रद्धालुओं और आयोजकों के लिए द्विभाषी (अंग्रेजी और हिंदी) चरण-दर-चरण पीडीएफ मार्गदर्शिका।',
     devoteeGuidePdf: 'भक्त यात्रा मार्गदर्शिका (PDF)',
     adminGuidePdf: 'व्यवस्थापक संचालन नियमावली (PDF)',
+
+    // Registration & Approval Flow
+    noUpfrontPaymentNotice: 'कोई अग्रिम भुगतान आवश्यक नहीं है',
+    noUpfrontPaymentDesc: 'आज ही अपनी रुचि दर्ज करें। आयोजक आपके पंजीकरण की समीक्षा करेंगे। पात्रता स्वीकृत होने पर भक्त पोर्टल में भुगतान विकल्प सक्रिय हो जाएंगे।',
+    submitInterestBtn: 'यात्रा रुचि दर्ज करें एवं पंजीकरण करें',
+    pendingEligibilityBadge: 'रुचि दर्ज • व्यवस्थापक स्वीकृति प्रतीक्षित',
+    interestSubmittedTitle: 'यात्रा रुचि सफलतापूर्वक दर्ज की गई!',
+    goToDevoteePortal: 'भक्त पोर्टल लॉगिन पर जाएं',
+    backToYatras: 'अन्य यात्राएं देखें',
+    eligibilityStatus: 'पात्रता एवं स्वीकृति',
+    pendingApproval: 'समीक्षा लंबित',
+    approvedEligible: 'स्वीकृत एवं पात्र',
+    approveDevotee: 'यात्रा हेतु स्वीकृत करें',
+    revokeApproval: 'स्वीकृति वापस लें',
+    approveAllPending: 'सभी लंबित स्वीकृत करें',
+    filterPendingApproval: 'स्वीकृति लंबित',
+    filterApproved: 'स्वीकृत (पात्र)',
+    paymentLockedNotice: 'भुगतान विकल्प लॉक (व्यवस्थापक पात्रता स्वीकृति की प्रतीक्षा)',
+    paymentLockedDesc: 'अग्रिम भुगतान नहीं लिया जाता है। व्यवस्थापक द्वारा इस यात्रा के लिए आपकी पात्रता स्वीकृत करने के बाद UPI QR भुगतान और रसीद अपलोड विकल्प सक्रिय होंगे।',
+    eligibilityApprovedBanner: '🎉 यात्रा हेतु स्वीकृत! आपकी पात्रता पुष्ट हो चुकी है। कृपया सीटें पक्की करने हेतु नीचे योगदान राशि जमा करें।',
+    approvalPendingDirectPay: 'यात्रा पात्रता स्वीकृति लंबित',
+    approvalPendingDirectPayDesc: 'आपकी यात्रा रुचि दर्ज है। आयोजकों ने अभी तक आपकी पात्रता की समीक्षा नहीं की है। स्वीकृति मिलते ही भुगतान विकल्प स्वतः सक्रिय हो जाएंगे।',
   }
 };
 
