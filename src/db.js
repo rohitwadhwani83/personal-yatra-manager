@@ -473,14 +473,41 @@ class Database {
     this.firestore = null;
     this.isFirebaseReady = false;
 
-    // Load Firebase Config if saved in LocalStorage
-    const savedConfig = localStorage.getItem('yatra_firebase_config');
-    if (savedConfig) {
-      try {
-        const config = JSON.parse(savedConfig);
-        this.initializeFirebase(config);
-      } catch (e) {
-        console.error("Failed to parse saved Firebase config", e);
+    // 1. Try to load Firebase Config from Vite Environment Variables (shared across all devices on Vercel)
+    let envConfig = null;
+    try {
+      if (typeof import.meta !== 'undefined' && import.meta.env) {
+        if (import.meta.env.VITE_FIREBASE_CONFIG) {
+          envConfig = typeof import.meta.env.VITE_FIREBASE_CONFIG === 'string'
+            ? JSON.parse(import.meta.env.VITE_FIREBASE_CONFIG)
+            : import.meta.env.VITE_FIREBASE_CONFIG;
+        } else if (import.meta.env.VITE_FIREBASE_API_KEY && import.meta.env.VITE_FIREBASE_PROJECT_ID) {
+          envConfig = {
+            apiKey: import.meta.env.VITE_FIREBASE_API_KEY,
+            authDomain: import.meta.env.VITE_FIREBASE_AUTH_DOMAIN || `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.firebaseapp.com`,
+            projectId: import.meta.env.VITE_FIREBASE_PROJECT_ID,
+            storageBucket: import.meta.env.VITE_FIREBASE_STORAGE_BUCKET || `${import.meta.env.VITE_FIREBASE_PROJECT_ID}.appspot.com`,
+            messagingSenderId: import.meta.env.VITE_FIREBASE_MESSAGING_SENDER_ID || '',
+            appId: import.meta.env.VITE_FIREBASE_APP_ID || ''
+          };
+        }
+      }
+    } catch (e) {
+      console.warn("Could not load Firebase config from env:", e);
+    }
+
+    if (envConfig) {
+      this.initializeFirebase(envConfig);
+    } else {
+      // 2. Fall back to saved Firebase Config in LocalStorage
+      const savedConfig = localStorage.getItem('yatra_firebase_config');
+      if (savedConfig) {
+        try {
+          const config = JSON.parse(savedConfig);
+          this.initializeFirebase(config);
+        } catch (e) {
+          console.error("Failed to parse saved Firebase config", e);
+        }
       }
     }
 

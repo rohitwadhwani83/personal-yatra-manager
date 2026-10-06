@@ -71,6 +71,7 @@ export default function App() {
   const [loginPhone, setLoginPhone] = useState('');
   const [loginRole, setLoginRole] = useState('admin'); // 'admin' | 'super_admin' | 'participant'
   const [loginError, setLoginError] = useState('');
+  const [loginInviteBanner, setLoginInviteBanner] = useState('');
 
   // Forced First-Time Login Password Change
   const [isFirstLoginOpen, setIsFirstLoginOpen] = useState(false);
@@ -298,14 +299,54 @@ export default function App() {
   // --- Custom Router Effect ---
   useEffect(() => {
     const handleHash = () => {
-      const hash = window.location.hash || '#/login';
-      const parts = hash.split('/');
-      const path = parts[1] || 'login';
-      const id = parts[2] || '';
+      const rawHash = window.location.hash || '#/login';
+      const cleanHash = rawHash.replace(/^#\/?/, '');
+      const [pathAndId, queryString] = cleanHash.split('?');
+      const parts = pathAndId.split('/');
+      const path = parts[0] || 'login';
+      const id = parts[1] || '';
       
       setCurrentRoute({ path, id });
       if (path !== 'register') {
         setPublicRegStatus(null);
+      }
+
+      // Check for Admin Invitation Token (auto-registers and pre-fills admin on any device)
+      const fullSearch = (queryString ? `?${queryString}` : '') + (window.location.search || '');
+      const urlParams = new URLSearchParams(fullSearch);
+      let inviteToken = urlParams.get('invite');
+      if (!inviteToken && rawHash.includes('invite=')) {
+        inviteToken = rawHash.split('invite=')[1].split('&')[0];
+      }
+      if (inviteToken) {
+        try {
+          const jsonStr = decodeURIComponent(escape(atob(inviteToken)));
+          const invitedUser = JSON.parse(jsonStr);
+          if (invitedUser && invitedUser.email && invitedUser.password) {
+            db.getUsers().then(async (allUsers) => {
+              const cleanInvEmail = invitedUser.email.toLowerCase().trim();
+              const existing = allUsers.find(u => u.email && u.email.toLowerCase().trim() === cleanInvEmail);
+              if (!existing) {
+                await db.addUser({
+                  id: invitedUser.id || ('admin_' + Math.random().toString(36).substring(2, 9)),
+                  email: cleanInvEmail,
+                  name: invitedUser.name || 'Yatra Administrator',
+                  phone: invitedUser.phone || '',
+                  password: invitedUser.password,
+                  role: invitedUser.role || 'admin',
+                  mustChangePassword: true,
+                  createdAt: new Date().toISOString()
+                });
+              }
+              setLoginRole('admin');
+              setLoginEmail(invitedUser.email);
+              setLoginPassword(invitedUser.password);
+              setLoginInviteBanner(`Hare Krishna ${invitedUser.name || ''}! Your administrator credentials have been configured on this device. Temporary password pre-filled. Please click 'Sign In' to set your personal secret password.`);
+            });
+          }
+        } catch (e) {
+          console.warn("Could not parse invite token", e);
+        }
       }
 
       // Automatically sync selected Yatra if route changes to /yatra/:id
@@ -424,58 +465,62 @@ export default function App() {
     } else {
       // Admin / Super Admin Login
       if (!loginEmail || !loginPassword) {
-        setLoginError('Please fill in both email and password.');
+        setLoginError('Please enter your email or mobile number and password.');
         return;
       }
 
-      const cleanEmail = loginEmail.trim().toLowerCase();
+      const cleanInput = loginEmail.trim().toLowerCase();
+      const digitsOnly = cleanInput.replace(/\D/g, '');
+      const inputPassword = loginPassword.trim();
+
       db.getUsers().then(users => {
-        if (loginRole === 'super_admin') {
-          const matchedSuper = users.find(u => u.email.toLowerCase() === cleanEmail && u.role === 'super_admin') ||
-            (cleanEmail === 'rohit.wadhwani83@gmail.com' ? { id: 'super_admin_1', email: 'rohit.wadhwani83@gmail.com', role: 'super_admin', name: 'Rohit Wadhwani (Super)', password: 'admin123', mustChangePassword: false } : null);
+        const superAdminDefault = { id: 'super_admin_1', email: 'rohit.wadhwani83@gmail.com', role: 'super_admin', name: 'Rohit Wadhwani (Super)', password: 'admin123', mustChangePassword: false };
+        const adminDefault = { id: 'admin_1', email: 'admin@yatra.com', role: 'admin', name: 'Krishna Das (Admin)', password: 'admin123', mustChangePassword: false };
 
-          const expectedPwd = matchedSuper?.password || 'admin123';
-          if (matchedSuper && loginPassword === expectedPwd) {
-            if (matchedSuper.mustChangePassword) {
-              setFirstLoginUser(matchedSuper);
-              setNewFirstPassword('');
-              setConfirmFirstPassword('');
-              setFirstPasswordError('');
-              setIsFirstLoginOpen(true);
-            } else {
-              setCurrentUser({ email: matchedSuper.email, role: 'super_admin', name: matchedSuper.name, id: matchedSuper.id });
-              navigateTo('dashboard');
-            }
-          } else {
-            setLoginError('Invalid super admin credentials.');
-          }
-        } else if (loginRole === 'admin') {
-          const matchedAdmin = users.find(u => u.email.toLowerCase() === cleanEmail && u.role === 'admin') ||
-            (cleanEmail === 'admin@yatra.com' ? { id: 'admin_1', email: 'admin@yatra.com', role: 'admin', name: 'Krishna Das (Admin)', password: 'admin123', mustChangePassword: false } : null);
+        const allUsers = [...users];
+        if (!allUsers.some(u => u.email && u.email.toLowerCase() === superAdminDefault.email.toLowerCase())) {
+          allUsers.push(superAdminDefault);
+        }
+        if (!allUsers.some(u => u.email && u.email.toLowerCase() === adminDefault.email.toLowerCase())) {
+          allUsers.push(adminDefault);
+        }
 
-          const expectedPwd = matchedAdmin?.password || 'admin123';
-          if (matchedAdmin && loginPassword === expectedPwd) {
-            if (matchedAdmin.mustChangePassword) {
-              setFirstLoginUser(matchedAdmin);
-              setNewFirstPassword('');
-              setConfirmFirstPassword('');
-              setFirstPasswordError('');
-              setIsFirstLoginOpen(true);
-            } else {
-              setCurrentUser({ 
-                email: matchedAdmin.email, 
-                role: 'admin', 
-                name: matchedAdmin.name || 'Yatra Admin',
-                id: matchedAdmin.id,
-                phone: matchedAdmin.phone || ''
-              });
-              navigateTo('dashboard');
-            }
-          } else {
-            setLoginError('Invalid email or password.');
-          }
+        // Search user by email, mobile number, or name
+        const matched = allUsers.find(u => {
+          const emailMatch = u.email && u.email.trim().toLowerCase() === cleanInput;
+          const phoneClean = u.phone ? u.phone.replace(/\D/g, '') : '';
+          const phoneMatch = digitsOnly.length >= 10 && phoneClean && (phoneClean.endsWith(digitsOnly.slice(-10)) || digitsOnly.endsWith(phoneClean.slice(-10)));
+          const nameMatch = u.name && u.name.trim().toLowerCase() === cleanInput;
+          return emailMatch || phoneMatch || nameMatch;
+        });
+
+        if (!matched) {
+          setLoginError('No administrator account found with this email or mobile number on this device. If you received an invitation link, please click it directly on your device to activate your account.');
+          return;
+        }
+
+        const expectedPwd = (matched.password || 'admin123').trim();
+        if (inputPassword !== expectedPwd) {
+          setLoginError('Incorrect password. Please verify your temporary password (passwords are case-sensitive).');
+          return;
+        }
+
+        // Successfully matched credentials!
+        if (matched.mustChangePassword) {
+          setFirstLoginUser(matched);
+          setNewFirstPassword('');
+          setConfirmFirstPassword('');
+          setFirstPasswordError('');
+          setIsFirstLoginOpen(true);
         } else {
-          setLoginError('Invalid email, password, or role combination.');
+          setCurrentUser({ 
+            email: matched.email, 
+            role: matched.role || (loginRole === 'super_admin' ? 'super_admin' : 'admin'), 
+            name: matched.name || 'Yatra Administrator', 
+            id: matched.id,
+            phone: matched.phone || ''
+          });
+          navigateTo('dashboard');
         }
       });
     }
@@ -2384,6 +2429,26 @@ export default function App() {
     document.body.removeChild(link);
   };
 
+  // Helper to generate a direct magic invite link that auto-activates admin on any recipient device
+  const generateAdminInviteUrl = (user) => {
+    try {
+      const payload = {
+        id: user.id || undefined,
+        email: user.email,
+        name: user.name || 'Yatra Administrator',
+        phone: user.phone || '',
+        password: user.password,
+        role: user.role || 'admin',
+        mustChangePassword: user.mustChangePassword !== false,
+        t: Date.now()
+      };
+      const token = btoa(unescape(encodeURIComponent(JSON.stringify(payload))));
+      return `${window.location.origin}${window.location.pathname}#/login?invite=${token}`;
+    } catch (e) {
+      return `${window.location.origin}${window.location.pathname}#/login`;
+    }
+  };
+
   // --- Admin Management (Super Admin) ---
   const handleAddAdmin = async (e) => {
     e.preventDefault();
@@ -2406,10 +2471,10 @@ export default function App() {
       createdAt: new Date().toISOString()
     };
 
-    await db.addUser(adminRecord);
+    const added = await db.addUser(adminRecord);
     setCreatedAdminSuccess({
-      ...adminRecord,
-      loginUrl: `${window.location.origin}${window.location.pathname}#/login`
+      ...added,
+      loginUrl: generateAdminInviteUrl(added)
     });
     setNewAdminEmail('');
     setNewAdminName('');
@@ -2426,10 +2491,14 @@ export default function App() {
         mustChangePassword: true,
         passwordUpdatedAt: new Date().toISOString()
       });
-      setCreatedAdminSuccess({
+      const updatedAdmin = {
         ...adminUser,
         password: tempPassword,
-        loginUrl: `${window.location.origin}${window.location.pathname}#/login`
+        mustChangePassword: true
+      };
+      setCreatedAdminSuccess({
+        ...updatedAdmin,
+        loginUrl: generateAdminInviteUrl(updatedAdmin)
       });
       setRefreshTrigger(prev => prev + 1);
     }
@@ -2638,6 +2707,13 @@ export default function App() {
                 <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem' }}>{t('loginHeading')}</p>
               </div>
 
+              {loginInviteBanner && (
+                <div style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', border: '1px solid hsla(140,80%,45%,0.25)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                  <CheckCircle size={18} style={{ flexShrink: 0 }} />
+                  <span>{loginInviteBanner}</span>
+                </div>
+              )}
+
               {loginError && (
                 <div style={{ backgroundColor: 'var(--danger-light)', color: 'var(--danger)', border: '1px solid hsla(350,80%,55%,0.2)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', fontSize: '0.85rem', display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
                   <AlertTriangle size={16} />
@@ -2685,11 +2761,12 @@ export default function App() {
                 ) : (
                   <>
                     <div className="form-group">
-                      <label>{t('emailAddress')}</label>
+                      <label>{t('emailAddress') || 'Email Address or Mobile Number'}</label>
                       <input 
-                        type="email" 
+                        type="text" 
                         className="form-control" 
                         autoComplete="off"
+                        placeholder="e.g. admin@yatra.com or 9876543210"
                         value={loginEmail}
                         onChange={(e) => setLoginEmail(e.target.value)}
                       />
@@ -8473,7 +8550,33 @@ export default function App() {
                       {user.email} {user.phone && `• +91 ${user.phone}`}
                     </div>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center' }}>
+                  <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    <button 
+                      type="button" 
+                      className="btn btn-outline" 
+                      style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem' }}
+                      title="Copy Direct Invite / Setup Link"
+                      onClick={() => {
+                        const url = generateAdminInviteUrl(user);
+                        const msg = `Hare Krishna ${user.name},\n\nYou have been invited as an Administrator for Spiritual Yatra Management System.\n\nClick this direct link to log in and activate your admin access:\n${url}\n\nEmail / Mobile: ${user.email} ${user.phone ? `(${user.phone})` : ''}\nTemporary Password: ${user.password}\n\n*Note: You will be prompted to set your personal secret password on first login.*`;
+                        navigator.clipboard.writeText(msg);
+                        alert(`Direct invite link for ${user.name} copied to clipboard! Share it via WhatsApp or Email.`);
+                      }}
+                    >
+                      <Copy size={13} /> Copy Link
+                    </button>
+                    {user.phone && (
+                      <a 
+                        href={`https://wa.me/91${user.phone.replace(/[^0-9]/g, '').slice(-10)}?text=${encodeURIComponent(`Hare Krishna ${user.name},\n\nYou have been invited as an Administrator for Spiritual Yatra Management System.\n\nClick this direct link to log in and activate your admin access:\n${generateAdminInviteUrl(user)}\n\nEmail / Mobile: ${user.email}\nTemporary Password: ${user.password}\n\n*Note: You will be prompted to set your personal secret password on first login.*`)}`}
+                        target="_blank" 
+                        rel="noopener noreferrer" 
+                        className="btn btn-outline" 
+                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem', borderColor: '#25D366', color: '#25D366' }}
+                        title="Share Invite on WhatsApp"
+                      >
+                        <MessageSquare size={13} /> WhatsApp
+                      </a>
+                    )}
                     <button 
                       type="button" 
                       className="btn btn-outline" 
