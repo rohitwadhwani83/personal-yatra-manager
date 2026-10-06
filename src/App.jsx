@@ -185,6 +185,12 @@ export default function App() {
   const [myPhotos, setMyPhotos] = useState([]);
   const [myNotes, setMyNotes] = useState(null);
 
+  // Devotee payment method & cash commitment states
+  const [devoteePayTab, setDevoteePayTab] = useState('upi'); // 'upi' | 'cash'
+  const [devoteeCashPromiseDate, setDevoteeCashPromiseDate] = useState('');
+  const [devoteeCashPromiseAmount, setDevoteeCashPromiseAmount] = useState('');
+  const [devoteeCashPromiseNotes, setDevoteeCashPromiseNotes] = useState('');
+
   // New Task Form state (for upgraded To-Do Checklist)
   const [newTaskForm, setNewTaskForm] = useState({ text: '', details: '', date: '' });
   const [isAddTaskOpen, setIsAddTaskOpen] = useState(false);
@@ -2010,14 +2016,77 @@ export default function App() {
       participantId: currentRoute.id, // Participant ID is stored in the route param
       amountPaid: parseFloat(publicPayAmount),
       paymentMethod: publicPayMethod,
-      transactionRef: publicPayMethod === 'upi' ? publicPayRef : 'CASH PAYMENT',
+      transactionRef: publicPayMethod === 'upi' ? publicPayRef : 'CASH PAYMENT PROMISED',
       paymentDate: publicPayDate,
       screenshotUrl: publicPayMethod === 'upi' ? publicPayScreenshot : '',
       status: 'pending_verification'
     });
-    // Update participant payment status to pending verification
-    await db.updateParticipant(currentRoute.id, { paymentStatus: 'pending' });
+    // Update participant payment status and cash promise details
+    const partUpdates = { 
+      paymentStatus: 'pending',
+      paymentMethodPreference: publicPayMethod 
+    };
+    if (publicPayMethod === 'cash') {
+      partUpdates.cashPromiseDate = publicPayDate;
+      partUpdates.cashPromiseAmount = parseFloat(publicPayAmount);
+    }
+    await db.updateParticipant(currentRoute.id, partUpdates);
     setPublicPayStatus('success');
+  };
+
+  // Devotee submits/updates cash promise directly from Devotee Portal
+  const handleDevoteeSubmitCashPromise = async (e, defaultFee = 0) => {
+    e.preventDefault();
+    if (!devoteeCashPromiseDate) {
+      alert("Please select your promised payment date.");
+      return;
+    }
+    const cleanAmount = parseFloat(devoteeCashPromiseAmount) || defaultFee;
+    const updates = {
+      cashPromiseDate: devoteeCashPromiseDate,
+      cashPromiseAmount: cleanAmount,
+      cashPromiseNotes: devoteeCashPromiseNotes,
+      paymentMethodPreference: 'cash',
+      paymentStatus: 'pending'
+    };
+    const updated = await db.updateParticipant(myParticipantData.id, updates);
+    setMyParticipantData(updated);
+    setRefreshTrigger(prev => prev + 1);
+    alert(`Hare Krishna! Your commitment to pay ₹${cleanAmount.toLocaleString()} in cash by ${devoteeCashPromiseDate} has been recorded. The organizers will verify upon receiving the cash.`);
+  };
+
+  // Admin 1-click Receive Cash & Confirm
+  const handleAdminReceiveCash = async (part, defaultAmount = 0) => {
+    const amountStr = window.prompt(`Confirm Cash Collection for ${part.name}:\nEnter cash amount received (₹):`, defaultAmount > 0 ? defaultAmount.toString() : '0');
+    if (amountStr === null) return;
+    const amount = parseFloat(amountStr);
+    if (isNaN(amount) || amount <= 0) {
+      alert("Please enter a valid amount.");
+      return;
+    }
+    const payId = 'pay_' + Math.random().toString(36).substring(2, 9);
+    await db.addPayment({
+      id: payId,
+      yatraId: selectedYatra.id,
+      participantId: part.id,
+      amountPaid: amount,
+      paymentMethod: 'cash',
+      transactionRef: 'CASH RECEIVED BY ORGANIZER',
+      paymentDate: new Date().toISOString().split('T')[0],
+      screenshotUrl: '',
+      status: 'verified'
+    });
+    const splitInfo = expCalc.splits.find(s => s.id === part.id);
+    const totalDue = splitInfo ? splitInfo.share : defaultAmount;
+    const alreadyPaid = (splitInfo ? splitInfo.paid : 0) + amount;
+    const newPayStatus = alreadyPaid >= totalDue ? 'completed' : 'partially_paid';
+    await db.updateParticipant(part.id, {
+      paymentStatus: newPayStatus,
+      status: 'confirmed',
+      cashReceivedDate: new Date().toISOString()
+    });
+    setRefreshTrigger(prev => prev + 1);
+    alert(`✓ Successfully recorded cash payment of ₹${amount.toLocaleString()} for ${part.name}!`);
   };
 
   const handleUpdateProfile = async (e) => {
@@ -4751,6 +4820,8 @@ export default function App() {
                 
                 if (participantFilter === 'pending_approval') return !isDevoteeApproved(p);
                 if (participantFilter === 'approved') return isDevoteeApproved(p);
+                if (participantFilter === 'registered_unpaid') return payStatus !== 'completed' && p.status !== 'cancelled';
+                if (participantFilter === 'cash_promised') return Boolean(p.cashPromiseDate) && payStatus !== 'completed';
                 if (participantFilter === 'confirmed') return devStatus === 'confirmed';
                 if (participantFilter === 'interested') return devStatus === 'interested';
                 if (participantFilter === 'partially_paid') return payStatus === 'partially_paid';
@@ -4759,6 +4830,16 @@ export default function App() {
               });
 
               const pendingCount = participants.filter(p => !isDevoteeApproved(p)).length;
+              const unpaidCount = participants.filter(p => {
+                const split = expCalc.splits.find(s => s.id === p.id);
+                const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
+                return payStatus !== 'completed' && p.status !== 'cancelled';
+              }).length;
+              const cashPromisedCount = participants.filter(p => {
+                const split = expCalc.splits.find(s => s.id === p.id);
+                const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
+                return Boolean(p.cashPromiseDate) && payStatus !== 'completed';
+              }).length;
 
               return (
                 <div>
@@ -4832,6 +4913,22 @@ export default function App() {
                         onClick={() => setParticipantFilter('approved')}
                       >
                         ✓ {t('filterApproved') || 'Approved'} ({participants.filter(p => isDevoteeApproved(p)).length})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'registered_unpaid' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'registered_unpaid' ? '' : '#ef4444', color: participantFilter === 'registered_unpaid' ? '' : '#dc2626' }}
+                        onClick={() => setParticipantFilter('registered_unpaid')}
+                        title="Devotees registered but not yet fully paid"
+                      >
+                        ⚠️ {t('filterRegisteredUnpaid') || 'Registered (Unpaid)'} ({unpaidCount})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'cash_promised' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'cash_promised' ? '' : '#d97706', color: participantFilter === 'cash_promised' ? '' : '#b45309' }}
+                        onClick={() => setParticipantFilter('cash_promised')}
+                        title="Devotees who promised to pay via cash on a future date"
+                      >
+                        💵 Cash Promised ({cashPromisedCount})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'confirmed' ? 'btn-primary' : 'btn-outline'}`}
@@ -5027,6 +5124,34 @@ export default function App() {
                                     <span className="badge" style={{ backgroundColor: dynamicPaymentStatus === 'completed' ? 'var(--success-light)' : (dynamicPaymentStatus === 'partially_paid' ? 'var(--primary-light)' : 'var(--warning-light)'), color: dynamicPaymentStatus === 'completed' ? 'var(--success)' : (dynamicPaymentStatus === 'partially_paid' ? 'var(--primary)' : 'var(--warning)') }}>
                                       {dynamicPaymentStatus.replace('_', ' ')}
                                     </span>
+                                    {part.cashPromiseDate && dynamicPaymentStatus !== 'completed' && (() => {
+                                      const isOverdue = new Date(part.cashPromiseDate) < new Date(new Date().setHours(0, 0, 0, 0));
+                                      return (
+                                        <div style={{ marginTop: '0.35rem' }}>
+                                          <div style={{ fontSize: '0.72rem', backgroundColor: isOverdue ? '#fee2e2' : '#fef3c7', color: isOverdue ? '#991b1b' : '#92400e', border: `1px solid ${isOverdue ? '#fca5a5' : '#fde68a'}`, padding: '0.15rem 0.35rem', borderRadius: '4px', fontWeight: 600 }}>
+                                            💵 {part.cashPromiseDate} {isOverdue && `(⚠️ ${t('cashOverdue') || 'Overdue'})`}
+                                          </div>
+                                          {part.cashPromiseAmount && (
+                                            <div style={{ fontSize: '0.68rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                                              Committed: ₹{Number(part.cashPromiseAmount).toLocaleString()}
+                                            </div>
+                                          )}
+                                        </div>
+                                      );
+                                    })()}
+                                    {dynamicPaymentStatus !== 'completed' && isDevoteeApproved(part) && (
+                                      <div style={{ marginTop: '0.35rem' }}>
+                                        <button
+                                          type="button"
+                                          className="btn btn-outline"
+                                          style={{ padding: '0.2rem 0.45rem', fontSize: '0.72rem', borderColor: '#16a34a', color: '#16a34a', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}
+                                          onClick={() => handleAdminReceiveCash(part, splitInfo ? splitInfo.balance : (part.cashPromiseAmount || computedShare))}
+                                          title="Record cash received from devotee"
+                                        >
+                                          💵 {t('receiveCashBtn') || 'Receive Cash'}
+                                        </button>
+                                      </div>
+                                    )}
                                     {dynamicPaymentStatus === 'partially_paid' && splitInfo && (
                                       <div style={{ marginTop: '0.25rem', fontSize: '0.75rem', lineHeight: '1.3' }}>
                                         <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>Paid: ₹{splitInfo.paid.toLocaleString()}</span><br />
@@ -5147,6 +5272,13 @@ export default function App() {
                                                 <strong>Remarks:</strong> {part.remarks}
                                               </div>
                                             )}
+                                            {part.cashPromiseDate && (
+                                              <div style={{ marginTop: '0.5rem', padding: '0.45rem 0.6rem', backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: '4px', fontSize: '0.78rem', color: '#92400e' }}>
+                                                <strong>💵 Cash Promised:</strong> {part.cashPromiseDate}
+                                                {part.cashPromiseAmount && <span> (₹{Number(part.cashPromiseAmount).toLocaleString()})</span>}
+                                                {part.cashPromiseNotes && <div style={{ fontSize: '0.72rem', marginTop: '0.15rem' }}>Note: {part.cashPromiseNotes}</div>}
+                                              </div>
+                                            )}
                                           </div>
                                         </div>
 
@@ -5191,6 +5323,15 @@ export default function App() {
                                           </div>
 
                                           <div style={{ marginTop: '0.75rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
+                                            {dynamicPaymentStatus !== 'completed' && isDevoteeApproved(part) && (
+                                              <button 
+                                                className="btn btn-outline" 
+                                                style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: '#16a34a', borderColor: '#16a34a', fontWeight: 600 }} 
+                                                onClick={() => handleAdminReceiveCash(part, splitInfo ? splitInfo.balance : (part.cashPromiseAmount || computedShare))}
+                                              >
+                                                💵 {t('receiveCashBtn') || 'Receive Cash'}
+                                              </button>
+                                            )}
                                             <button className="btn btn-outline" style={{ fontSize: '0.75rem', padding: '0.3rem 0.5rem', color: '#047857' }} onClick={() => sendWhatsApp(part, 'welcome')}>
                                               💬 Welcome WhatsApp
                                             </button>
@@ -5323,15 +5464,48 @@ export default function App() {
                                   </span>
                                 </div>
                               </div>
+
+                              {/* Cash Promised Banner in Card */}
+                              {part.cashPromiseDate && dynamicPaymentStatus !== 'completed' && (() => {
+                                const isOverdue = new Date(part.cashPromiseDate) < new Date(new Date().setHours(0, 0, 0, 0));
+                                return (
+                                  <div style={{ backgroundColor: isOverdue ? '#fee2e2' : '#fffbeb', border: `1px solid ${isOverdue ? '#fca5a5' : '#fde68a'}`, padding: '0.45rem 0.65rem', borderRadius: 'var(--radius-sm)', marginBottom: '0.75rem', fontSize: '0.78rem', color: isOverdue ? '#991b1b' : '#92400e' }}>
+                                    <div style={{ fontWeight: 'bold' }}>
+                                      💵 Cash Promised: {part.cashPromiseDate} {isOverdue && `(⚠️ ${t('cashOverdue') || 'Overdue'})`}
+                                    </div>
+                                    {part.cashPromiseAmount && (
+                                      <div style={{ fontSize: '0.72rem', marginTop: '0.1rem', color: isOverdue ? '#b91c1c' : '#b45309' }}>
+                                        Committed: ₹{Number(part.cashPromiseAmount).toLocaleString()}
+                                      </div>
+                                    )}
+                                    {part.cashPromiseNotes && (
+                                      <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                                        Note: {part.cashPromiseNotes}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })()}
                             </div>
 
                             {/* Card Footer Actions */}
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', marginTop: '0.5rem' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', marginTop: '0.5rem', flexWrap: 'wrap', gap: '0.4rem' }}>
                               <span className="badge" style={{ backgroundColor: dynamicPaymentStatus === 'completed' ? 'var(--success-light)' : (dynamicPaymentStatus === 'partially_paid' ? 'var(--primary-light)' : 'var(--warning-light)'), color: dynamicPaymentStatus === 'completed' ? 'var(--success)' : (dynamicPaymentStatus === 'partially_paid' ? 'var(--primary)' : 'var(--warning)') }}>
                                 {dynamicPaymentStatus.replace('_', ' ')}
                               </span>
 
-                              <div style={{ display: 'flex', gap: '0.35rem' }}>
+                              <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                {dynamicPaymentStatus !== 'completed' && isDevoteeApproved(part) && (
+                                  <button 
+                                    type="button" 
+                                    className="btn btn-outline" 
+                                    style={{ padding: '0.25rem 0.45rem', fontSize: '0.75rem', borderColor: '#16a34a', color: '#16a34a', fontWeight: 600 }} 
+                                    onClick={() => handleAdminReceiveCash(part, balance > 0 ? balance : (part.cashPromiseAmount || computedShare))}
+                                    title="Record cash received"
+                                  >
+                                    💵 {t('receiveCashBtn') || 'Receive Cash'}
+                                  </button>
+                                )}
                                 <button 
                                   type="button"
                                   className="btn btn-outline" 
@@ -6577,16 +6751,27 @@ export default function App() {
                     </>
                   )}
 
-                  {/* Cash-only: payment date */}
+                  {/* Cash-only: payment date & promise info */}
                   {publicPayMethod === 'cash' && (
-                    <div className="form-group" style={{ textAlign: 'left' }}>
-                      <label>Date of Cash Payment</label>
-                      <input type="date" required className="form-control" value={publicPayDate} onChange={(e) => setPublicPayDate(e.target.value)} />
+                    <div style={{ textAlign: 'left', marginBottom: '1rem' }}>
+                      <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.84rem', color: '#92400e', lineHeight: '1.45' }}>
+                        <strong>💵 Pay by Cash (Select Future Date):</strong>
+                        <p style={{ margin: '0.2rem 0 0', color: '#b45309', fontSize: '0.8rem' }}>
+                          You can choose today or any date in the future (e.g. 20th Oct 2026) by when you will hand over cash to the organizers. Your commitment will be registered, and organizers will verify upon receiving the cash.
+                        </p>
+                      </div>
+                      <div className="form-group">
+                        <label style={{ fontWeight: '600' }}>Expected / Promised Date of Cash Handover</label>
+                        <input type="date" required className="form-control" value={publicPayDate} onChange={(e) => setPublicPayDate(e.target.value)} />
+                        <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block' }}>
+                          💡 You can choose a future date (e.g. upon reaching destination, during satsang, or by a specific date)
+                        </small>
+                      </div>
                     </div>
                   )}
 
                   <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
-                    {publicPayMethod === 'cash' ? 'Submit Cash Payment' : 'Submit Payment Receipt'}
+                    {publicPayMethod === 'cash' ? '✓ Confirm Cash Payment Commitment' : 'Submit Payment Receipt'}
                   </button>
                 </form>
               )}
@@ -6941,27 +7126,159 @@ export default function App() {
                         🔒 Payment collection options currently locked pending admin approval
                       </div>
                     </div>
-                  ) : (
-                    <div>
-                      <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid var(--success-border)', borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.75rem', marginBottom: '1rem', fontSize: '0.82rem', color: 'var(--success)', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
-                        <CheckCircle size={16} />
-                        <span>{t('eligibilityApprovedBanner') || 'Registration Approved! Payment options are unlocked.'}</span>
+                  ) : (() => {
+                    const yPrice = selectedYatra.pricePerPerson ? parseFloat(selectedYatra.pricePerPerson) : 0;
+                    let billablePax = 1;
+                    if (myParticipantData.type === 'family') {
+                      if (myParticipantData.familyMembers && myParticipantData.familyMembers.length > 0) {
+                        billablePax = myParticipantData.familyMembers.filter(m => !m.age || parseInt(m.age) >= 5).length || 1;
+                      } else {
+                        billablePax = myParticipantData.membersCount || 1;
+                      }
+                    }
+                    const calculatedFee = (myParticipantData.customPrice && parseFloat(myParticipantData.customPrice) > 0)
+                      ? parseFloat(myParticipantData.customPrice)
+                      : (billablePax * yPrice);
+
+                    return (
+                      <div>
+                        <div style={{ backgroundColor: 'var(--success-light)', border: '1px solid var(--success-border)', borderRadius: 'var(--radius-sm)', padding: '0.6rem 0.75rem', marginBottom: '1rem', fontSize: '0.82rem', color: 'var(--success)', fontWeight: '600', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }}>
+                          <CheckCircle size={16} />
+                          <span>{t('eligibilityApprovedBanner') || 'Registration Approved! Payment options are unlocked.'}</span>
+                        </div>
+
+                        {/* Existing Cash Commitment Banner if Devotee already promised cash */}
+                        {myParticipantData.cashPromiseDate && (
+                          <div style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.9rem', textAlign: 'left', marginBottom: '1.25rem' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', color: '#b45309', fontWeight: 'bold', fontSize: '0.88rem', marginBottom: '0.35rem' }}>
+                              <Clock size={16} />
+                              <span>{t('cashPromiseRecordedTitle') || 'Cash Payment Promised'}</span>
+                            </div>
+                            <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.82rem', color: '#92400e', lineHeight: '1.4' }}>
+                              {t('cashPromiseRecordedDesc') || 'Your commitment to pay cash has been recorded. Organizers will collect and verify upon receiving the cash.'}
+                            </p>
+                            <div style={{ backgroundColor: '#fef3c7', padding: '0.55rem 0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.8rem', color: '#78350f', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
+                              <div>📅 <strong>Promised Payment Date:</strong> {new Date(myParticipantData.cashPromiseDate).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })}</div>
+                              <div>💰 <strong>Committed Amount:</strong> ₹{(myParticipantData.cashPromiseAmount || calculatedFee).toLocaleString()}</div>
+                              {myParticipantData.cashPromiseNotes && <div>📝 <strong>Handover Notes:</strong> {myParticipantData.cashPromiseNotes}</div>}
+                              <div>⏳ <strong>Status:</strong> Awaiting Cash Collection by Admin</div>
+                            </div>
+                          </div>
+                        )}
+
+                        {/* Payment Method Toggle: UPI vs Cash */}
+                        <div style={{ display: 'flex', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '0.25rem', marginBottom: '1.25rem', border: '1px solid var(--border)' }}>
+                          <button
+                            type="button"
+                            className={`btn ${devoteePayTab === 'upi' ? 'btn-primary' : ''}`}
+                            style={{ flex: 1, padding: '0.5rem', fontSize: '0.82rem', fontWeight: 600, background: devoteePayTab === 'upi' ? '' : 'none', color: devoteePayTab === 'upi' ? '' : 'var(--text-muted)', border: 'none' }}
+                            onClick={() => setDevoteePayTab('upi')}
+                          >
+                            📱 {t('payViaUpi') || 'Pay via UPI'}
+                          </button>
+                          <button
+                            type="button"
+                            className={`btn ${devoteePayTab === 'cash' ? 'btn-primary' : ''}`}
+                            style={{ flex: 1, padding: '0.5rem', fontSize: '0.82rem', fontWeight: 600, background: devoteePayTab === 'cash' ? '' : 'none', color: devoteePayTab === 'cash' ? '' : 'var(--text-muted)', border: 'none' }}
+                            onClick={() => {
+                              setDevoteePayTab('cash');
+                              if (!devoteeCashPromiseDate) {
+                                setDevoteeCashPromiseDate(myParticipantData.cashPromiseDate || '');
+                              }
+                              if (!devoteeCashPromiseAmount) {
+                                setDevoteeCashPromiseAmount((myParticipantData.cashPromiseAmount || calculatedFee).toString());
+                              }
+                            }}
+                          >
+                            💵 {t('payByCash') || 'Pay by Cash'}
+                          </button>
+                        </div>
+
+                        {devoteePayTab === 'upi' ? (
+                          <div>
+                            <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', margin: '0 0 1rem 0' }}>
+                              Scan the UPI QR code below with any UPI App and submit your transaction receipt details.
+                            </p>
+                            
+                            <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', display: 'inline-block', marginBottom: '1rem', border: '1px solid var(--border)' }}>
+                              <img 
+                                src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, calculatedFee, 'Confirm Yatra Seat')} 
+                                alt="Pay UPI" 
+                                style={{ width: '160px', height: '160px', objectFit: 'contain', backgroundColor: 'white', padding: '0.25rem', borderRadius: 'var(--radius-sm)' }}
+                              />
+                              <div style={{ fontSize: '0.78rem', color: 'var(--text)', marginTop: '0.4rem' }}>
+                                <strong>Exact Fee:</strong> ₹{calculatedFee.toLocaleString()}
+                              </div>
+                            </div>
+                            
+                            <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => navigateTo('payment', myParticipantData.id)}>
+                              Upload Payment Receipt / Enter Reference
+                            </button>
+                          </div>
+                        ) : (
+                          <form onSubmit={(e) => handleDevoteeSubmitCashPromise(e, calculatedFee)} style={{ textAlign: 'left' }}>
+                            <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.75rem 0.9rem', marginBottom: '1rem', fontSize: '0.82rem', color: '#92400e', lineHeight: '1.45' }}>
+                              <strong>💵 {t('cashPromiseTitle') || 'Pay by Cash (Select Future Date)'}</strong>
+                              <p style={{ margin: '0.25rem 0 0', color: '#b45309' }}>
+                                {t('cashPromiseDesc') || 'Select an expected date by when you will hand over the cash contribution to the organizers. Admins will verify and confirm upon receiving the cash.'}
+                              </p>
+                            </div>
+
+                            <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                              <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+                                📅 {t('promisedPaymentDate') || 'Promised Payment Date'} <span style={{ color: 'var(--danger)' }}>*</span>
+                              </label>
+                              <input
+                                type="date"
+                                required
+                                className="form-control"
+                                value={devoteeCashPromiseDate}
+                                onChange={(e) => setDevoteeCashPromiseDate(e.target.value)}
+                              />
+                              <small style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '0.2rem', display: 'block' }}>
+                                💡 E.g. Select today or any future date (e.g. 20th Oct 2026) by when you will pay
+                              </small>
+                            </div>
+
+                            <div className="form-group" style={{ marginBottom: '0.75rem' }}>
+                              <label style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+                                Amount to Pay (₹)
+                              </label>
+                              <input
+                                type="number"
+                                required
+                                className="form-control"
+                                value={devoteeCashPromiseAmount || calculatedFee}
+                                onChange={(e) => setDevoteeCashPromiseAmount(e.target.value)}
+                                style={{ fontWeight: 'bold', color: 'var(--primary)' }}
+                              />
+                            </div>
+
+                            <div className="form-group" style={{ marginBottom: '1rem' }}>
+                              <label style={{ fontSize: '0.82rem' }}>
+                                Handover Details / Note (Optional)
+                              </label>
+                              <input
+                                type="text"
+                                className="form-control"
+                                placeholder="e.g. Will give cash to Rohitji at Sunday Feast / at hotel"
+                                value={devoteeCashPromiseNotes}
+                                onChange={(e) => setDevoteeCashPromiseNotes(e.target.value)}
+                              />
+                            </div>
+
+                            <button
+                              type="submit"
+                              className="btn btn-primary"
+                              style={{ width: '100%', padding: '0.65rem', fontWeight: 600 }}
+                            >
+                              ✓ {t('submitCashPromiseBtn') || 'Confirm Cash Payment Date'}
+                            </button>
+                          </form>
+                        )}
                       </div>
-                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', margin: '0.5rem 0 1.25rem' }}>Your registration is approved. Scan the UPI QR code below, pay manually, and submit your receipt details.</p>
-                      
-                      <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', display: 'inline-block', marginBottom: '1rem', border: '1px solid var(--border)' }}>
-                        <img 
-                          src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, 0, 'Confirm Yatra Seat')} 
-                          alt="Pay UPI" 
-                          style={{ width: '160px', height: '160px', objectFit: 'contain', backgroundColor: 'white', padding: '0.25rem', borderRadius: 'var(--radius-sm)' }}
-                        />
-                      </div>
-                      
-                      <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => navigateTo('payment', myParticipantData.id)}>
-                        Upload Payment Receipt
-                      </button>
-                    </div>
-                  )}
+                    );
+                  })()}
                 </div>
               </div>
             </div>
