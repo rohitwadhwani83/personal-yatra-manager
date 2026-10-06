@@ -2814,21 +2814,23 @@ export default function App() {
                   {loginRole === 'participant' ? t('findRegistration') : t('signIn')}
                 </button>
 
-                <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
-                  <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
-                    {loginRole === 'participant' ? 'Need help with registration or passes?' : 'Need guidance with organizer operations?'}
+                {loginRole === 'participant' && (
+                  <div style={{ marginTop: '1.25rem', paddingTop: '1rem', borderTop: '1px solid var(--border)', textAlign: 'center' }}>
+                    <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.4rem' }}>
+                      Need help with registration or passes?
+                    </div>
+                    <a 
+                      href="./guides/Devotee_Pilgrim_User_Guide.pdf"
+                      target="_blank" 
+                      rel="noreferrer" 
+                      download="Devotee_Pilgrim_User_Guide.pdf"
+                      style={{ fontSize: '0.82rem', color: 'var(--primary)', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                    >
+                      <FileText size={14} />
+                      <span>{t('devoteeGuidePdf')}</span>
+                    </a>
                   </div>
-                  <a 
-                    href={loginRole === 'participant' ? "./guides/Devotee_Pilgrim_User_Guide.pdf" : "./guides/Admin_Organizer_Operations_Guide.pdf"}
-                    target="_blank" 
-                    rel="noreferrer" 
-                    download={loginRole === 'participant' ? "Devotee_Pilgrim_User_Guide.pdf" : "Admin_Organizer_Operations_Guide.pdf"}
-                    style={{ fontSize: '0.82rem', color: 'var(--primary)', textDecoration: 'none', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
-                  >
-                    <FileText size={14} />
-                    <span>{loginRole === 'participant' ? t('devoteeGuidePdf') : t('adminGuidePdf')}</span>
-                  </a>
-                </div>
+                )}
               </form>
             </div>
           </div>
