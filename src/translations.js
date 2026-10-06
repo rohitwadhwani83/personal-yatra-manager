@@ -161,6 +161,11 @@ export const translations = {
     eligibilityApprovedBanner: '🎉 Approved for Yatra! Your eligibility is confirmed. Please complete your contribution below to confirm seats.',
     approvalPendingDirectPay: 'Yatra Eligibility Approval Pending',
     approvalPendingDirectPayDesc: 'Your registration interest has been submitted. The organizers have not yet approved your eligibility for this Yatra. Payment options will be activated automatically once approved.',
+    mobileAlreadyRegisteredTitle: 'Mobile Number Already Registered',
+    mobileAlreadyRegisteredDesc: 'A devotee registration with this mobile number already exists for this Yatra. To prevent duplication, multiple registrations under the same mobile number are not permitted.',
+    phoneAlreadyRegisteredAlert: 'This mobile number is already registered for this Yatra under: ',
+    enterValid10DigitPhone: 'Please enter a valid 10-digit mobile number.',
+    duplicatePhoneBlocked: 'Duplicate registration blocked. Please log into the Devotee Portal.',
   },
 
   hi: {
@@ -323,6 +328,11 @@ export const translations = {
     eligibilityApprovedBanner: '🎉 यात्रा हेतु स्वीकृत! आपकी पात्रता पुष्ट हो चुकी है। कृपया सीटें पक्की करने हेतु नीचे योगदान राशि जमा करें।',
     approvalPendingDirectPay: 'यात्रा पात्रता स्वीकृति लंबित',
     approvalPendingDirectPayDesc: 'आपकी यात्रा रुचि दर्ज है। आयोजकों ने अभी तक आपकी पात्रता की समीक्षा नहीं की है। स्वीकृति मिलते ही भुगतान विकल्प स्वतः सक्रिय हो जाएंगे।',
+    mobileAlreadyRegisteredTitle: 'मोबाइल नंबर पहले से पंजीकृत है',
+    mobileAlreadyRegisteredDesc: 'इस यात्रा के लिए इस मोबाइल नंबर से एक पंजीकरण पहले से मौजूद है। दोहराव से बचने के लिए, एक ही मोबाइल नंबर से एकाधिक पंजीकरण की अनुमति नहीं है।',
+    phoneAlreadyRegisteredAlert: 'यह मोबाइल नंबर इस यात्रा के लिए पहले से पंजीकृत है: ',
+    enterValid10DigitPhone: 'कृपया 10 अंकों का मान्य मोबाइल नंबर दर्ज करें।',
+    duplicatePhoneBlocked: 'दोहराव पंजीकरण रोका गया। कृपया भक्त पोर्टल में लॉगिन करें।',
   }
 };
 

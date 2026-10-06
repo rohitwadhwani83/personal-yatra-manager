@@ -298,6 +298,9 @@ export default function App() {
       const id = parts[2] || '';
       
       setCurrentRoute({ path, id });
+      if (path !== 'register') {
+        setPublicRegStatus(null);
+      }
 
       // Automatically sync selected Yatra if route changes to /yatra/:id
       if (path === 'yatra' && id) {
@@ -1068,6 +1071,18 @@ export default function App() {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  // Mobile phone duplicate detection helper for the active Yatra
+  const getExistingYatraParticipantByPhone = (phone, excludeParticipantId = null) => {
+    if (!phone || !selectedYatra || !participants) return null;
+    const clean = phone.replace(/[^0-9]/g, '').slice(-10);
+    if (clean.length < 10) return null;
+    return participants.find(p => 
+      p.yatraId === selectedYatra.id && 
+      (!excludeParticipantId || p.id !== excludeParticipantId) && 
+      (p.phone || '').replace(/[^0-9]/g, '').slice(-10) === clean
+    );
+  };
+
   // Devotee profile auto-fill helper (finds existing devotees across Yatras by 10-digit mobile number)
   const handleDevoteePhoneChange = async (enteredPhone, isAdmin = false) => {
     setNewParticipant(prev => ({ ...prev, phone: enteredPhone }));
@@ -1195,6 +1210,14 @@ export default function App() {
 
   const handleAddParticipant = async (e) => {
     e.preventDefault();
+    const cleanPhone = (newParticipant.phone || '').replace(/[^0-9]/g, '').slice(-10);
+    if (cleanPhone && cleanPhone.length === 10) {
+      const duplicate = getExistingYatraParticipantByPhone(newParticipant.phone, editingParticipantId);
+      if (duplicate) {
+        alert(`Duplicate Mobile Number: Devotee "${duplicate.name}" is already registered in this Yatra with mobile number +91 ${cleanPhone}. Each devotee/family registration in this Yatra must have a unique mobile number.`);
+        return;
+      }
+    }
     if (newParticipant.type === 'family' && (!newParticipant.familyMembers || newParticipant.familyMembers.length === 0)) {
       alert("Please add at least one family member (including the primary devotee) before registering.");
       return;
@@ -1928,6 +1951,19 @@ export default function App() {
   // --- Public Participant Actions ---
   const handlePublicRegister = async (e) => {
     e.preventDefault();
+    const cleanPhone = (newParticipant.phone || '').replace(/[^0-9]/g, '').slice(-10);
+    if (!cleanPhone || cleanPhone.length !== 10) {
+      alert(t('enterValid10DigitPhone') || "Please enter a valid 10-digit mobile number.");
+      return;
+    }
+    const duplicate = getExistingYatraParticipantByPhone(newParticipant.phone);
+    if (duplicate) {
+      alert(
+        (t('phoneAlreadyRegisteredAlert') || "This mobile number is already registered for this Yatra under: ") +
+        `"${duplicate.name}".\n\nTo prevent duplicate registrations, multiple submissions with the same phone number are not permitted. Please log into your Devotee Portal using this mobile number to view your registration status.`
+      );
+      return;
+    }
     if (newParticipant.type === 'family' && (!newParticipant.familyMembers || newParticipant.familyMembers.length === 0)) {
       alert("Please add at least one family member (including yourself) in the list before proceeding.");
       return;
@@ -6001,11 +6037,8 @@ export default function App() {
                     </p>
                   </div>
                   <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-                    <button className="btn btn-primary" onClick={() => navigateTo('login')}>
+                    <button className="btn btn-primary" onClick={() => { setPublicRegStatus(null); navigateTo('login'); }}>
                       {t('goToDevoteePortal') || 'Go to Devotee Portal'}
-                    </button>
-                    <button className="btn btn-outline" onClick={() => navigateTo('public')}>
-                      {t('backToYatras') || 'Back to Yatras'}
                     </button>
                   </div>
                 </div>
@@ -6081,6 +6114,38 @@ export default function App() {
                       <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block' }}>
                         💡 Returning devotee? Type your 10-digit number to auto-load your family!
                       </small>
+                      {(() => {
+                        const duplicateDevotee = getExistingYatraParticipantByPhone(newParticipant.phone);
+                        if (!duplicateDevotee) return null;
+                        return (
+                          <div style={{
+                            marginTop: '0.65rem',
+                            backgroundColor: '#fffbeb',
+                            border: '1.5px solid #f59e0b',
+                            borderRadius: 'var(--radius-sm)',
+                            padding: '0.75rem 0.9rem',
+                            color: '#92400e',
+                            fontSize: '0.85rem'
+                          }}>
+                            <div style={{ fontWeight: 700, display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#b45309', marginBottom: '0.3rem' }}>
+                              <AlertTriangle size={16} />
+                              <span>{t('mobileAlreadyRegisteredTitle') || 'Mobile Number Already Registered!'}</span>
+                            </div>
+                            <p style={{ margin: '0 0 0.5rem 0', fontSize: '0.82rem', lineHeight: '1.45' }}>
+                              {t('mobileAlreadyRegisteredDesc') || 'A registration for this Yatra is already linked to this mobile number.'}
+                              {' '}Registered as <strong>{duplicateDevotee.name}</strong> {duplicateDevotee.type === 'family' ? `(${duplicateDevotee.familyName || 'Family Group'})` : ''}.
+                            </p>
+                            <button
+                              type="button"
+                              className="btn btn-primary"
+                              style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                              onClick={() => navigateTo('login')}
+                            >
+                              <Compass size={14} /> {t('goToDevoteePortal') || 'Go to Devotee Portal Login'}
+                            </button>
+                          </div>
+                        );
+                      })()}
                     </div>
                     <div className="form-group">
                       <label>Devotee Name</label>
@@ -6297,9 +6362,19 @@ export default function App() {
                     </div>
                   </div>
 
-                  <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '0.75rem', padding: '0.75rem', fontSize: '0.95rem', fontWeight: '600' }}>
-                    {t('submitInterestBtn') || 'Submit Yatra Registration (No Upfront Payment)'}
-                  </button>
+                  {(() => {
+                    const isDup = !!getExistingYatraParticipantByPhone(newParticipant.phone);
+                    return (
+                      <button 
+                        type="submit" 
+                        className="btn btn-primary" 
+                        disabled={isDup}
+                        style={{ width: '100%', marginTop: '0.75rem', padding: '0.75rem', fontSize: '0.95rem', fontWeight: '600', opacity: isDup ? 0.6 : 1, cursor: isDup ? 'not-allowed' : 'pointer' }}
+                      >
+                        {isDup ? (t('duplicatePhoneBlocked') || 'Already Registered (Duplicates Not Allowed)') : (t('submitInterestBtn') || 'Submit Yatra Registration (No Upfront Payment)')}
+                      </button>
+                    );
+                  })()}
                 </form>
               )}
             </div>
@@ -6332,9 +6407,6 @@ export default function App() {
                   <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
                     <button className="btn btn-primary" onClick={() => navigateTo('login')}>
                       {t('goToDevoteePortal') || 'Devotee Portal Login'}
-                    </button>
-                    <button className="btn btn-outline" onClick={() => navigateTo('public')}>
-                      {t('backToYatras') || 'Browse Yatras'}
                     </button>
                   </div>
                 </div>
@@ -7167,6 +7239,29 @@ export default function App() {
                   <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block' }}>
                     💡 Enter 10-digit number to auto-populate saved profile & family.
                   </small>
+                  {(() => {
+                    const adminDup = getExistingYatraParticipantByPhone(newParticipant.phone, editingParticipantId);
+                    if (!adminDup) return null;
+                    return (
+                      <div style={{
+                        marginTop: '0.5rem',
+                        backgroundColor: '#fef2f2',
+                        border: '1px solid #f87171',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '0.45rem 0.65rem',
+                        color: '#991b1b',
+                        fontSize: '0.8rem',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.4rem'
+                      }}>
+                        <AlertTriangle size={15} style={{ flexShrink: 0 }} />
+                        <span>
+                          <strong>Duplicate Warning:</strong> Devotee <strong>"{adminDup.name}"</strong> is already registered in this Yatra with this number.
+                        </span>
+                      </div>
+                    );
+                  })()}
                 </div>
                 <div className="form-group">
                   <label>Full Name</label>
@@ -7378,9 +7473,19 @@ export default function App() {
                   </select>
                 </div>
               </div>
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>
-                {editingParticipantId ? `💾 ${t('saveChanges') || 'Save Changes'}` : 'Register Devotee'}
-              </button>
+              {(() => {
+                const adminDup = getExistingYatraParticipantByPhone(newParticipant.phone, editingParticipantId);
+                return (
+                  <button 
+                    type="submit" 
+                    className="btn btn-primary" 
+                    disabled={!!adminDup}
+                    style={{ width: '100%', marginTop: '1rem', opacity: adminDup ? 0.6 : 1, cursor: adminDup ? 'not-allowed' : 'pointer' }}
+                  >
+                    {adminDup ? '⚠️ Duplicate Mobile Number (Cannot Register)' : (editingParticipantId ? `💾 ${t('saveChanges') || 'Save Changes'}` : 'Register Devotee')}
+                  </button>
+                );
+              })()}
             </form>
           </div>
         </div>
