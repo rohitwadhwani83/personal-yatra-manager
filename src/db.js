@@ -633,6 +633,28 @@ class Database {
         querySnapshot.forEach((doc) => {
           list.push({ id: doc.id, ...doc.data() });
         });
+
+        // Safe auto-sync: If local storage contains items created offline or not yet in Firestore, merge them into Firestore
+        try {
+          const localItems = JSON.parse(localStorage.getItem(`yatra_mgr_${collectionName}`) || '[]');
+          const remoteIds = new Set(list.map(item => item.id));
+          for (const localItem of localItems) {
+            if (localItem && localItem.id && !remoteIds.has(localItem.id)) {
+              const docRef = doc(this.firestore, collectionName, localItem.id);
+              await setDoc(docRef, localItem, { merge: true });
+              list.push(localItem);
+              remoteIds.add(localItem.id);
+            }
+          }
+        } catch (mergeErr) {
+          console.warn("Local sync merge notice:", mergeErr);
+        }
+
+        // Keep local cache synced
+        try {
+          localStorage.setItem(`yatra_mgr_${collectionName}`, JSON.stringify(list));
+        } catch (e) {}
+
         return list;
       } catch (err) {
         console.warn("Firestore read failed, falling back to LocalStorage:", err);
@@ -646,7 +668,6 @@ class Database {
       try {
         const docRef = doc(this.firestore, collectionName, id);
         await setDoc(docRef, data, { merge: true });
-        return { id, ...data };
       } catch (err) {
         console.warn("Firestore write failed, falling back to LocalStorage:", err);
       }
@@ -670,7 +691,6 @@ class Database {
       try {
         const docRef = doc(this.firestore, collectionName, id);
         await setDoc(docRef, newItem);
-        return newItem;
       } catch (err) {
         console.warn("Firestore write failed, falling back to LocalStorage:", err);
       }
@@ -682,13 +702,13 @@ class Database {
   }
 
   async updateDocument(collectionName, id, updates) {
+    let result = null;
     if (this.isFirebaseReady) {
       try {
         const docRef = doc(this.firestore, collectionName, id);
         await updateDoc(docRef, updates);
-        // Get updated doc
         const updatedDoc = await getDoc(docRef);
-        return { id, ...updatedDoc.data() };
+        result = { id, ...updatedDoc.data() };
       } catch (err) {
         console.warn("Firestore update failed, falling back to LocalStorage:", err);
       }
@@ -698,8 +718,12 @@ class Database {
     if (index >= 0) {
       list[index] = { ...list[index], ...updates };
       localStorage.setItem(`yatra_mgr_${collectionName}`, JSON.stringify(list));
-      return list[index];
+      if (!result) result = list[index];
+    } else if (result) {
+      list.push(result);
+      localStorage.setItem(`yatra_mgr_${collectionName}`, JSON.stringify(list));
     }
+    if (result) return result;
     throw new Error(`Document with id ${id} not found in ${collectionName}`);
   }
 
@@ -707,7 +731,6 @@ class Database {
     if (this.isFirebaseReady) {
       try {
         await deleteDoc(doc(this.firestore, collectionName, id));
-        return true;
       } catch (err) {
         console.warn("Firestore delete failed, falling back to LocalStorage:", err);
       }
