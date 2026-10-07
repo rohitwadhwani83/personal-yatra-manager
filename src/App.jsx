@@ -2504,6 +2504,15 @@ export default function App() {
     }
   };
 
+  const handleToggleAdminPasswordStatus = async (adminUser) => {
+    const newMustChange = !adminUser.mustChangePassword;
+    await db.updateUser(adminUser.id, {
+      mustChangePassword: newMustChange,
+      passwordUpdatedAt: new Date().toISOString()
+    });
+    setRefreshTrigger(prev => prev + 1);
+  };
+
   const handleDeleteAdmin = async (id) => {
     if (window.confirm("Are you sure you want to completely remove this admin's access?")) {
       await db.deleteUser(id);
@@ -8460,7 +8469,12 @@ export default function App() {
                 />
               </div>
 
-              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '1.5rem', marginBottom: '2rem' }}>
+              <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.75rem', fontSize: '0.8rem', color: '#92400e', marginTop: '0.5rem', marginBottom: '1.25rem', lineHeight: '1.45' }}>
+                <strong>💡 Real-Time Multi-Device Cloud Sync:</strong>
+                <div>To enable instant automatic synchronization across all admin devices without manual setup, ensure your Firebase Firestore Security Rules in the Google Cloud/Firebase console are set to <code>allow read, write: if true;</code>. You can also manually confirm admin status below anytime!</div>
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem', marginBottom: '2rem' }}>
                 <button type="submit" className="btn btn-primary" style={{ flex: 1 }}>
                   Connect & Sync Database
                 </button>
@@ -8539,12 +8553,22 @@ export default function App() {
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
                       <strong>{user.name || user.email}</strong>
                       {user.mustChangePassword ? (
-                        <span className="badge" style={{ backgroundColor: 'var(--warning-light)', color: 'var(--warning)', fontSize: '0.7rem' }}>
+                        <span 
+                          className="badge" 
+                          style={{ backgroundColor: 'var(--warning-light)', color: 'var(--warning)', fontSize: '0.7rem', cursor: 'pointer' }}
+                          title="Click to toggle status to Password Active"
+                          onClick={() => handleToggleAdminPasswordStatus(user)}
+                        >
                           Pending 1st Login Setup
                         </span>
                       ) : (
-                        <span className="badge" style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', fontSize: '0.7rem' }}>
-                          Password Active
+                        <span 
+                          className="badge" 
+                          style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', fontSize: '0.7rem', cursor: 'pointer' }}
+                          title="Click to toggle status"
+                          onClick={() => handleToggleAdminPasswordStatus(user)}
+                        >
+                          Password Active ✓
                         </span>
                       )}
                     </div>
@@ -8553,6 +8577,27 @@ export default function App() {
                     </div>
                   </div>
                   <div style={{ display: 'flex', gap: '0.4rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                    {user.mustChangePassword ? (
+                      <button 
+                        type="button" 
+                        className="btn btn-outline" 
+                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem', borderColor: 'var(--success)', color: 'var(--success)' }}
+                        title="Mark admin password as active / confirmed"
+                        onClick={() => handleToggleAdminPasswordStatus(user)}
+                      >
+                        <Check size={13} /> Confirm Active
+                      </button>
+                    ) : (
+                      <button 
+                        type="button" 
+                        className="btn btn-outline" 
+                        style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: '0.3rem', borderColor: '#e2e8f0', color: 'var(--text-muted)' }}
+                        title="Click to revert to pending setup"
+                        onClick={() => handleToggleAdminPasswordStatus(user)}
+                      >
+                        Revert to Pending
+                      </button>
+                    )}
                     <button 
                       type="button" 
                       className="btn btn-outline" 

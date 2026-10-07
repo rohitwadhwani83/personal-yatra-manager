@@ -508,6 +508,22 @@ class Database {
         } catch (e) {
           console.error("Failed to parse saved Firebase config", e);
         }
+      } else {
+        // 3. Fall back to Default Built-in Firebase Project for automatic live sync
+        try {
+          const defaultCfg = {
+            apiKey: "AIzaSyC-zhJTaLdW50CG2q-LkmVMJqZzJCnRkGk",
+            authDomain: "yatra-manager.firebaseapp.com",
+            projectId: "yatra-manager",
+            storageBucket: "yatra-manager.appspot.com",
+            messagingSenderId: "659618219652",
+            appId: "1:659618219652:web:cb6bd0760d53400c6fe4d1",
+            measurementId: "G-VHSY9QDKET"
+          };
+          this.initializeFirebase(defaultCfg);
+        } catch (e) {
+          console.warn("Could not load default Firebase config:", e);
+        }
       }
     }
 
