@@ -2608,15 +2608,121 @@ export default function App() {
     reader.readAsText(file);
   };
 
-  // --- Search Filtering ---
-  const filterList = (list, keys) => {
-    if (!searchQuery) return list;
-    return list.filter(item => 
-      keys.some(key => {
+  // --- Search Filtering Helpers ---
+  const matchesParticipant = (part, q, qDigits) => {
+    if (!q) return true;
+    
+    // 1. Direct string fields
+    const directFields = [
+      part.name,
+      part.phone,
+      part.email,
+      part.location,
+      part.city,
+      part.familyName,
+      part.memberDetails,
+      part.remarks,
+      part.specialRequirements,
+      part.medicalNotes,
+      part.boardingStation,
+      part.droppingStation,
+      part.travelMode,
+      part.travelType,
+      part.cashPromiseDate,
+      part.cashPromiseNotes,
+      part.cashPromiseAmount,
+      part.status,
+      part.paymentStatus,
+      part.approvalStatus
+    ];
+    for (const f of directFields) {
+      if (f !== undefined && f !== null && f.toString().toLowerCase().includes(q)) return true;
+    }
+
+    // 2. Phone digits comparison (strips '+', spaces, dashes, etc.)
+    if (qDigits && qDigits.length >= 3) {
+      if (part.phone && part.phone.toString().replace(/[^0-9]/g, '').includes(qDigits)) return true;
+    }
+
+    // 3. Nested family members roster search (name, relation, phone)
+    if (part.familyMembers && Array.isArray(part.familyMembers)) {
+      for (const m of part.familyMembers) {
+        if (!m) continue;
+        if (m.name && m.name.toString().toLowerCase().includes(q)) return true;
+        if (m.relation && m.relation.toString().toLowerCase().includes(q)) return true;
+        if (m.phone) {
+          if (m.phone.toString().toLowerCase().includes(q)) return true;
+          if (qDigits && qDigits.length >= 3 && m.phone.toString().replace(/[^0-9]/g, '').includes(qDigits)) return true;
+        }
+      }
+    }
+
+    // 4. Status keyword shortcuts
+    const split = expCalc?.splits?.find(s => s.id === part.id);
+    const dynamicPaymentStatus = split?.dynamicPaymentStatus || part.paymentStatus;
+    const effectiveDevoteeStatus = (dynamicPaymentStatus === 'completed' && part.status === 'interested') ? 'confirmed' : (split?.dynamicDevoteeStatus || part.status);
+
+    if (q === 'approved' && isDevoteeApproved(part)) return true;
+    if ((q === 'pending' || q === 'pending approval') && !isDevoteeApproved(part)) return true;
+    if ((q === 'unpaid' || q === 'registered unpaid') && dynamicPaymentStatus !== 'completed' && part.status !== 'cancelled') return true;
+    if ((q === 'cash' || q === 'cash promised') && Boolean(part.cashPromiseDate)) return true;
+    if (q === 'confirmed' && effectiveDevoteeStatus === 'confirmed') return true;
+    if (q === 'interested' && effectiveDevoteeStatus === 'interested') return true;
+    if ((q === 'paid' || q === 'fully paid' || q === 'completed') && dynamicPaymentStatus === 'completed') return true;
+    if ((q === 'partially paid' || q === 'partial') && dynamicPaymentStatus === 'partially_paid') return true;
+
+    // 5. Associated payments check (transaction ref, payment method, payment date)
+    const devoteePayments = payments.filter(pay => pay.participantId === part.id);
+    for (const pay of devoteePayments) {
+      if (pay.transactionRef && pay.transactionRef.toString().toLowerCase().includes(q)) return true;
+      if (pay.paymentMethod && pay.paymentMethod.toString().toLowerCase().includes(q)) return true;
+      if (pay.amountPaid && pay.amountPaid.toString().includes(q)) return true;
+    }
+
+    return false;
+  };
+
+  const filterList = (list, keys, customMatcher) => {
+    const q = (searchQuery || '').trim().toLowerCase();
+    if (!q) return list;
+    const qDigits = (searchQuery || '').replace(/[^0-9]/g, '');
+
+    return list.filter(item => {
+      if (customMatcher && customMatcher(item, q, qDigits)) return true;
+      return keys.some(key => {
         const val = item[key];
-        return val && val.toString().toLowerCase().includes(searchQuery.toLowerCase());
-      })
-    );
+        if (val === undefined || val === null) return false;
+        if (typeof val === 'object') {
+          if (Array.isArray(val)) {
+            return val.some(elem => {
+              if (typeof elem === 'object' && elem !== null) {
+                return Object.values(elem).some(v => {
+                  if (!v) return false;
+                  const vStr = v.toString().toLowerCase();
+                  if (vStr.includes(q)) return true;
+                  if (qDigits && qDigits.length >= 3 && v.toString().replace(/[^0-9]/g, '').includes(qDigits)) return true;
+                  return false;
+                });
+              }
+              return elem && elem.toString().toLowerCase().includes(q);
+            });
+          }
+          return JSON.stringify(val).toLowerCase().includes(q);
+        }
+        const valStr = val.toString().toLowerCase();
+        if (valStr.includes(q)) return true;
+        if (qDigits && qDigits.length >= 3 && (key === 'phone' || key.includes('phone') || key.includes('contact') || key.includes('Mobile'))) {
+          const valDigits = val.toString().replace(/[^0-9]/g, '');
+          if (valDigits.includes(qDigits)) return true;
+        }
+        return false;
+      });
+    });
+  };
+
+  const handleTabChange = (newTab) => {
+    setActiveTab(newTab);
+    setSearchQuery('');
   };
 
   // Render Logic
@@ -3463,39 +3569,69 @@ export default function App() {
 
             {/* TABBED MENU */}
             <div className="tab-container">
-              <button className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => setActiveTab('overview')}><Compass size={16} /> Overview</button>
-              <button className={`tab-btn ${activeTab === 'bus_allocation' ? 'active' : ''}`} onClick={() => setActiveTab('bus_allocation')} style={{ position: 'relative' }}>
+              <button className={`tab-btn ${activeTab === 'overview' ? 'active' : ''}`} onClick={() => handleTabChange('overview')}><Compass size={16} /> Overview</button>
+              <button className={`tab-btn ${activeTab === 'bus_allocation' ? 'active' : ''}`} onClick={() => handleTabChange('bus_allocation')} style={{ position: 'relative' }}>
                 <Bus size={16} /> Bus Allocation
                 {selectedYatra.status === 'confirmed' && <span style={{ width: 7, height: 7, backgroundColor: 'var(--success)', borderRadius: '50%', position: 'absolute', top: 6, right: 6 }} />}
               </button>
-              <button className={`tab-btn ${activeTab === 'room_allocation' ? 'active' : ''}`} onClick={() => setActiveTab('room_allocation')} style={{ position: 'relative' }}>
+              <button className={`tab-btn ${activeTab === 'room_allocation' ? 'active' : ''}`} onClick={() => handleTabChange('room_allocation')} style={{ position: 'relative' }}>
                 <Bed size={16} /> Room Allocation
                 {selectedYatra.status === 'confirmed' && <span style={{ width: 7, height: 7, backgroundColor: 'var(--success)', borderRadius: '50%', position: 'absolute', top: 6, right: 6 }} />}
               </button>
-              <button className={`tab-btn ${activeTab === 'hotels' ? 'active' : ''}`} onClick={() => setActiveTab('hotels')}><Hotel size={16} /> Hotels Research</button>
-              <button className={`tab-btn ${activeTab === 'participants' ? 'active' : ''}`} onClick={() => setActiveTab('participants')}><Users size={16} /> Participants</button>
-              <button className={`tab-btn ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => setActiveTab('payments')}><CreditCard size={16} /> Payments</button>
-              <button className={`tab-btn ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => setActiveTab('expenses')}><Receipt size={16} /> Expense Splitter</button>
-              <button className={`tab-btn ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => setActiveTab('photos')}><ImageIcon size={16} /> Photos</button>
-              <button className={`tab-btn ${activeTab === 'notes' ? 'active' : ''}`} onClick={() => setActiveTab('notes')}><ClipboardList size={16} /> Notes & Checklist</button>
-              <button className={`tab-btn ${activeTab === 'documents' ? 'active' : ''}`} onClick={() => setActiveTab('documents')}><FileText size={16} /> Documents</button>
-              <button className={`tab-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => setActiveTab('reports')}><BarChart2 size={16} /> Reports</button>
+              <button className={`tab-btn ${activeTab === 'hotels' ? 'active' : ''}`} onClick={() => handleTabChange('hotels')}><Hotel size={16} /> Hotels Research</button>
+              <button className={`tab-btn ${activeTab === 'participants' ? 'active' : ''}`} onClick={() => handleTabChange('participants')}><Users size={16} /> Participants</button>
+              <button className={`tab-btn ${activeTab === 'payments' ? 'active' : ''}`} onClick={() => handleTabChange('payments')}><CreditCard size={16} /> Payments</button>
+              <button className={`tab-btn ${activeTab === 'expenses' ? 'active' : ''}`} onClick={() => handleTabChange('expenses')}><Receipt size={16} /> Expense Splitter</button>
+              <button className={`tab-btn ${activeTab === 'photos' ? 'active' : ''}`} onClick={() => handleTabChange('photos')}><ImageIcon size={16} /> Photos</button>
+              <button className={`tab-btn ${activeTab === 'notes' ? 'active' : ''}`} onClick={() => handleTabChange('notes')}><ClipboardList size={16} /> Notes & Checklist</button>
+              <button className={`tab-btn ${activeTab === 'documents' ? 'active' : ''}`} onClick={() => handleTabChange('documents')}><FileText size={16} /> Documents</button>
+              <button className={`tab-btn ${activeTab === 'reports' ? 'active' : ''}`} onClick={() => handleTabChange('reports')}><BarChart2 size={16} /> Reports</button>
             </div>
 
             {/* SEARCH BOX FOR CURRENT TAB */}
-            <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', maxWidth: '400px' }}>
-              <div style={{ position: 'relative', flex: 1 }}>
-                <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
-                <input 
-                  type="text" 
-                  className="form-control" 
-                  style={{ paddingLeft: '2.25rem' }} 
-                  placeholder={`Search ${activeTab}...`} 
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                />
+            {['participants', 'payments', 'hotels', 'expenses', 'bus_allocation', 'room_allocation'].includes(activeTab) && (
+              <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.5rem', maxWidth: '440px', alignItems: 'center' }}>
+                <div style={{ position: 'relative', flex: 1 }}>
+                  <Search size={16} style={{ position: 'absolute', left: '0.75rem', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    style={{ paddingLeft: '2.25rem', paddingRight: searchQuery ? '2.25rem' : '0.75rem' }} 
+                    placeholder={
+                      activeTab === 'participants' ? 'Search devotees by name, phone, family, notes...' :
+                      activeTab === 'payments' ? 'Search payments by devotee, ref, amount...' :
+                      activeTab === 'hotels' ? 'Search hotels by name, location, contact...' :
+                      activeTab === 'expenses' ? 'Search expenses by remarks, payer, category...' :
+                      activeTab === 'bus_allocation' ? 'Search coaches by name, route, driver, passenger...' :
+                      activeTab === 'room_allocation' ? 'Search rooms by number, hotel, occupant...' :
+                      `Search ${activeTab.replace('_', ' ')}...`
+                    }
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                  />
+                  {searchQuery && (
+                    <button 
+                      type="button" 
+                      onClick={() => setSearchQuery('')}
+                      style={{ position: 'absolute', right: '0.6rem', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '1.2rem', lineHeight: '1', padding: '0.1rem 0.25rem' }}
+                      title="Clear search"
+                    >
+                      ×
+                    </button>
+                  )}
+                </div>
+                {searchQuery && (
+                  <button 
+                    type="button" 
+                    className="btn btn-outline" 
+                    style={{ fontSize: '0.78rem', padding: '0.45rem 0.65rem', whiteSpace: 'nowrap' }}
+                    onClick={() => setSearchQuery('')}
+                  >
+                    Clear
+                  </button>
+                )}
               </div>
-            </div>
+            )}
 
             {/* ======================================= */}
             {/* TAB: OVERVIEW */}
@@ -3913,7 +4049,40 @@ export default function App() {
                   </div>
                 ) : (
                   <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
-                    {buses.map(bus => {
+                    {(() => {
+                      const q = (searchQuery || '').trim().toLowerCase();
+                      const qDigits = (searchQuery || '').replace(/[^0-9]/g, '');
+                      const filteredBuses = buses.filter(bus => {
+                        if (!q) return true;
+                        if (bus.name && bus.name.toLowerCase().includes(q)) return true;
+                        if (bus.busNumber && bus.busNumber.toLowerCase().includes(q)) return true;
+                        if (bus.route && bus.route.toLowerCase().includes(q)) return true;
+                        if (bus.coordinatorName && bus.coordinatorName.toLowerCase().includes(q)) return true;
+                        if (bus.driverName && bus.driverName.toLowerCase().includes(q)) return true;
+                        if (bus.boardingPoint && bus.boardingPoint.toLowerCase().includes(q)) return true;
+                        if (qDigits && qDigits.length >= 3) {
+                          if (bus.coordinatorPhone && bus.coordinatorPhone.replace(/[^0-9]/g, '').includes(qDigits)) return true;
+                          if (bus.driverPhone && bus.driverPhone.replace(/[^0-9]/g, '').includes(qDigits)) return true;
+                        }
+                        const assignedDevotees = participants.filter(p => p.busId === bus.id);
+                        return assignedDevotees.some(p => matchesParticipant(p, q, qDigits));
+                      });
+
+                      if (filteredBuses.length === 0) {
+                        return (
+                          <div className="card" style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+                            <Search size={36} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                            <div>No bus coaches or assigned passengers found matching "{searchQuery}".</div>
+                            {searchQuery && (
+                              <button className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', marginTop: '0.75rem' }} onClick={() => setSearchQuery('')}>
+                                Clear Search
+                              </button>
+                            )}
+                          </div>
+                        );
+                      }
+
+                      return filteredBuses.map(bus => {
                       const assignedDevotees = participants.filter(p => p.busId === bus.id);
                       const totalOccupiedSeats = assignedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
                       const cap = parseInt(bus.capacity) || 35;
@@ -4091,9 +4260,10 @@ export default function App() {
                           </div>
                         </div>
                       );
-                    })}
-                  </div>
-                )}
+                    });
+                  })()}
+                </div>
+              )}
 
                 {/* Unallocated Organiser Devotees (if any) */}
                 {(() => {
@@ -4536,7 +4706,34 @@ export default function App() {
                               </p>
                             ) : (
                               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: '1.25rem' }}>
-                                {hotelRooms.map(room => {
+                                {(() => {
+                                  const q = (searchQuery || '').trim().toLowerCase();
+                                  const qDigits = (searchQuery || '').replace(/[^0-9]/g, '');
+                                  const filteredHotelRooms = hotelRooms.filter(room => {
+                                    if (!q) return true;
+                                    if (room.roomNumber && room.roomNumber.toLowerCase().includes(q)) return true;
+                                    if (room.roomType && room.roomType.toLowerCase().includes(q)) return true;
+                                    if (room.floor && room.floor.toLowerCase().includes(q)) return true;
+                                    if (room.notes && room.notes.toLowerCase().includes(q)) return true;
+                                    const occupants = getRoomOccupants(room.id);
+                                    return occupants.some(occ => {
+                                      if (occ.name && occ.name.toLowerCase().includes(q)) return true;
+                                      if (occ.primaryName && occ.primaryName.toLowerCase().includes(q)) return true;
+                                      if (occ.familyName && occ.familyName.toLowerCase().includes(q)) return true;
+                                      if (occ.phone && (occ.phone.toLowerCase().includes(q) || (qDigits && qDigits.length >= 3 && occ.phone.replace(/[^0-9]/g, '').includes(qDigits)))) return true;
+                                      return false;
+                                    });
+                                  });
+
+                                  if (filteredHotelRooms.length === 0 && q) {
+                                    return (
+                                      <p style={{ gridColumn: '1 / -1', fontSize: '0.85rem', color: 'var(--text-muted)', fontStyle: 'italic', padding: '1rem', textAlign: 'center' }}>
+                                        No rooms in {hotelName} matching "{searchQuery}".
+                                      </p>
+                                    );
+                                  }
+
+                                  return filteredHotelRooms.map(room => {
                                   const occupants = getRoomOccupants(room.id);
                                   const occupantCount = occupants.length;
                                   const bedCount = parseInt(room.bedCount) || parseInt(room.capacity) || 2;
@@ -4695,9 +4892,10 @@ export default function App() {
                                       </div>
                                     </div>
                                   );
-                                })}
-                              </div>
-                            )}
+                                });
+                              })()}
+                            </div>
+                          )}
                           </div>
                         );
                       })}
@@ -4850,53 +5048,71 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filterList(hotels, ['name', 'address', 'contactPerson', 'notes']).map(hotel => (
-                        <tr key={hotel.id} style={{ backgroundColor: hotel.finalSelected ? 'var(--success-light)' : '' }}>
-                          <td>
-                            <strong style={{ color: 'var(--text)' }}>{hotel.name}</strong>
-                            <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>📍 {hotel.address}</p>
-                            <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
-                              {hotel.gmapsLink && <a href={hotel.gmapsLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}><MapPin size={10} /> Google Maps</a>}
-                              {hotel.bookingLink && <a href={hotel.bookingLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}><ExternalLink size={10} /> Booking Link</a>}
-                            </div>
-                          </td>
-                          <td>{hotel.distanceFromTemple}</td>
-                          <td>{hotel.roomsAvailable}</td>
-                          <td>₹{hotel.roomPrice}</td>
-                          <td>₹{hotel.extraMattressCost}</td>
-                          <td>
-                            <div>{hotel.contactPerson}</div>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>📞 {hotel.phone}</span>
-                          </td>
-                          <td>
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                              <label className="checkbox-group">
-                                <input type="checkbox" checked={hotel.contacted} onChange={(e) => toggleHotelField(hotel.id, 'contacted', e.target.checked)} />
-                                <span style={{ fontSize: '0.8rem' }}>Contacted</span>
-                              </label>
-                              <label className="checkbox-group">
-                                <input type="checkbox" checked={hotel.shortlisted} onChange={(e) => toggleHotelField(hotel.id, 'shortlisted', e.target.checked)} />
-                                <span style={{ fontSize: '0.8rem' }}>Shortlisted</span>
-                              </label>
-                              <label className="checkbox-group">
-                                <input 
-                                  type="checkbox" 
-                                  checked={hotel.finalSelected} 
-                                  onChange={(e) => toggleHotelField(hotel.id, 'finalSelected', e.target.checked)} 
-                                />
-                                <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: hotel.finalSelected ? 'var(--success)' : 'var(--text-muted)' }}>
-                                  {hotel.finalSelected ? '✓ Booked for Yatra' : 'Booked for Yatra'}
-                                </span>
-                              </label>
-                            </div>
-                          </td>
-                          <td>
-                            <button className="btn btn-danger btn-icon" onClick={() => db.deleteHotel(hotel.id).then(() => setRefreshTrigger(prev => prev + 1))}>
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
+                      {(() => {
+                        const filteredHotels = filterList(hotels, ['name', 'address', 'contactPerson', 'notes', 'phone', 'distanceFromTemple', 'roomPrice']);
+                        if (filteredHotels.length === 0) {
+                          return (
+                            <tr>
+                              <td colSpan={7} style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+                                <Search size={36} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                                <div>No hotels found matching "{searchQuery}".</div>
+                                {searchQuery && (
+                                  <button className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', marginTop: '0.5rem' }} onClick={() => setSearchQuery('')}>
+                                    Clear Search
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          );
+                        }
+                        return filteredHotels.map(hotel => (
+                          <tr key={hotel.id} style={{ backgroundColor: hotel.finalSelected ? 'var(--success-light)' : '' }}>
+                            <td>
+                              <strong style={{ color: 'var(--text)' }}>{hotel.name}</strong>
+                              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>📍 {hotel.address}</p>
+                              <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
+                                {hotel.gmapsLink && <a href={hotel.gmapsLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}><MapPin size={10} /> Google Maps</a>}
+                                {hotel.bookingLink && <a href={hotel.bookingLink} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.15rem' }}><ExternalLink size={10} /> Booking Link</a>}
+                              </div>
+                            </td>
+                            <td>{hotel.distanceFromTemple}</td>
+                            <td>{hotel.roomsAvailable}</td>
+                            <td>₹{hotel.roomPrice}</td>
+                            <td>₹{hotel.extraMattressCost}</td>
+                            <td>
+                              <div>{hotel.contactPerson}</div>
+                              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>📞 {hotel.phone}</span>
+                            </td>
+                            <td>
+                              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
+                                <label className="checkbox-group">
+                                  <input type="checkbox" checked={hotel.contacted} onChange={(e) => toggleHotelField(hotel.id, 'contacted', e.target.checked)} />
+                                  <span style={{ fontSize: '0.8rem' }}>Contacted</span>
+                                </label>
+                                <label className="checkbox-group">
+                                  <input type="checkbox" checked={hotel.shortlisted} onChange={(e) => toggleHotelField(hotel.id, 'shortlisted', e.target.checked)} />
+                                  <span style={{ fontSize: '0.8rem' }}>Shortlisted</span>
+                                </label>
+                                <label className="checkbox-group">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={hotel.finalSelected} 
+                                    onChange={(e) => toggleHotelField(hotel.id, 'finalSelected', e.target.checked)} 
+                                  />
+                                  <span style={{ fontSize: '0.8rem', fontWeight: 'bold', color: hotel.finalSelected ? 'var(--success)' : 'var(--text-muted)' }}>
+                                    {hotel.finalSelected ? '✓ Booked for Yatra' : 'Booked for Yatra'}
+                                  </span>
+                                </label>
+                              </div>
+                            </td>
+                            <td>
+                              <button className="btn btn-danger btn-icon" onClick={() => db.deleteHotel(hotel.id).then(() => setRefreshTrigger(prev => prev + 1))}>
+                                <Trash2 size={14} />
+                              </button>
+                            </td>
+                          </tr>
+                        ));
+                      })()}
                     </tbody>
                   </table>
                 </div>
@@ -4907,8 +5123,15 @@ export default function App() {
             {/* TAB: PARTICIPANTS */}
             {/* ======================================= */}
             {activeTab === 'participants' && (() => {
-              // Apply search filter and status/payment filters
-              const baseFiltered = filterList(participants, ['name', 'phone', 'email', 'location', 'familyName', 'memberDetails']);
+              const q = (searchQuery || '').trim().toLowerCase();
+              const qDigits = (searchQuery || '').replace(/[^0-9]/g, '');
+
+              // 1. All participants matching search query
+              const baseFiltered = q 
+                ? participants.filter(p => matchesParticipant(p, q, qDigits))
+                : participants;
+
+              // 2. Participants matching both search filter AND active status filter pill
               const displayedParticipants = baseFiltered.filter(p => {
                 const split = expCalc.splits.find(s => s.id === p.id);
                 const devStatus = (split?.dynamicPaymentStatus === 'completed' && p.status === 'interested') ? 'confirmed' : (split?.dynamicDevoteeStatus || p.status);
@@ -5089,6 +5312,41 @@ export default function App() {
                       </button>
                     </div>
                   </div>
+
+                  {/* SEARCH QUERY STATUS & FILTER CONFLICT ALERT */}
+                  {q && (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem', marginBottom: '1.25rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'var(--primary-light)', padding: '0.6rem 0.9rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                          <Search size={16} style={{ color: 'var(--primary)' }} />
+                          <span>Searching: <strong>"{searchQuery}"</strong> — Showing <strong>{displayedParticipants.length}</strong> matching devotee{displayedParticipants.length === 1 ? '' : 's'} {participantFilter !== 'all' ? `in '${participantFilter}'` : ''} (out of {participants.length} total)</span>
+                        </div>
+                        <button 
+                          className="btn btn-outline" 
+                          style={{ fontSize: '0.75rem', padding: '0.25rem 0.55rem', borderColor: 'var(--primary)', color: 'var(--primary)', backgroundColor: 'var(--card-bg)' }}
+                          onClick={() => setSearchQuery('')}
+                        >
+                          Clear Search
+                        </button>
+                      </div>
+
+                      {/* Conflict banner if filter hides matching devotees */}
+                      {participantFilter !== 'all' && displayedParticipants.length === 0 && baseFiltered.length > 0 && (
+                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#eff6ff', border: '1.5px solid #60a5fa', borderRadius: 'var(--radius-sm)', padding: '0.7rem 1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                          <span style={{ fontSize: '0.85rem', color: '#1e40af' }}>
+                            ⚠️ <strong>{baseFiltered.length} devotee(s)</strong> match "{searchQuery}", but are hidden by the active status filter (<strong>{participantFilter}</strong>).
+                          </span>
+                          <button 
+                            className="btn btn-primary" 
+                            style={{ padding: '0.3rem 0.75rem', fontSize: '0.8rem', backgroundColor: '#2563eb' }}
+                            onClick={() => setParticipantFilter('all')}
+                          >
+                            Switch to 'All' to View ({baseFiltered.length})
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {/* VIEW 1: CLEAN & SPACIOUS TABLE WITH EXPANDABLE ROW */}
                   {participantViewMode === 'table' && (
@@ -5465,6 +5723,33 @@ export default function App() {
                               </React.Fragment>
                             );
                           })}
+                          {displayedParticipants.length === 0 && (
+                            <tr>
+                              <td colSpan={8} style={{ textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--text-muted)' }}>
+                                <Search size={40} style={{ opacity: 0.35, marginBottom: '0.75rem' }} />
+                                <h4 style={{ margin: '0 0 0.4rem 0', color: 'var(--text)' }}>
+                                  {q ? `No Devotees Found Matching "${searchQuery}"` : 'No Devotees In This Category'}
+                                </h4>
+                                <p style={{ fontSize: '0.82rem', margin: '0 0 1rem 0' }}>
+                                  {q ? 'Search checks name, family members, phone, location, travel, remarks, and payment refs.' : 'No registrations match the selected filter.'}
+                                </p>
+                                {(q || participantFilter !== 'all') && (
+                                  <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                                    {q && (
+                                      <button className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '0.35rem 0.8rem' }} onClick={() => setSearchQuery('')}>
+                                        Clear Search
+                                      </button>
+                                    )}
+                                    {participantFilter !== 'all' && (
+                                      <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.35rem 0.8rem' }} onClick={() => setParticipantFilter('all')}>
+                                        Show All Devotees
+                                      </button>
+                                    )}
+                                  </div>
+                                )}
+                              </td>
+                            </tr>
+                          )}
                         </tbody>
                       </table>
                     </div>
@@ -5640,6 +5925,31 @@ export default function App() {
                           </div>
                         );
                       })}
+                      {displayedParticipants.length === 0 && (
+                        <div className="card" style={{ gridColumn: '1 / -1', textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--text-muted)' }}>
+                          <Search size={40} style={{ opacity: 0.35, marginBottom: '0.75rem' }} />
+                          <h4 style={{ margin: '0 0 0.4rem 0', color: 'var(--text)' }}>
+                            {q ? `No Devotees Found Matching "${searchQuery}"` : 'No Devotees In This Category'}
+                          </h4>
+                          <p style={{ fontSize: '0.82rem', margin: '0 0 1rem 0' }}>
+                            {q ? 'Search checks name, family members, phone, location, travel, remarks, and payment refs.' : 'No registrations match the selected filter.'}
+                          </p>
+                          {(q || participantFilter !== 'all') && (
+                            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'center' }}>
+                              {q && (
+                                <button className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '0.35rem 0.8rem' }} onClick={() => setSearchQuery('')}>
+                                  Clear Search
+                                </button>
+                              )}
+                              {participantFilter !== 'all' && (
+                                <button className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.35rem 0.8rem' }} onClick={() => setParticipantFilter('all')}>
+                                  Show All Devotees
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
@@ -5667,9 +5977,37 @@ export default function App() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filterList(payments, ['transactionRef', 'amountPaid']).map(pay => {
-                        const partObj = participants.find(p => p.id === pay.participantId) || { name: 'Unknown Devotee' };
+                      {(() => {
+                        const filteredPayments = filterList(payments, ['transactionRef', 'amountPaid', 'paymentDate', 'paymentMethod', 'status'], (pay, q, qDigits) => {
+                          const partObj = participants.find(p => p.id === pay.participantId);
+                          if (partObj) {
+                            if (partObj.name && partObj.name.toLowerCase().includes(q)) return true;
+                            if (partObj.phone && (partObj.phone.toLowerCase().includes(q) || (qDigits && qDigits.length >= 3 && partObj.phone.replace(/[^0-9]/g, '').includes(qDigits)))) return true;
+                            if (partObj.familyName && partObj.familyName.toLowerCase().includes(q)) return true;
+                            if (partObj.location && partObj.location.toLowerCase().includes(q)) return true;
+                            if (partObj.city && partObj.city.toLowerCase().includes(q)) return true;
+                          }
+                          return false;
+                        });
+
                         return (
+                          <>
+                            {filteredPayments.length === 0 && (
+                              <tr>
+                                <td colSpan={8} style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+                                  <Search size={36} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                                  <div>No payments found matching "{searchQuery}".</div>
+                                  {searchQuery && (
+                                    <button className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', marginTop: '0.5rem' }} onClick={() => setSearchQuery('')}>
+                                      Clear Search
+                                    </button>
+                                  )}
+                                </td>
+                              </tr>
+                            )}
+                            {filteredPayments.map(pay => {
+                              const partObj = participants.find(p => p.id === pay.participantId) || { name: 'Unknown Devotee' };
+                              return (
                           <tr key={pay.id}>
                             <td>
                               <strong>{partObj.name}</strong>
@@ -5738,7 +6076,10 @@ export default function App() {
                           </tr>
                         );
                       })}
-                    </tbody>
+                    </>
+                  );
+                })()}
+              </tbody>
                   </table>
                 </div>
               </div>
@@ -5802,21 +6143,39 @@ export default function App() {
                           </tr>
                         </thead>
                         <tbody>
-                          {filterList(expenses, ['remarks', 'paidBy', 'category']).map(exp => (
-                            <tr key={exp.id}>
-                              <td>{exp.date}</td>
-                              <td><span className="badge" style={{ backgroundColor: 'var(--bg)', color: 'var(--text)' }}>{exp.category}</span></td>
-                              <td><strong>₹{exp.amount}</strong></td>
-                              <td>{exp.paidBy}</td>
-                              <td><span style={{ textTransform: 'capitalize' }}>{exp.appliesTo}</span></td>
-                              <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{exp.remarks}</td>
-                              <td>
-                                <button className="btn btn-danger btn-icon" onClick={() => db.deleteExpense(exp.id).then(() => setRefreshTrigger(prev => prev + 1))}>
-                                  <Trash2 size={14} />
-                                </button>
-                              </td>
-                            </tr>
-                          ))}
+                          {(() => {
+                            const filteredExpenses = filterList(expenses, ['remarks', 'paidBy', 'category', 'amount', 'date', 'appliesTo']);
+                            if (filteredExpenses.length === 0) {
+                              return (
+                                <tr>
+                                  <td colSpan={7} style={{ textAlign: 'center', padding: '2.5rem 1rem', color: 'var(--text-muted)' }}>
+                                    <Search size={32} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                                    <div>No expenses found matching "{searchQuery}".</div>
+                                    {searchQuery && (
+                                      <button className="btn btn-outline" style={{ fontSize: '0.78rem', padding: '0.3rem 0.65rem', marginTop: '0.5rem' }} onClick={() => setSearchQuery('')}>
+                                        Clear Search
+                                      </button>
+                                    )}
+                                  </td>
+                                </tr>
+                              );
+                            }
+                            return filteredExpenses.map(exp => (
+                              <tr key={exp.id}>
+                                <td>{exp.date}</td>
+                                <td><span className="badge" style={{ backgroundColor: 'var(--bg)', color: 'var(--text)' }}>{exp.category}</span></td>
+                                <td><strong>₹{exp.amount}</strong></td>
+                                <td>{exp.paidBy}</td>
+                                <td><span style={{ textTransform: 'capitalize' }}>{exp.appliesTo}</span></td>
+                                <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{exp.remarks}</td>
+                                <td>
+                                  <button className="btn btn-danger btn-icon" onClick={() => db.deleteExpense(exp.id).then(() => setRefreshTrigger(prev => prev + 1))}>
+                                    <Trash2 size={14} />
+                                  </button>
+                                </td>
+                              </tr>
+                            ));
+                          })()}
                         </tbody>
                       </table>
                     </div>
