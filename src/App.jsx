@@ -962,6 +962,46 @@ export default function App() {
     setRefreshTrigger(prev => prev + 1);
   };
 
+  // --- Universal Stage Change Reconfirmation Guard ---
+  const handleStageChange = async (targetStage) => {
+    if (!selectedYatra || selectedYatra.status === targetStage) return;
+
+    let confirmMsg = '';
+    if (targetStage === 'registration_open') {
+      confirmMsg = `Are you sure you want to open public registrations for "${selectedYatra.name}"?\n\nThe public registration link will become active and devotees will be able to register online.`;
+    } else if (targetStage === 'confirmed') {
+      confirmMsg = `Confirm "${selectedYatra.name}"?\n\nThis will lock public registration and close the public link as travel and accommodation bookings are finalized. Organizers can still add devotees manually if needed.`;
+    } else if (targetStage === 'completed') {
+      confirmMsg = `Mark "${selectedYatra.name}" as Completed?\n\nThis will archive the Yatra and mark all bookings and financial accounts as settled.`;
+    } else if (targetStage === 'planning') {
+      confirmMsg = `Move "${selectedYatra.name}" back to Planning stage?\n\nThis will lock the public registration link while you revise essentials.`;
+    } else {
+      confirmMsg = `Are you sure you want to change the lifecycle stage of "${selectedYatra.name}" to ${targetStage}?`;
+    }
+
+    if (!window.confirm(confirmMsg)) {
+      return;
+    }
+
+    try {
+      const updated = await db.updateYatra(selectedYatra.id, { status: targetStage });
+      setSelectedYatra(updated);
+      setRefreshTrigger(prev => prev + 1);
+
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra.id,
+        yatraTitle: selectedYatra.name,
+        category: 'Yatra Settings',
+        action: 'STAGE_CHANGED',
+        details: `${actor.name} (${actor.phone || actor.email}) changed Yatra lifecycle stage from "${selectedYatra.status}" to "${targetStage}".`,
+        metadata: { fromStage: selectedYatra.status, toStage: targetStage }
+      });
+    } catch (err) {
+      alert("Failed to update Yatra stage: " + err.message);
+    }
+  };
+
   const handlePurgeSandbox = async (sandboxYatraId) => {
     if (window.confirm("Are you sure you want to purge and delete this Sandbox Test Yatra? All mock devotees, buses, hotels, and rooms in this sandbox will be permanently deleted.")) {
       try {
@@ -4111,12 +4151,7 @@ export default function App() {
                     <select 
                       className={`yatra-stage-dropdown stage-badge-${selectedYatra.status}`}
                       value={selectedYatra.status}
-                      onChange={async (e) => {
-                        const newStatus = e.target.value;
-                        const updated = await db.updateYatra(selectedYatra.id, { status: newStatus });
-                        setSelectedYatra(updated);
-                        setRefreshTrigger(prev => prev + 1);
-                      }}
+                      onChange={(e) => handleStageChange(e.target.value)}
                     >
                       <option value="planning">🕒 Stage 1: Planning</option>
                       <option value="registration_open">🔗 Stage 2: Registration Open</option>
@@ -4316,12 +4351,7 @@ export default function App() {
                           <button 
                             className="btn btn-primary"
                             style={{ fontSize: '0.82rem', padding: '0.4rem 0.85rem' }}
-                            onClick={async () => {
-                              const updated = await db.updateYatra(selectedYatra.id, { status: 'registration_open' });
-                              setSelectedYatra(updated);
-                              setRefreshTrigger(prev => prev + 1);
-                              alert("Yatra stage changed to 'Registration Open'! You can now copy and share the public registration link.");
-                            }}
+                            onClick={() => handleStageChange('registration_open')}
                           >
                             Open Public Registrations →
                           </button>
@@ -4330,13 +4360,7 @@ export default function App() {
                           <button 
                             className="btn btn-primary"
                             style={{ fontSize: '0.82rem', padding: '0.4rem 0.85rem', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
-                            onClick={async () => {
-                              if (window.confirm("Confirm this Yatra? This will close public registration to outside devotees, while still allowing you to add devotees manually.")) {
-                                const updated = await db.updateYatra(selectedYatra.id, { status: 'confirmed' });
-                                setSelectedYatra(updated);
-                                setRefreshTrigger(prev => prev + 1);
-                              }
-                            }}
+                            onClick={() => handleStageChange('confirmed')}
                           >
                             Confirm Yatra & Close Public Link →
                           </button>
@@ -4345,13 +4369,7 @@ export default function App() {
                           <button 
                             className="btn btn-outline"
                             style={{ fontSize: '0.82rem', padding: '0.4rem 0.85rem' }}
-                            onClick={async () => {
-                              if (window.confirm("Mark this Yatra as Completed? This archives the Yatra and confirms all accounts are settled.")) {
-                                const updated = await db.updateYatra(selectedYatra.id, { status: 'completed' });
-                                setSelectedYatra(updated);
-                                setRefreshTrigger(prev => prev + 1);
-                              }
-                            }}
+                            onClick={() => handleStageChange('completed')}
                           >
                             Mark Yatra Completed & Settle →
                           </button>
@@ -4381,11 +4399,7 @@ export default function App() {
                         return (
                           <div 
                             key={step.key}
-                            onClick={async () => {
-                              const updated = await db.updateYatra(selectedYatra.id, { status: step.key });
-                              setSelectedYatra(updated);
-                              setRefreshTrigger(prev => prev + 1);
-                            }}
+                            onClick={() => handleStageChange(step.key)}
                             style={{
                               padding: '0.75rem',
                               borderRadius: 'var(--radius-sm)',
