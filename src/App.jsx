@@ -3055,6 +3055,7 @@ export default function App() {
   // --- Settings (Firebase Sync Config) ---
   const saveFirebaseSettings = (e) => {
     e.preventDefault();
+    if (!isSuperAdmin) return;
     try {
       let configString = firebaseConfig.trim();
       if (configString.startsWith('const')) {
@@ -3089,6 +3090,7 @@ export default function App() {
   };
 
   const disconnectFirebase = () => {
+    if (!isSuperAdmin) return;
     db.disableFirebase();
     setIsFirebaseConnected(false);
     setFirebaseConfig('');
@@ -3099,6 +3101,7 @@ export default function App() {
 
   // --- Complete System Backup & Disaster Recovery ---
   const handleExportFullBackup = async () => {
+    if (!isSuperAdmin) return;
     try {
       const backup = await db.getFullBackup();
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(backup, null, 2));
@@ -3115,6 +3118,7 @@ export default function App() {
   };
 
   const handleImportFullBackup = (e) => {
+    if (!isSuperAdmin) return;
     const file = e.target.files && e.target.files[0];
     if (!file) return;
 
@@ -3338,8 +3342,8 @@ export default function App() {
                   <ShieldCheck size={16} /> Audit Trail
                 </button>
               )}
-              {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
-                <button className="btn btn-outline" style={{ padding: '0.5rem' }} onClick={() => setIsSettingsOpen(true)} title="Settings">
+              {isSuperAdmin && (
+                <button className="btn btn-outline" style={{ padding: '0.5rem' }} onClick={() => setIsSettingsOpen(true)} title="Super Admin Settings">
                   <Settings size={18} />
                 </button>
               )}
@@ -9814,7 +9818,7 @@ export default function App() {
       )}
 
       {/* MODAL: SUPER ADMIN CONFIG SETTINGS */}
-      {isSettingsOpen && (
+      {isSettingsOpen && isSuperAdmin && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
