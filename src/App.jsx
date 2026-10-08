@@ -1384,7 +1384,8 @@ export default function App() {
     if (targetYatra?.isSandbox) {
       return handlePurgeSandbox(yatraId);
     }
-    if (window.confirm("Are you sure you want to delete this Yatra? It will be archived.")) {
+    const yatraName = targetYatra?.name || 'this Yatra';
+    if (window.confirm(`Are you sure you want to delete "${yatraName}"?\n\nThis Yatra will be archived and hidden from active lists.`)) {
       const actor = getCurrentActor();
       await db.softDeleteYatra(yatraId);
       await recordAudit({
@@ -1527,7 +1528,9 @@ export default function App() {
   };
 
   const handleDeleteParticipant = async (participantId, participantName) => {
-    if (window.confirm(`Are you sure you want to delete registration for ${participantName || 'this devotee'}? This will remove them from participants, bus, and room lists.`)) {
+    const targetParticipant = participants.find(p => p.id === participantId);
+    const displayName = participantName || targetParticipant?.name || 'this devotee';
+    if (window.confirm(`Are you sure you want to delete the registration for "${displayName}"?\n\nThis will remove them from participants, bus allocation, and room allocation lists.`)) {
       const actor = getCurrentActor();
       await db.deleteParticipant(participantId);
       await recordAudit({
@@ -1535,8 +1538,8 @@ export default function App() {
         yatraTitle: selectedYatra?.name,
         category: 'Participants',
         action: 'PARTICIPANT_DELETED',
-        details: `${actor.name} (${actor.phone || actor.email}) deleted registration for devotee "${participantName || participantId}".`,
-        metadata: { participantId, participantName }
+        details: `${actor.name} (${actor.phone || actor.email}) deleted registration for devotee "${displayName}".`,
+        metadata: { participantId, participantName: displayName }
       });
       setRefreshTrigger(prev => prev + 1);
     }
@@ -1682,12 +1685,25 @@ export default function App() {
   };
 
   const handleDeleteBus = async (busId) => {
-    if (window.confirm("Delete this bus? Devotees assigned to this bus will become unallocated.")) {
+    const targetBus = buses.find(b => b.id === busId);
+    const busLabel = targetBus ? `Bus "${targetBus.name}"${targetBus.busNumber ? ` (${targetBus.busNumber})` : ''}` : 'this bus';
+    const affectedCount = participants.filter(p => p.busId === busId).length;
+    const warningNotice = affectedCount > 0 ? `\n\nNotice: ${affectedCount} devotee(s) currently assigned to this bus will become unallocated.` : '';
+    if (window.confirm(`Are you sure you want to delete ${busLabel}?${warningNotice}`)) {
       await db.deleteBus(busId);
       const affected = participants.filter(p => p.busId === busId);
       for (const p of affected) {
         await db.updateParticipant(p.id, { busId: '', busName: '', busNumber: '' });
       }
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Buses',
+        action: 'BUS_DELETED',
+        details: `${actor.name} (${actor.phone || actor.email}) deleted bus ${busLabel}.`,
+        metadata: { busId, busName: targetBus?.name }
+      });
       setRefreshTrigger(prev => prev + 1);
     }
   };
@@ -1896,7 +1912,9 @@ export default function App() {
   };
 
   const handleDeleteRoom = async (roomId) => {
-    if (window.confirm("Delete this room? Devotees assigned to this room will become unallocated.")) {
+    const targetRoom = rooms.find(r => r.id === roomId);
+    const roomLabel = targetRoom ? `Room "${targetRoom.roomNumber || ''}" (${targetRoom.hotelName || ''})` : 'this room';
+    if (window.confirm(`Are you sure you want to delete ${roomLabel}?\n\nDevotees assigned to this room will become unallocated.`)) {
       await db.deleteRoom(roomId);
       for (const p of participants) {
         let needsUpdate = false;
@@ -1919,6 +1937,15 @@ export default function App() {
           await db.updateParticipant(p.id, updateData);
         }
       }
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Accommodation',
+        action: 'ROOM_DELETED',
+        details: `${actor.name} (${actor.phone || actor.email}) deleted room ${roomLabel}.`,
+        metadata: { roomId, roomNumber: targetRoom?.roomNumber }
+      });
       setRefreshTrigger(prev => prev + 1);
     }
   };
@@ -2327,7 +2354,10 @@ export default function App() {
   };
 
   const handleDeleteExpense = async (exp) => {
-    if (window.confirm(`Delete expense of ₹${exp.amount?.toLocaleString()} (${exp.category})?`)) {
+    const formattedAmt = parseFloat(exp.amount || 0).toLocaleString();
+    const catLabel = exp.category ? exp.category.toUpperCase() : 'EXPENSE';
+    const descLabel = exp.remarks ? ` ("${exp.remarks}")` : '';
+    if (window.confirm(`Are you sure you want to delete this expense of ₹${formattedAmt} for ${catLabel}${descLabel}?\n\nThis will remove it from all financial reports and balance calculations.`)) {
       await db.deleteExpense(exp.id);
       const actor = getCurrentActor();
       await recordAudit({
@@ -2335,7 +2365,7 @@ export default function App() {
         yatraTitle: selectedYatra?.name,
         category: 'Expenses',
         action: 'EXPENSE_DELETED',
-        details: `${actor.name} (${actor.phone || actor.email}) deleted expense of ₹${exp.amount?.toLocaleString()} (${exp.category.toUpperCase()}, Paid by: ${exp.paidBy || 'Organizer'}).`,
+        details: `${actor.name} (${actor.phone || actor.email}) deleted expense of ₹${parseFloat(exp.amount || 0).toLocaleString()} (${catLabel}, Paid by: ${exp.paidBy || 'Organizer'}).`,
         metadata: { expenseId: exp.id, amount: exp.amount }
       });
       setRefreshTrigger(prev => prev + 1);
@@ -2666,6 +2696,62 @@ export default function App() {
   const toggleHotelField = async (hotelId, field, value) => {
     await db.updateHotel(hotelId, { [field]: value });
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleDeleteHotel = async (hotelId) => {
+    const targetHotel = hotels.find(h => h.id === hotelId);
+    const hotelName = targetHotel?.name || 'this hotel';
+    const associatedRooms = rooms.filter(r => r.hotelId === hotelId || r.hotelName === targetHotel?.name);
+    let promptMsg = `Are you sure you want to delete "${hotelName}"?`;
+    if (associatedRooms.length > 0) {
+      promptMsg += `\n\nWarning: There are ${associatedRooms.length} room(s) associated with this hotel. Deleting this hotel will also remove these rooms and unallocate assigned devotees.`;
+    }
+    if (!window.confirm(promptMsg)) return;
+
+    try {
+      await db.deleteHotel(hotelId);
+      for (const room of associatedRooms) {
+        await db.deleteRoom(room.id);
+      }
+      for (const p of participants) {
+        if (p.hotelId === hotelId || p.hotelName === targetHotel?.name) {
+          await db.updateParticipant(p.id, { hotelId: '', hotelName: '', roomId: '', roomNumber: '' });
+        }
+      }
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Hotels',
+        action: 'HOTEL_DELETED',
+        details: `${actor.name} (${actor.phone || actor.email}) deleted hotel "${hotelName}".`,
+        metadata: { hotelId, hotelName }
+      });
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err) {
+      alert("Failed to delete hotel: " + err.message);
+    }
+  };
+
+  const handleDeleteDocument = async (docRec) => {
+    if (!window.confirm(`Are you sure you want to delete the document "${docRec.name || 'this document'}"?`)) {
+      return;
+    }
+    try {
+      await db.deleteDocumentRecord(docRec.id);
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Documents',
+        action: 'DOCUMENT_DELETED',
+        details: `${actor.name} (${actor.phone || actor.email}) deleted document "${docRec.name || docRec.id}".`,
+        metadata: { documentId: docRec.id, documentName: docRec.name }
+      });
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err) {
+      alert("Failed to delete document: " + err.message);
+    }
   };
 
   const cycleParticipantStatus = async (participantId, currentStatus) => {
@@ -3081,8 +3167,9 @@ export default function App() {
   };
 
   const handleDeleteAdmin = async (id) => {
-    if (window.confirm("Are you sure you want to completely remove this admin's access?")) {
-      const targetAdmin = systemUsers.find(u => u.id === id);
+    const targetAdmin = systemUsers.find(u => u.id === id);
+    const adminLabel = targetAdmin ? `"${targetAdmin.name || 'Admin'}" (${targetAdmin.email})` : 'this administrator';
+    if (window.confirm(`Are you sure you want to completely remove administrator access for ${adminLabel}?\n\nThey will no longer be able to log in or manage Yatras.`)) {
       await db.deleteUser(id);
       await recordAudit({
         yatraId: 'global',
@@ -5763,7 +5850,7 @@ export default function App() {
                               </div>
                             </td>
                             <td>
-                              <button className="btn btn-danger btn-icon" onClick={() => db.deleteHotel(hotel.id).then(() => setRefreshTrigger(prev => prev + 1))}>
+                              <button className="btn btn-danger btn-icon" onClick={() => handleDeleteHotel(hotel.id)} title="Delete Hotel">
                                 <Trash2 size={14} />
                               </button>
                             </td>
@@ -7140,7 +7227,7 @@ export default function App() {
                             </div>
                           </label>
                           <button className="btn btn-danger btn-icon" style={{ padding: '0.25rem', flexShrink: 0 }} onClick={async () => {
-                            if (window.confirm('Delete this task?')) {
+                            if (window.confirm(`Are you sure you want to delete this task: "${item.text}"?`)) {
                               const current = JSON.parse(notes.content);
                               current.checklist = current.checklist.filter(i => i.id !== item.id);
                               const updatedNotes = await db.updateNotes(notes.id, { content: JSON.stringify(current) });
@@ -7192,7 +7279,7 @@ export default function App() {
                               <a href={docRec.fileUrl} target="_blank" rel="noopener noreferrer" className="btn btn-outline btn-icon" download>
                                 <Download size={14} />
                               </a>
-                              <button className="btn btn-danger btn-icon" onClick={() => db.deleteDocumentRecord(docRec.id).then(() => setRefreshTrigger(prev => prev + 1))}>
+                              <button className="btn btn-danger btn-icon" onClick={() => handleDeleteDocument(docRec)} title="Delete Document">
                                 <Trash2 size={14} />
                               </button>
                             </div>
@@ -7655,6 +7742,7 @@ export default function App() {
                               }} style={{ fontSize: '0.85rem', padding: '0.4rem' }} />
                             </div>
                             <button type="button" className="btn btn-danger btn-icon" style={{ padding: '0.3rem', flexShrink: 0 }} onClick={() => {
+                              if (member.name?.trim() && !window.confirm(`Remove "${member.name}" from family members?`)) return;
                               const updated = newParticipant.familyMembers.filter((_, i) => i !== idx);
                               setNewParticipant({...newParticipant, familyMembers: updated, membersCount: updated.length || 1});
                             }}>
@@ -8782,6 +8870,7 @@ export default function App() {
                           className="btn btn-danger btn-icon" 
                           style={{ padding: '0.3rem', flexShrink: 0 }} 
                           onClick={() => {
+                            if (member.name?.trim() && !window.confirm(`Remove "${member.name}" from family members?`)) return;
                             const updated = editProfileData.familyMembers.filter((_, i) => i !== idx);
                             setEditProfileData({...editProfileData, familyMembers: updated, membersCount: updated.length || 1});
                           }}
@@ -9195,6 +9284,7 @@ export default function App() {
                           }} style={{ fontSize: '0.85rem', padding: '0.4rem' }} />
                         </div>
                         <button type="button" className="btn btn-danger btn-icon" style={{ padding: '0.3rem', flexShrink: 0 }} onClick={() => {
+                          if (member.name?.trim() && !window.confirm(`Remove "${member.name}" from family members?`)) return;
                           const updated = newParticipant.familyMembers.filter((_, i) => i !== idx);
                           setNewParticipant({...newParticipant, familyMembers: updated, membersCount: updated.length || 1});
                         }}>
