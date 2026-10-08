@@ -124,6 +124,8 @@ export const translations = {
     specialRemarks: 'Special Requests / Health Notes',
     proceedToPayment: 'Complete Registration & View Contribution',
     returningDevoteeBanner: 'Returning Devotee Recognized! Your family profile and preferences have been auto-filled.',
+    registrationCapacityFullTitle: 'Registration Full',
+    registrationCapacityFullMessage: 'The registration for this yatra has reached full capacity. Please reach out to admins for further assistance. Hare Krishna!',
 
     // Badges
     badgeHeader: 'HARE KRISHNA • SPIRITUAL PILGRIMAGE',
@@ -304,6 +306,8 @@ export const translations = {
     specialRemarks: 'विशेष निवेदन / स्वास्थ्य संबंधी जानकारी',
     proceedToPayment: 'पंजीकरण पूर्ण करें व सहयोग राशि देखें',
     returningDevoteeBanner: 'पुनः पधारने वाले भक्त की पहचान हुई! आपके परिवार और यात्रा का विवरण स्वतः भर दिया गया है।',
+    registrationCapacityFullTitle: 'पंजीकरण पूर्ण (Full Capacity)',
+    registrationCapacityFullMessage: 'इस यात्रा के लिए पंजीकरण पूर्ण क्षमता तक पहुँच चुका है। अधिक सहायता के लिए कृपया व्यवस्थापकों से संपर्क करें। हरे कृष्ण!',
 
     // Badges
     badgeHeader: 'हरे कृष्ण • पवित्र आध्यात्मिक यात्रा',

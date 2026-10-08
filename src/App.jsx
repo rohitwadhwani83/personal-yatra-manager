@@ -428,7 +428,10 @@ export default function App() {
       } else if (path === 'register' && id) {
         db.getYatras().then(allYatras => {
           const found = allYatras.find(y => y.id === id);
-          if (found) setSelectedYatra(found);
+          if (found) {
+            setSelectedYatra(found);
+            db.getParticipants(found.id).then(parts => setParticipants(parts || []));
+          }
         });
       } else if (path === 'payment' && id) {
         Promise.all([db.getCollection('participants'), db.getYatras()]).then(([allParts, allYatras]) => {
@@ -2363,6 +2366,23 @@ export default function App() {
       alert("Please add at least one family member (including yourself) in the list before proceeding.");
       return;
     }
+
+    // Verify Yatra target capacity limit
+    const targetCapacity = parseInt(selectedYatra.expectedParticipants) || 0;
+    if (targetCapacity > 0) {
+      const freshParticipants = await db.getParticipants(selectedYatra.id);
+      const currentSeats = (freshParticipants || [])
+        .filter(p => !p.isDeleted)
+        .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+      const incomingSeats = newParticipant.type === 'family' ? (newParticipant.familyMembers?.length || newParticipant.membersCount || 1) : 1;
+      
+      if (currentSeats >= targetCapacity || currentSeats + incomingSeats > targetCapacity) {
+        alert(t('registrationCapacityFullMessage') || "The registration for this yatra has reached full capacity. Please reach out to admins for further assistance. Hare Krishna!");
+        setRefreshTrigger(prev => prev + 1);
+        return;
+      }
+    }
+
     const pId = 'part_' + Math.random().toString(36).substring(2, 9);
     const participantRecord = {
       ...newParticipant,
@@ -4126,6 +4146,20 @@ export default function App() {
                         style={{ opacity: 0.6, fontSize: '0.82rem', padding: '0.45rem 0.8rem' }}
                       >
                         <Compass size={14} /> Completed
+                      </button>
+                    ) : (selectedYatra.expectedParticipants && participants.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0) >= parseInt(selectedYatra.expectedParticipants)) ? (
+                      <button 
+                        type="button"
+                        className="btn btn-outline" 
+                        style={{ borderColor: '#fde68a', backgroundColor: '#fffbeb', color: '#b45309', fontSize: '0.82rem', padding: '0.45rem 0.8rem', fontWeight: 600 }} 
+                        onClick={() => {
+                          const baseUrl = window.location.href.split('#')[0];
+                          navigator.clipboard.writeText(`${baseUrl}#/register/${selectedYatra.id}`);
+                          alert(`This Yatra has reached full capacity (${selectedYatra.expectedParticipants} target reached). Public registrations are currently closed.\n\nTo accept more devotees, click 'Edit' and increase the target capacity.`);
+                        }}
+                        title="Yatra has reached target capacity. Increase capacity via 'Edit' to reopen registration link."
+                      >
+                        <Users size={14} /> Full Capacity ({selectedYatra.expectedParticipants})
                       </button>
                     ) : (
                       <button 
@@ -7222,10 +7256,15 @@ export default function App() {
         )}
 
         {/* ======================================= */}
-        {/* VIEW 4: PUBLIC PARTICIPANT REGISTRATION */}
-        {/* ======================================= */}
-        {currentRoute.path === 'register' && selectedYatra && (
-          <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
+        {currentRoute.path === 'register' && selectedYatra && (() => {
+          const yatraTargetCapacity = parseInt(selectedYatra.expectedParticipants) || 0;
+          const currentRegisteredSeats = participants
+            .filter(p => (p.yatraId === selectedYatra.id) && !p.isDeleted)
+            .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+          const isCapacityReached = yatraTargetCapacity > 0 && currentRegisteredSeats >= yatraTargetCapacity;
+
+          return (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
             <div className="card" style={{ width: '100%', maxWidth: '600px', padding: '2.5rem' }}>
               <div style={{ display: 'flex', justifyContent: 'flex-end', marginBottom: '0.5rem' }}>
                 <button 
@@ -7309,6 +7348,32 @@ export default function App() {
                   <h3>Registration Closed</h3>
                   <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>The registration link for this Yatra expired on <strong>{selectedYatra.registrationDeadline}</strong>.</p>
                   <p style={{ color: 'var(--text-muted)' }}>Please contact the organizer if you still wish to participate.</p>
+                </div>
+              ) : isCapacityReached ? (
+                /* FULL CAPACITY REACHED */
+                <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
+                  <div style={{ backgroundColor: '#fef3c7', color: '#b45309', width: '3.75rem', height: '3.75rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.5rem', border: '2px solid #fde68a' }}>
+                    <Users size={30} />
+                  </div>
+                  <h3 style={{ color: '#92400e' }}>{t('registrationCapacityFullTitle') || 'Registration Full'}</h3>
+                  <div style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '1.25rem', margin: '1.25rem auto', maxWidth: '480px', color: '#92400e', fontSize: '0.95rem', lineHeight: '1.6', textAlign: 'center' }}>
+                    <p style={{ margin: 0, fontWeight: 600 }}>
+                      {t('registrationCapacityFullMessage') || 'The registration for this yatra has reached full capacity. Please reach out to admins for further assistance. Hare Krishna!'}
+                    </p>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
+                    <span>Registered: <strong>{currentRegisteredSeats}</strong></span>
+                    <span>•</span>
+                    <span>Target Capacity: <strong>{yatraTargetCapacity}</strong></span>
+                  </div>
+                  <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
+                    <button className="btn btn-outline" onClick={() => navigateTo('home')}>
+                      Back to Yatras
+                    </button>
+                    <button className="btn btn-primary" onClick={() => navigateTo('login')}>
+                      Registered Devotee Login
+                    </button>
+                  </div>
                 </div>
               ) : publicRegStatus === 'success' ? (
                 <div style={{ textAlign: 'center', padding: '1.5rem 0' }}>
@@ -7669,7 +7734,8 @@ export default function App() {
               )}
             </div>
           </div>
-        )}
+        );
+      })()}
 
         {/* ======================================= */}
         {/* VIEW 5: PUBLIC UPI QR PAYMENT */}
