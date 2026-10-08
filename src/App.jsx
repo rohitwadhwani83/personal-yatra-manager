@@ -300,6 +300,7 @@ export default function App() {
         setPayments(payData);
         setExpenses(eData);
         setPhotos(phData);
+        setMyPhotos(phData);
         setNotes(nData);
         setDocuments(dData);
         setBuses(bData);
@@ -2436,6 +2437,24 @@ export default function App() {
       link.download = `${selectedYatra.name.replace(/\s+/g, '_')}_All_Photos.zip`;
       link.click();
     });
+  };
+
+  const handleDeletePhoto = async (photoId) => {
+    if (!window.confirm("Are you sure you want to permanently delete this photo? It will be removed immediately from both Admin and Devotee galleries.")) {
+      return;
+    }
+    // Optimistic UI update: instantly remove from screen
+    setPhotos(prev => prev.filter(p => p.id !== photoId));
+    setMyPhotos(prev => prev.filter(p => p.id !== photoId));
+
+    try {
+      await db.deletePhoto(photoId);
+      setRefreshTrigger(prev => prev + 1);
+    } catch (err) {
+      console.error("Failed to delete photo:", err);
+      alert("Failed to delete photo: " + err.message);
+      setRefreshTrigger(prev => prev + 1);
+    }
   };
 
   // --- Reports Export to CSV ---
@@ -6396,21 +6415,37 @@ export default function App() {
                   </div>
                 </div>
 
-                <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
-                  {photos.map(photo => (
-                    <div key={photo.id} className="card" style={{ padding: '0.5rem', display: 'flex', flexDirection: 'column' }}>
-                      <img src={photo.imageUrl} alt="Uploaded" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: 'var(--radius-sm)' }} />
-                      <div style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
-                        <strong>{photo.uploader}</strong>
-                        <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{photo.date}</p>
-                        {photo.caption && <p style={{ fontStyle: 'italic', marginTop: '0.25rem' }}>"{photo.caption}"</p>}
+                {photos.length === 0 ? (
+                  <div className="card" style={{ textAlign: 'center', padding: '3.5rem 1.5rem', color: 'var(--text-muted)' }}>
+                    <ImageIcon size={48} style={{ opacity: 0.3, marginBottom: '1rem' }} />
+                    <h4>No Photos in Yatra Gallery</h4>
+                    <p style={{ maxWidth: '420px', margin: '0.5rem auto 1.5rem', fontSize: '0.85rem' }}>
+                      Upload spiritual moments and tour memories above. Once uploaded, they will be visible to devotees in their portal.
+                    </p>
+                  </div>
+                ) : (
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))', gap: '1rem' }}>
+                    {photos.map(photo => (
+                      <div key={photo.id} className="card" style={{ padding: '0.5rem', display: 'flex', flexDirection: 'column' }}>
+                        <img src={photo.imageUrl} alt="Uploaded" style={{ width: '100%', height: '150px', objectFit: 'cover', borderRadius: 'var(--radius-sm)' }} />
+                        <div style={{ marginTop: '0.5rem', fontSize: '0.8rem' }}>
+                          <strong>{photo.uploader}</strong>
+                          <p style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>{photo.date}</p>
+                          {photo.caption && <p style={{ fontStyle: 'italic', marginTop: '0.25rem' }}>"{photo.caption}"</p>}
+                        </div>
+                        <button 
+                          type="button"
+                          className="btn btn-danger btn-icon" 
+                          style={{ alignSelf: 'flex-end', marginTop: 'auto', padding: '0.35rem 0.6rem', fontSize: '0.75rem', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }} 
+                          onClick={() => handleDeletePhoto(photo.id)}
+                          title="Delete Photo Permanently"
+                        >
+                          <Trash2 size={13} /> Delete
+                        </button>
                       </div>
-                      <button className="btn btn-danger btn-icon" style={{ alignSelf: 'flex-end', marginTop: 'auto', padding: '0.25rem' }} onClick={() => db.deletePhoto(photo.id).then(() => setRefreshTrigger(prev => prev + 1))}>
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
 
@@ -7687,7 +7722,9 @@ export default function App() {
                                 imageUrl: base64
                               });
                               // Reload photos
-                              db.getPhotos(selectedYatra.id).then(setMyPhotos);
+                              const updated = await db.getPhotos(selectedYatra.id);
+                              setMyPhotos(updated);
+                              setPhotos(updated);
                             });
                           }
                         }}
@@ -7695,17 +7732,56 @@ export default function App() {
                     </label>
                   </div>
 
-                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
-                    {myPhotos.map(photo => (
-                      <div key={photo.id} style={{ display: 'flex', flexDirection: 'column', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-                        <img src={photo.imageUrl} alt="Shared" style={{ width: '100%', height: '130px', objectFit: 'cover' }} />
-                        <div style={{ padding: '0.5rem', fontSize: '0.75rem' }}>
-                          <strong>{photo.uploader}</strong>
-                          <p style={{ color: 'var(--text-muted)' }}>{photo.date}</p>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
+                  {myPhotos.length === 0 ? (
+                    <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                      <ImageIcon size={36} style={{ opacity: 0.5, marginBottom: '0.5rem' }} />
+                      <p>No photos have been shared for this Yatra yet.</p>
+                      <p style={{ fontSize: '0.85rem' }}>Be the first to upload and share memories with all devotees!</p>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
+                      {myPhotos.map(photo => {
+                        const canDelete = currentUser?.role === 'admin' || (myParticipantData && (photo.uploader === myParticipantData.name || photo.uploader === myParticipantData.phone));
+                        return (
+                          <div key={photo.id} style={{ position: 'relative', display: 'flex', flexDirection: 'column', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                            <img src={photo.imageUrl} alt="Shared" style={{ width: '100%', height: '130px', objectFit: 'cover' }} />
+                            {canDelete && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeletePhoto(photo.id);
+                                }}
+                                style={{
+                                  position: 'absolute',
+                                  top: '6px',
+                                  right: '6px',
+                                  background: 'rgba(239, 68, 68, 0.85)',
+                                  color: 'white',
+                                  border: 'none',
+                                  borderRadius: '50%',
+                                  width: '26px',
+                                  height: '26px',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  justifyContent: 'center',
+                                  cursor: 'pointer',
+                                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                                }}
+                                title="Delete Photo"
+                              >
+                                <Trash2 size={13} />
+                              </button>
+                            )}
+                            <div style={{ padding: '0.5rem', fontSize: '0.75rem' }}>
+                              <strong>{photo.uploader}</strong>
+                              <p style={{ color: 'var(--text-muted)' }}>{photo.date}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
                 </div>
               </div>
 

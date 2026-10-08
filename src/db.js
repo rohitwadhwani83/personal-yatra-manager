@@ -546,10 +546,15 @@ class Database {
   }
 
   initLocalStorageDemo() {
+    const deletedPhotos = new Set(JSON.parse(localStorage.getItem('yatra_mgr_deleted_photos') || '[]'));
     Object.keys(DEMO_DATA).forEach(key => {
       const storageKey = `yatra_mgr_${key}`;
       if (!localStorage.getItem(storageKey)) {
-        localStorage.setItem(storageKey, JSON.stringify(DEMO_DATA[key]));
+        let initialData = DEMO_DATA[key];
+        if (key === 'photos') {
+          initialData = initialData.filter(ph => !deletedPhotos.has(ph.id));
+        }
+        localStorage.setItem(storageKey, JSON.stringify(initialData));
       }
     });
 
@@ -654,41 +659,66 @@ class Database {
 
   // --- Generic Data Operations ---
   async getCollection(collectionName) {
+    const deletedRegistryKey = `yatra_mgr_deleted_${collectionName}`;
+    const localDeletedIds = new Set(JSON.parse(localStorage.getItem(deletedRegistryKey) || '[]'));
+
     if (this.isFirebaseReady) {
       try {
+        // Sync tombstones from Firestore
+        try {
+          const tombstonesSnap = await getDocs(collection(this.firestore, `deleted_${collectionName}`));
+          tombstonesSnap.forEach(d => localDeletedIds.add(d.id));
+          localStorage.setItem(deletedRegistryKey, JSON.stringify(Array.from(localDeletedIds)));
+        } catch (tErr) {}
+
         const querySnapshot = await getDocs(collection(this.firestore, collectionName));
         const list = [];
         querySnapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() });
+          const data = doc.data();
+          if (data.isDeleted || localDeletedIds.has(doc.id)) {
+            // Document was marked deleted! Record it locally and omit from active list
+            localDeletedIds.add(doc.id);
+          } else {
+            list.push({ id: doc.id, ...data });
+          }
         });
 
-        // Safe auto-sync: If local storage contains items created offline or not yet in Firestore, merge them into Firestore
+        // Safe auto-sync: Only sync items that are NOT in localDeletedIds and NOT marked deleted
         try {
           const localItems = JSON.parse(localStorage.getItem(`yatra_mgr_${collectionName}`) || '[]');
           const remoteIds = new Set(list.map(item => item.id));
           for (const localItem of localItems) {
-            if (localItem && localItem.id && !remoteIds.has(localItem.id)) {
-              const docRef = doc(this.firestore, collectionName, localItem.id);
-              await setDoc(docRef, localItem, { merge: true });
-              list.push(localItem);
-              remoteIds.add(localItem.id);
+            if (localItem && localItem.id) {
+              if (localDeletedIds.has(localItem.id) || localItem.isDeleted) {
+                // Item is deleted! Never re-upload to Firestore
+                continue;
+              }
+              if (!remoteIds.has(localItem.id)) {
+                const docRef = doc(this.firestore, collectionName, localItem.id);
+                await setDoc(docRef, localItem, { merge: true });
+                list.push(localItem);
+                remoteIds.add(localItem.id);
+              }
             }
           }
         } catch (mergeErr) {
           console.warn("Local sync merge notice:", mergeErr);
         }
 
-        // Keep local cache synced
+        // Clean local cache so deleted items are completely purged
+        const cleanedList = list.filter(item => !localDeletedIds.has(item.id) && !item.isDeleted);
         try {
-          localStorage.setItem(`yatra_mgr_${collectionName}`, JSON.stringify(list));
+          localStorage.setItem(`yatra_mgr_${collectionName}`, JSON.stringify(cleanedList));
+          localStorage.setItem(deletedRegistryKey, JSON.stringify(Array.from(localDeletedIds)));
         } catch (e) {}
 
-        return list;
+        return cleanedList;
       } catch (err) {
         console.warn("Firestore read failed, falling back to LocalStorage:", err);
       }
     }
-    return JSON.parse(localStorage.getItem(`yatra_mgr_${collectionName}`) || '[]');
+    const localList = JSON.parse(localStorage.getItem(`yatra_mgr_${collectionName}`) || '[]');
+    return localList.filter(item => !localDeletedIds.has(item.id) && !item.isDeleted);
   }
 
   async setDocument(collectionName, id, data) {
@@ -762,15 +792,33 @@ class Database {
   }
 
   async deleteDocument(collectionName, id) {
+    const deletedRegistryKey = `yatra_mgr_deleted_${collectionName}`;
+    const deletedIds = new Set(JSON.parse(localStorage.getItem(deletedRegistryKey) || '[]'));
+    deletedIds.add(id);
+    localStorage.setItem(deletedRegistryKey, JSON.stringify(Array.from(deletedIds)));
+
     if (this.isFirebaseReady) {
       try {
-        await deleteDoc(doc(this.firestore, collectionName, id));
+        const docRef = doc(this.firestore, collectionName, id);
+        // 1. Mark as tombstone in Firestore so all other syncing clients know it was deleted
+        await setDoc(docRef, { isDeleted: true, deletedAt: new Date().toISOString() }, { merge: true });
+        // 2. Also register in deleted_records collection
+        try {
+          const tombstoneRef = doc(this.firestore, `deleted_${collectionName}`, id);
+          await setDoc(tombstoneRef, { id, deletedAt: new Date().toISOString() });
+        } catch (tErr) {}
+        // 3. Attempt physical delete
+        try {
+          await deleteDoc(docRef);
+        } catch (delErr) {
+          console.warn("deleteDoc notice:", delErr);
+        }
       } catch (err) {
         console.warn("Firestore delete failed, falling back to LocalStorage:", err);
       }
     }
     const list = JSON.parse(localStorage.getItem(`yatra_mgr_${collectionName}`) || '[]');
-    const filtered = list.filter(item => item.id !== id);
+    const filtered = list.filter(item => item.id !== id && !item.isDeleted);
     localStorage.setItem(`yatra_mgr_${collectionName}`, JSON.stringify(filtered));
     return true;
   }
@@ -854,7 +902,9 @@ class Database {
 
   async getPhotos(yatraId) {
     const all = await this.getCollection('photos');
-    return all.filter(ph => ph.yatraId === yatraId);
+    const deletedRegistryKey = `yatra_mgr_deleted_photos`;
+    const deletedIds = new Set(JSON.parse(localStorage.getItem(deletedRegistryKey) || '[]'));
+    return all.filter(ph => ph.yatraId === yatraId && !ph.isDeleted && !deletedIds.has(ph.id));
   }
   async addPhoto(photo) { return this.addDocument('photos', photo); }
   async deletePhoto(id) { return this.deleteDocument('photos', id); }
