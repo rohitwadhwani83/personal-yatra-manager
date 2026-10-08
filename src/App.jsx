@@ -315,8 +315,8 @@ export default function App() {
         setRooms(rData);
       }
 
-      // Load audit logs if logged in as Super Admin
-      if (currentUser?.role === 'super_admin') {
+      // Load audit logs if logged in as Admin or Super Admin
+      if (currentUser?.role === 'super_admin' || currentUser?.role === 'admin') {
         db.getAuditLogs().then(logs => setAuditLogs(logs || [])).catch(() => {});
       }
     }
@@ -579,9 +579,10 @@ export default function App() {
           setFirstPasswordError('');
           setIsFirstLoginOpen(true);
         } else {
+          const userRole = (loginRole === 'super_admin' || matched.role === 'super_admin' || matched.email === 'rohit.wadhwani83@gmail.com') ? 'super_admin' : (matched.role || 'admin');
           setCurrentUser({ 
             email: matched.email, 
-            role: matched.role || (loginRole === 'super_admin' ? 'super_admin' : 'admin'), 
+            role: userRole, 
             name: matched.name || 'Yatra Administrator', 
             id: matched.id,
             phone: matched.phone || ''
@@ -771,7 +772,7 @@ export default function App() {
 
   // --- Super Admin Audit Trail Helpers ---
   const loadAuditLogs = async () => {
-    if (currentUser?.role !== 'super_admin') return;
+    if (currentUser?.role !== 'super_admin' && currentUser?.role !== 'admin') return;
     setIsLoadingAudit(true);
     try {
       const logs = await db.getAuditLogs();
@@ -3282,21 +3283,25 @@ export default function App() {
                   </button>
                 </>
               )}
-              {currentUser.role === 'super_admin' && (
+              {(currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
                 <>
                   <button 
                     type="button"
-                    className="btn btn-outline" 
+                    className="btn" 
                     style={{ 
                       display: 'inline-flex', 
                       alignItems: 'center', 
-                      gap: '0.4rem', 
-                      padding: '0.4rem 0.75rem', 
-                      fontSize: '0.82rem', 
-                      fontWeight: 600,
-                      borderColor: '#f59e0b',
-                      color: '#b45309',
-                      backgroundColor: '#fef3c7'
+                      gap: '0.45rem', 
+                      padding: '0.45rem 0.95rem', 
+                      fontSize: '0.85rem', 
+                      fontWeight: 700,
+                      background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                      color: '#ffffff',
+                      border: '1px solid #b45309',
+                      borderRadius: 'var(--radius-sm)',
+                      boxShadow: '0 2px 8px rgba(217, 119, 6, 0.4)',
+                      cursor: 'pointer',
+                      whiteSpace: 'nowrap'
                     }} 
                     onClick={() => {
                       setIsAuditTrailOpen(true);
@@ -3306,7 +3311,7 @@ export default function App() {
                   >
                     <ShieldCheck size={16} /> Audit Trail
                   </button>
-                  <button className="btn btn-outline" style={{ padding: '0.5rem' }} onClick={() => setIsSettingsOpen(true)} title="Super Admin Settings">
+                  <button className="btn btn-outline" style={{ padding: '0.5rem' }} onClick={() => setIsSettingsOpen(true)} title="Settings">
                     <Settings size={18} />
                   </button>
                 </>
@@ -3703,6 +3708,31 @@ export default function App() {
               <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
                 <button 
                   type="button"
+                  className="btn" 
+                  style={{ 
+                    display: 'inline-flex', 
+                    alignItems: 'center', 
+                    gap: '0.45rem', 
+                    padding: '0.5rem 1rem', 
+                    fontSize: '0.85rem', 
+                    fontWeight: 700,
+                    background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                    color: '#ffffff',
+                    border: '1px solid #b45309',
+                    borderRadius: 'var(--radius-sm)',
+                    boxShadow: '0 2px 8px rgba(217, 119, 6, 0.4)',
+                    cursor: 'pointer'
+                  }} 
+                  onClick={() => {
+                    setIsAuditTrailOpen(true);
+                    loadAuditLogs();
+                  }}
+                  title="Open Super Admin Audit Trail & Change Log"
+                >
+                  <ShieldCheck size={18} /> Audit Trail
+                </button>
+                <button 
+                  type="button"
                   className="btn btn-outline" 
                   style={{ borderColor: '#8b5cf6', color: '#7c3aed', backgroundColor: 'hsla(260, 80%, 60%, 0.08)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
                   onClick={handleCreateSandboxYatra}
@@ -3956,6 +3986,31 @@ export default function App() {
                       }}
                     >
                       <Edit2 size={13} /> Edit
+                    </button>
+
+                    <button 
+                      type="button"
+                      className="btn" 
+                      style={{ 
+                        padding: '0.35rem 0.65rem', 
+                        fontSize: '0.78rem', 
+                        fontWeight: 700, 
+                        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)', 
+                        color: '#ffffff', 
+                        border: '1px solid #b45309', 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '0.3rem', 
+                        cursor: 'pointer' 
+                      }}
+                      onClick={() => {
+                        setAuditYatraFilter(selectedYatra.id);
+                        setIsAuditTrailOpen(true);
+                        loadAuditLogs();
+                      }}
+                      title="View Audit Trail for this Yatra"
+                    >
+                      <ShieldCheck size={13} /> Audit Trail
                     </button>
 
                     {!selectedYatra.isDeleted && (
@@ -10039,7 +10094,7 @@ export default function App() {
       )}
 
       {/* MODAL: SUPER ADMIN AUDIT TRAIL & CHANGE LOG */}
-      {isAuditTrailOpen && currentUser?.role === 'super_admin' && (() => {
+      {isAuditTrailOpen && (currentUser?.role === 'super_admin' || currentUser?.role === 'admin') && (() => {
         // Compute filtered logs
         const filteredLogs = auditLogs.filter(log => {
           // Yatra filter
