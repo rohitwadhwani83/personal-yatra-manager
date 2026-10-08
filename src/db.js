@@ -95,7 +95,9 @@ const DEMO_DATA = {
       droppingStation: 'Mathura',
       remarks: 'First yatra with us.',
       status: 'confirmed',
-      paymentStatus: 'completed'
+      paymentStatus: 'completed',
+      registeredAt: '2026-10-01T09:00:00.000Z',
+      createdAt: '2026-10-01T09:00:00.000Z'
     },
     {
       id: 'p2',
@@ -117,7 +119,9 @@ const DEMO_DATA = {
       droppingStation: '',
       remarks: 'Active volunteer.',
       status: 'confirmed',
-      paymentStatus: 'completed'
+      paymentStatus: 'completed',
+      registeredAt: '2026-10-01T14:30:00.000Z',
+      createdAt: '2026-10-01T14:30:00.000Z'
     },
     {
       id: 'p3',
@@ -141,7 +145,9 @@ const DEMO_DATA = {
       droppingStation: '',
       remarks: 'Interested in registration.',
       status: 'interested',
-      paymentStatus: 'pending'
+      paymentStatus: 'pending',
+      registeredAt: '2026-10-02T10:15:00.000Z',
+      createdAt: '2026-10-02T10:15:00.000Z'
     },
     {
       id: 'p4',
@@ -166,7 +172,9 @@ const DEMO_DATA = {
       droppingStation: '',
       remarks: 'Traveling by organizer bus with family.',
       status: 'confirmed',
-      paymentStatus: 'completed'
+      paymentStatus: 'completed',
+      registeredAt: '2026-10-02T16:45:00.000Z',
+      createdAt: '2026-10-02T16:45:00.000Z'
     },
     {
       id: 'p5',
@@ -190,7 +198,9 @@ const DEMO_DATA = {
       droppingStation: '',
       remarks: 'Prefers front seats if possible.',
       status: 'confirmed',
-      paymentStatus: 'completed'
+      paymentStatus: 'completed',
+      registeredAt: '2026-10-03T11:20:00.000Z',
+      createdAt: '2026-10-03T11:20:00.000Z'
     },
     {
       id: 'p6',
@@ -212,7 +222,9 @@ const DEMO_DATA = {
       droppingStation: '',
       remarks: 'Volunteer coordinator.',
       status: 'confirmed',
-      paymentStatus: 'completed'
+      paymentStatus: 'completed',
+      registeredAt: '2026-10-03T17:10:00.000Z',
+      createdAt: '2026-10-03T17:10:00.000Z'
     },
     {
       id: 'p7',
@@ -238,7 +250,9 @@ const DEMO_DATA = {
       droppingStation: '',
       remarks: 'Requires ground floor for elderly mother. Family of 5.',
       status: 'confirmed',
-      paymentStatus: 'completed'
+      paymentStatus: 'completed',
+      registeredAt: '2026-10-04T12:00:00.000Z',
+      createdAt: '2026-10-04T12:00:00.000Z'
     }
   ],
   devotee_profiles: [
@@ -567,12 +581,26 @@ class Database {
       const partsRaw = localStorage.getItem('yatra_mgr_participants');
       if (partsRaw) {
         const parts = JSON.parse(partsRaw);
+        let pChanged = false;
         if (!parts.some(p => p.id === 'p7')) {
           const p7 = DEMO_DATA.participants.find(p => p.id === 'p7');
           if (p7) {
             parts.push(p7);
-            localStorage.setItem('yatra_mgr_participants', JSON.stringify(parts));
+            pChanged = true;
           }
+        }
+        // Ensure every participant has a registeredAt & createdAt timestamp
+        parts.forEach((p, idx) => {
+          if (!p.registeredAt && !p.createdAt) {
+            // Sequential virtual baseline spaced by hours based on order
+            const baseDate = new Date(1700000000000 + (idx + 1) * 86400000);
+            p.registeredAt = baseDate.toISOString();
+            p.createdAt = baseDate.toISOString();
+            pChanged = true;
+          }
+        });
+        if (pChanged) {
+          localStorage.setItem('yatra_mgr_participants', JSON.stringify(parts));
         }
       }
 
@@ -686,7 +714,13 @@ class Database {
 
   async addDocument(collectionName, data) {
     const id = data.id || Math.random().toString(36).substring(2, 11);
-    const newItem = { ...data, id };
+    const nowIso = new Date().toISOString();
+    const newItem = { 
+      createdAt: nowIso,
+      registeredAt: nowIso,
+      ...data, 
+      id 
+    };
     if (this.isFirebaseReady) {
       try {
         const docRef = doc(this.firestore, collectionName, id);
@@ -764,9 +798,41 @@ class Database {
 
   async getParticipants(yatraId) {
     const all = await this.getCollection('participants');
-    return all.filter(p => p.yatraId === yatraId);
+    const filtered = all.filter(p => p.yatraId === yatraId);
+    return filtered.sort((a, b) => {
+      const getTs = (p) => {
+        if (!p) return 0;
+        const d = p.registeredAt || p.createdAt || p.registeredDate;
+        if (d) {
+          if (typeof d === 'number') return d;
+          if (d.toMillis && typeof d.toMillis === 'function') return d.toMillis();
+          if (d.seconds) return d.seconds * 1000;
+          const t = new Date(d).getTime();
+          if (!isNaN(t) && t > 0) return t;
+        }
+        if (p.id && typeof p.id === 'string') {
+          const m = p.id.match(/\d{10,13}/);
+          if (m) {
+            const ts = parseInt(m[0], 10);
+            if (ts > 1000000000) return ts > 1000000000000 ? ts : ts * 1000;
+          }
+          const seq = p.id.match(/^p(\d+)$/i);
+          if (seq) return 1700000000000 + parseInt(seq[1], 10) * 86400000;
+        }
+        return 0;
+      };
+      return getTs(b) - getTs(a);
+    });
   }
-  async addParticipant(participant) { return this.addDocument('participants', participant); }
+  async addParticipant(participant) { 
+    const nowIso = new Date().toISOString();
+    const withTimestamps = {
+      ...participant,
+      registeredAt: participant.registeredAt || participant.createdAt || nowIso,
+      createdAt: participant.createdAt || participant.registeredAt || nowIso
+    };
+    return this.addDocument('participants', withTimestamps); 
+  }
   async updateParticipant(id, updates) { return this.updateDocument('participants', id, updates); }
   async deleteParticipant(id) { return this.deleteDocument('participants', id); }
 

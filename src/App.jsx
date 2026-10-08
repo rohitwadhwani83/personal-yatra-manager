@@ -7,11 +7,60 @@ import {
   Sparkles, UserCheck, Lock, Clock,
   Bus, Bed, Shuffle,
   Key, EyeOff, Copy, ShieldCheck,
-  Printer, Languages, BookOpen
+  Printer, Languages, BookOpen, ArrowUpDown
 } from 'lucide-react';
 import db from './db';
 import JSZip from 'jszip';
 import { getTranslation } from './translations';
+
+// Participant Registration Timestamp & Date Helpers (for chronologically sorting newest on top)
+const getParticipantTimestamp = (part) => {
+  if (!part) return 0;
+  const raw = part.registeredAt || part.createdAt || part.registeredDate;
+  if (raw) {
+    if (typeof raw === 'number') return raw;
+    if (raw.toMillis && typeof raw.toMillis === 'function') return raw.toMillis();
+    if (raw.seconds) return raw.seconds * 1000;
+    const parsed = new Date(raw).getTime();
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  // Check if id contains numeric timestamp
+  if (part.id && typeof part.id === 'string') {
+    const match = part.id.match(/\d{10,13}/);
+    if (match) {
+      const ts = parseInt(match[0], 10);
+      if (ts > 1000000000) return ts > 1000000000000 ? ts : ts * 1000;
+    }
+    // Sequential mock IDs like 'p1', 'p2', ... 'p7'
+    const seq = part.id.match(/^p(\d+)$/i);
+    if (seq) {
+      return 1700000000000 + parseInt(seq[1], 10) * 86400000;
+    }
+  }
+  return 0;
+};
+
+const formatRegistrationDate = (part, includeYear = false) => {
+  if (!part) return null;
+  const raw = part.registeredAt || part.createdAt || part.registeredDate;
+  if (!raw) return null;
+  try {
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return null;
+    const options = {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit'
+    };
+    if (includeYear) {
+      options.year = 'numeric';
+    }
+    return d.toLocaleDateString('en-IN', options);
+  } catch (e) {
+    return null;
+  }
+};
 
 // Dynamic QR code API helper
 const getUPIQRCodeUrl = (upiId, name, amount = 0, memo = 'Yatra Payment') => {
@@ -199,6 +248,7 @@ export default function App() {
   // Participants Tab Enhanced UI States
   const [participantViewMode, setParticipantViewMode] = useState('table'); // 'table' | 'cards'
   const [participantFilter, setParticipantFilter] = useState('all'); // 'all' | 'confirmed' | 'interested' | 'partially_paid' | 'completed'
+  const [participantSortOrder, setParticipantSortOrder] = useState('newest'); // 'newest' | 'oldest' | 'name' | 'seats'
   const [expandedParticipantId, setExpandedParticipantId] = useState(null);
 
   // Devotee Profile Auto-fill States
@@ -244,7 +294,9 @@ export default function App() {
         const rData = await db.getRooms(selectedYatra.id);
 
         setHotels(hData);
-        setParticipants(pData);
+        // Ensure participants are chronologically sorted latest first
+        const sortedPData = [...pData].sort((a, b) => getParticipantTimestamp(b) - getParticipantTimestamp(a));
+        setParticipants(sortedPData);
         setPayments(payData);
         setExpenses(eData);
         setPhotos(phData);
@@ -1285,13 +1337,16 @@ export default function App() {
       : (newParticipant.membersCount || 1);
 
     const isAppr = newParticipant.approvalStatus === 'approved' || newParticipant.isApproved === true;
+    const nowIso = new Date().toISOString();
     const partToSave = { 
       ...newParticipant, 
       memberDetails,
       membersCount,
       approvalStatus: isAppr ? 'approved' : 'pending',
       isApproved: isAppr,
-      yatraId: selectedYatra.id 
+      yatraId: selectedYatra.id,
+      registeredAt: newParticipant.registeredAt || newParticipant.createdAt || nowIso,
+      createdAt: newParticipant.createdAt || newParticipant.registeredAt || nowIso
     };
 
     if (editingParticipantId) {
@@ -2031,7 +2086,8 @@ export default function App() {
       approvalStatus: 'pending',
       isApproved: false,
       paymentStatus: 'pending',
-      registeredAt: new Date().toISOString()
+      registeredAt: new Date().toISOString(),
+      createdAt: new Date().toISOString()
     };
     await db.addParticipant(participantRecord);
     await db.saveDevoteeProfile(participantRecord);
@@ -5132,7 +5188,7 @@ export default function App() {
                 : participants;
 
               // 2. Participants matching both search filter AND active status filter pill
-              const displayedParticipants = baseFiltered.filter(p => {
+              const filteredList = baseFiltered.filter(p => {
                 const split = expCalc.splits.find(s => s.id === p.id);
                 const devStatus = (split?.dynamicPaymentStatus === 'completed' && p.status === 'interested') ? 'confirmed' : (split?.dynamicDevoteeStatus || p.status);
                 const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
@@ -5146,6 +5202,27 @@ export default function App() {
                 if (participantFilter === 'partially_paid') return payStatus === 'partially_paid';
                 if (participantFilter === 'completed') return payStatus === 'completed';
                 return true; // 'all'
+              });
+
+              // 3. Chronological sorting: latest registration on top by default
+              const displayedParticipants = [...filteredList].sort((a, b) => {
+                if (participantSortOrder === 'oldest') {
+                  const diff = getParticipantTimestamp(a) - getParticipantTimestamp(b);
+                  return diff !== 0 ? diff : (a.name || '').localeCompare(b.name || '');
+                }
+                if (participantSortOrder === 'name') {
+                  return (a.name || '').localeCompare(b.name || '');
+                }
+                if (participantSortOrder === 'seats') {
+                  const seatsA = a.type === 'family' ? (a.membersCount || a.familyMembers?.length || 1) : 1;
+                  const seatsB = b.type === 'family' ? (b.membersCount || b.familyMembers?.length || 1) : 1;
+                  return seatsB - seatsA;
+                }
+                // Default: 'newest' (latest registration on top, earliest at the bottom)
+                const tsA = getParticipantTimestamp(a);
+                const tsB = getParticipantTimestamp(b);
+                if (tsB !== tsA) return tsB - tsA;
+                return 0;
               });
 
               const pendingCount = participants.filter(p => !isDevoteeApproved(p)).length;
@@ -5279,8 +5356,23 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* View Switcher & Register Button */}
-                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    {/* View Switcher, Sort Selector & Register Button */}
+                    <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                      {/* Sort Selector */}
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '0.2rem 0.5rem', border: '1px solid var(--border)' }} title="Sort Order">
+                        <ArrowUpDown size={14} style={{ color: 'var(--text-muted)' }} />
+                        <select 
+                          value={participantSortOrder} 
+                          onChange={(e) => setParticipantSortOrder(e.target.value)}
+                          style={{ border: 'none', background: 'transparent', fontSize: '0.78rem', color: 'var(--text)', outline: 'none', cursor: 'pointer', fontWeight: 500 }}
+                        >
+                          <option value="newest">🕒 Newest First (Latest on Top)</option>
+                          <option value="oldest">⏳ Oldest First (1st at Top)</option>
+                          <option value="name">🔤 Name (A → Z)</option>
+                          <option value="seats">👥 Group Size / Seats</option>
+                        </select>
+                      </div>
+
                       <div style={{ display: 'flex', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)', padding: '0.2rem', border: '1px solid var(--border)' }}>
                         <button 
                           className={`btn ${participantViewMode === 'table' ? 'btn-primary' : ''}`}
@@ -5384,11 +5476,18 @@ export default function App() {
                                     <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
                                       📞 {part.phone}
                                     </div>
-                                    {part.location && (
-                                      <span style={{ fontSize: '0.7rem', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', padding: '0.1rem 0.35rem', borderRadius: '3px', display: 'inline-block', marginTop: '0.2rem' }}>
-                                        📍 {part.location}
-                                      </span>
-                                    )}
+                                    <div style={{ display: 'flex', gap: '0.35rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                                      {part.location && (
+                                        <span style={{ fontSize: '0.7rem', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', padding: '0.1rem 0.35rem', borderRadius: '3px' }}>
+                                          📍 {part.location}
+                                        </span>
+                                      )}
+                                      {formatRegistrationDate(part) && (
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', padding: '0.1rem 0.35rem', borderRadius: '3px', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }} title="Registration Date & Time">
+                                          🕒 {formatRegistrationDate(part)}
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
 
                                   {/* Group / Seats */}
@@ -5621,6 +5720,9 @@ export default function App() {
                                             {part.boardingStation && <div><strong>Boarding Station:</strong> {part.boardingStation}</div>}
                                             {part.droppingStation && <div><strong>Dropping Station:</strong> {part.droppingStation}</div>}
                                             <div><strong>Email:</strong> {part.email || '—'}</div>
+                                            {formatRegistrationDate(part, true) && (
+                                              <div><strong>🕒 Registered:</strong> {formatRegistrationDate(part, true)}</div>
+                                            )}
                                             {part.remarks && (
                                               <div style={{ marginTop: '0.35rem', padding: '0.4rem', backgroundColor: 'var(--bg)', borderRadius: '4px', fontSize: '0.78rem' }}>
                                                 <strong>Remarks:</strong> {part.remarks}
@@ -5775,6 +5877,11 @@ export default function App() {
                                 <div>
                                   <h4 style={{ margin: 0, fontSize: '1.05rem', color: 'var(--text)' }}>{part.name}</h4>
                                   <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>📞 {part.phone} {part.location ? `• ${part.location}` : ''}</span>
+                                  {formatRegistrationDate(part) && (
+                                    <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem', display: 'flex', alignItems: 'center', gap: '0.25rem' }}>
+                                      <Clock size={11} /> Registered: {formatRegistrationDate(part)}
+                                    </div>
+                                  )}
                                 </div>
                                 <button 
                                   className={`badge badge-${effectiveDevoteeStatus}`} 
