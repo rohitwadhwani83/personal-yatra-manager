@@ -170,6 +170,14 @@ export default function App() {
   const [editingParticipantId, setEditingParticipantId] = useState(null);
   const [isAddExpenseOpen, setIsAddExpenseOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isAuditTrailOpen, setIsAuditTrailOpen] = useState(false);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditSearchQuery, setAuditSearchQuery] = useState('');
+  const [auditRoleFilter, setAuditRoleFilter] = useState('all');
+  const [auditCategoryFilter, setAuditCategoryFilter] = useState('all');
+  const [auditYatraFilter, setAuditYatraFilter] = useState('all');
+  const [auditDateFilter, setAuditDateFilter] = useState('all');
+  const [isLoadingAudit, setIsLoadingAudit] = useState(false);
   const [isUploadDocOpen, setIsUploadDocOpen] = useState(false);
   const [isEditProfileOpen, setIsEditProfileOpen] = useState(false);
   const [isAddBusOpen, setIsAddBusOpen] = useState(false);
@@ -305,6 +313,11 @@ export default function App() {
         setDocuments(dData);
         setBuses(bData);
         setRooms(rData);
+      }
+
+      // Load audit logs if logged in as Super Admin
+      if (currentUser?.role === 'super_admin') {
+        db.getAuditLogs().then(logs => setAuditLogs(logs || [])).catch(() => {});
       }
     }
     loadData();
@@ -756,15 +769,182 @@ export default function App() {
     navigateTo('login');
   };
 
+  // --- Super Admin Audit Trail Helpers ---
+  const loadAuditLogs = async () => {
+    if (currentUser?.role !== 'super_admin') return;
+    setIsLoadingAudit(true);
+    try {
+      const logs = await db.getAuditLogs();
+      setAuditLogs(logs || []);
+    } catch (err) {
+      console.warn("Could not load audit logs:", err);
+    } finally {
+      setIsLoadingAudit(false);
+    }
+  };
+
+  const getCurrentActor = () => {
+    if (currentUser?.role === 'super_admin') {
+      return {
+        id: currentUser.id || 'super_admin_1',
+        name: currentUser.name || 'Rohit Wadhwani',
+        phone: currentUser.phone || '+919876543210',
+        email: currentUser.email || 'rohit.wadhwani83@gmail.com',
+        role: 'super_admin'
+      };
+    }
+    if (currentUser?.role === 'admin') {
+      return {
+        id: currentUser.id || 'admin_1',
+        name: currentUser.name || 'Admin',
+        phone: currentUser.phone || '',
+        email: currentUser.email || 'admin@yatra.com',
+        role: 'admin'
+      };
+    }
+    if (myParticipantData) {
+      return {
+        id: myParticipantData.id || '',
+        name: myParticipantData.name || 'Devotee',
+        phone: myParticipantData.phone || devoteeLoginPhone || '',
+        email: myParticipantData.email || '',
+        role: 'devotee'
+      };
+    }
+    if (currentUser?.role === 'participant') {
+      return {
+        id: currentUser.phone || devoteeLoginPhone || '',
+        name: currentUser.name || 'Devotee',
+        phone: currentUser.phone || devoteeLoginPhone || '',
+        email: currentUser.email || '',
+        role: 'devotee'
+      };
+    }
+    return {
+      id: 'devotee_guest',
+      name: 'Devotee (Public Portal)',
+      phone: '',
+      email: '',
+      role: 'devotee'
+    };
+  };
+
+  const recordAudit = async ({ yatraId, yatraTitle, category, action, details, actorOverride, metadata }) => {
+    try {
+      const actor = actorOverride || getCurrentActor();
+      const targetYatra = (yatras && yatras.find(y => y.id === (yatraId || selectedYatra?.id))) || selectedYatra;
+      const yId = yatraId || (targetYatra ? targetYatra.id : 'global');
+      const yTitle = yatraTitle || (targetYatra ? targetYatra.name : 'System Wide');
+
+      const entry = await db.logAudit({
+        yatraId: yId,
+        yatraTitle: yTitle,
+        category: category || 'General',
+        action: action || 'UPDATE',
+        details: details || '',
+        actor,
+        metadata: metadata || {}
+      });
+
+      // Update in-memory audit logs if Super Admin is active
+      if (entry && currentUser?.role === 'super_admin') {
+        setAuditLogs(prev => [entry, ...prev.filter(p => p.id !== entry.id)]);
+      }
+    } catch (err) {
+      console.warn("Could not record audit log:", err);
+    }
+  };
+
+  const formatAuditTimestamp = (rawTs) => {
+    if (!rawTs) return '';
+    try {
+      const d = new Date(rawTs);
+      if (isNaN(d.getTime())) return String(rawTs);
+      return d.toLocaleDateString('en-IN', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit'
+      });
+    } catch (e) {
+      return String(rawTs);
+    }
+  };
+
+  const getRelativeTime = (rawTs) => {
+    if (!rawTs) return '';
+    try {
+      const d = new Date(rawTs).getTime();
+      if (isNaN(d)) return '';
+      const diffSec = Math.floor((Date.now() - d) / 1000);
+      if (diffSec < 60) return 'Just now';
+      const diffMin = Math.floor(diffSec / 60);
+      if (diffMin < 60) return `${diffMin}m ago`;
+      const diffHr = Math.floor(diffMin / 60);
+      if (diffHr < 24) return `${diffHr}h ago`;
+      const diffDays = Math.floor(diffHr / 24);
+      if (diffDays < 30) return `${diffDays}d ago`;
+      return '';
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const exportAuditCsv = (logsToExport = []) => {
+    const data = logsToExport.length > 0 ? logsToExport : auditLogs;
+    if (!data || data.length === 0) {
+      alert("No audit logs available to export.");
+      return;
+    }
+    const headers = ["Timestamp", "Yatra", "Category", "Action", "Actor Name", "Actor Phone", "Actor Role", "Actor Email", "Details"];
+    const rows = data.map(log => [
+      `"${log.timestamp || ''}"`,
+      `"${(log.yatraTitle || '').replace(/"/g, '""')}"`,
+      `"${(log.category || '').replace(/"/g, '""')}"`,
+      `"${(log.action || '').replace(/"/g, '""')}"`,
+      `"${(log.actor?.name || '').replace(/"/g, '""')}"`,
+      `"${(log.actor?.phone || '').replace(/"/g, '""')}"`,
+      `"${(log.actor?.role || '').replace(/"/g, '""')}"`,
+      `"${(log.actor?.email || '').replace(/"/g, '""')}"`,
+      `"${(log.details || '').replace(/"/g, '""')}"`
+    ]);
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Super_Admin_Audit_Trail_${new Date().toISOString().split('T')[0]}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   // --- CRUD Operation Triggers ---
   const handleCreateYatra = async (e) => {
     e.preventDefault();
+    const actor = getCurrentActor();
     if (editingYatraId) {
       await db.updateYatra(editingYatraId, newYatra);
+      await recordAudit({
+        yatraId: editingYatraId,
+        yatraTitle: newYatra.name,
+        category: 'Yatra Settings',
+        action: 'YATRA_UPDATED',
+        details: `${actor.name} (${actor.phone || actor.email}) updated configuration for Yatra "${newYatra.name}". Destination: ${newYatra.destination}, Dates: ${newYatra.startDate} to ${newYatra.endDate}, Price/Person: ₹${newYatra.pricePerPerson || '0'}.`,
+        metadata: { yatraId: editingYatraId }
+      });
       setEditingYatraId(null);
     } else {
       const id = 'yatra_' + Math.random().toString(36).substring(2, 9);
       await db.addYatra({ ...newYatra, id, status: 'planning', isDeleted: false });
+      await recordAudit({
+        yatraId: id,
+        yatraTitle: newYatra.name,
+        category: 'Yatra Settings',
+        action: 'YATRA_CREATED',
+        details: `${actor.name} (${actor.phone || actor.email}) created new Yatra "${newYatra.name}" to ${newYatra.destination} (${newYatra.startDate} to ${newYatra.endDate}). Target: ${newYatra.expectedParticipants || 30} pilgrims.`,
+        metadata: { yatraId: id }
+      });
     }
     setIsCreateYatraOpen(false);
     setNewYatra({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, pricePerPerson: '', customQrImageUrl: '', upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
@@ -1154,7 +1334,16 @@ export default function App() {
       return handlePurgeSandbox(yatraId);
     }
     if (window.confirm("Are you sure you want to delete this Yatra? It will be archived.")) {
+      const actor = getCurrentActor();
       await db.softDeleteYatra(yatraId);
+      await recordAudit({
+        yatraId,
+        yatraTitle: targetYatra?.name || 'Yatra',
+        category: 'Yatra Settings',
+        action: 'YATRA_DELETED',
+        details: `${actor.name} (${actor.phone || actor.email}) deleted and archived Yatra "${targetYatra?.name || yatraId}".`,
+        metadata: { yatraId }
+      });
       if (selectedYatra?.id === yatraId) {
         setSelectedYatra(null);
         navigateTo('dashboard');
@@ -1165,7 +1354,17 @@ export default function App() {
 
   const handleRestoreYatra = async (yatraId) => {
     if (window.confirm("Restore this Yatra to active status?")) {
+      const targetYatra = yatras.find(y => y.id === yatraId);
+      const actor = getCurrentActor();
       await db.restoreYatra(yatraId);
+      await recordAudit({
+        yatraId,
+        yatraTitle: targetYatra?.name || 'Yatra',
+        category: 'Yatra Settings',
+        action: 'YATRA_RESTORED',
+        details: `${actor.name} (${actor.phone || actor.email}) restored archived Yatra "${targetYatra?.name || yatraId}" back to active status.`,
+        metadata: { yatraId }
+      });
       setRefreshTrigger(prev => prev + 1);
     }
   };
@@ -1278,24 +1477,51 @@ export default function App() {
 
   const handleDeleteParticipant = async (participantId, participantName) => {
     if (window.confirm(`Are you sure you want to delete registration for ${participantName || 'this devotee'}? This will remove them from participants, bus, and room lists.`)) {
+      const actor = getCurrentActor();
       await db.deleteParticipant(participantId);
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Participants',
+        action: 'PARTICIPANT_DELETED',
+        details: `${actor.name} (${actor.phone || actor.email}) deleted registration for devotee "${participantName || participantId}".`,
+        metadata: { participantId, participantName }
+      });
       setRefreshTrigger(prev => prev + 1);
     }
   };
 
   const handleApproveEligibility = async (participant) => {
+    const actor = getCurrentActor();
     await db.updateParticipant(participant.id, {
       approvalStatus: 'approved',
       isApproved: true
+    });
+    await recordAudit({
+      yatraId: selectedYatra?.id,
+      yatraTitle: selectedYatra?.name,
+      category: 'Participants',
+      action: 'ELIGIBILITY_APPROVED',
+      details: `${actor.name} (${actor.phone || actor.email}) approved Yatra eligibility for ${participant.name} (Mobile: ${participant.phone || 'N/A'}). Payment options unlocked.`,
+      metadata: { participantId: participant.id }
     });
     setRefreshTrigger(prev => prev + 1);
   };
 
   const handleRevokeEligibility = async (participant) => {
     if (window.confirm(`Revoke Yatra eligibility approval for ${participant.name || 'this devotee'}? This will lock payment options for them.`)) {
+      const actor = getCurrentActor();
       await db.updateParticipant(participant.id, {
         approvalStatus: 'pending',
         isApproved: false
+      });
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Participants',
+        action: 'ELIGIBILITY_REVOKED',
+        details: `${actor.name} (${actor.phone || actor.email}) revoked Yatra eligibility for ${participant.name} (Mobile: ${participant.phone || 'N/A'}). Payment options locked.`,
+        metadata: { participantId: participant.id }
       });
       setRefreshTrigger(prev => prev + 1);
     }
@@ -1305,12 +1531,21 @@ export default function App() {
     const pendingParticipants = participants.filter(p => !isDevoteeApproved(p));
     if (pendingParticipants.length === 0) return;
     if (window.confirm(`Approve all ${pendingParticipants.length} pending devotee registration(s) for ${selectedYatra?.name || 'this Yatra'}? This will enable payment options for all of them.`)) {
+      const actor = getCurrentActor();
       for (const p of pendingParticipants) {
         await db.updateParticipant(p.id, {
           approvalStatus: 'approved',
           isApproved: true
         });
       }
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Participants',
+        action: 'BULK_ELIGIBILITY_APPROVED',
+        details: `${actor.name} (${actor.phone || actor.email}) bulk-approved Yatra eligibility for ${pendingParticipants.length} pending devotee registrations.`,
+        metadata: { count: pendingParticipants.length }
+      });
       setRefreshTrigger(prev => prev + 1);
     }
   };
@@ -1350,12 +1585,29 @@ export default function App() {
       createdAt: newParticipant.createdAt || newParticipant.registeredAt || nowIso
     };
 
+    const actor = getCurrentActor();
     if (editingParticipantId) {
       await db.updateParticipant(editingParticipantId, partToSave);
+      await recordAudit({
+        yatraId: selectedYatra.id,
+        yatraTitle: selectedYatra.name,
+        category: 'Participants',
+        action: 'PARTICIPANT_UPDATED',
+        details: `${actor.name} (${actor.phone || actor.email}) updated devotee registration for ${partToSave.name} (Mobile: ${partToSave.phone}, ${partToSave.type === 'family' ? `Family of ${partToSave.membersCount}` : 'Individual'}).`,
+        metadata: { participantId: editingParticipantId }
+      });
       setEditingParticipantId(null);
     } else {
       await db.addParticipant(partToSave);
       await db.saveDevoteeProfile(newParticipant);
+      await recordAudit({
+        yatraId: selectedYatra.id,
+        yatraTitle: selectedYatra.name,
+        category: 'Participants',
+        action: 'PARTICIPANT_MANUALLY_ADDED',
+        details: `${actor.name} (${actor.phone || actor.email}) manually registered devotee ${partToSave.name} (Mobile: ${partToSave.phone}, ${partToSave.type === 'family' ? `Family of ${partToSave.membersCount}` : 'Individual'}).`,
+        metadata: { participantId: partToSave.id }
+      });
     }
     setIsAddParticipantOpen(false);
     setAdminAutoFilledDevotee(null);
@@ -2009,9 +2261,34 @@ export default function App() {
       amount: parseFloat(newExpense.amount)
     };
     await db.addExpense(exp);
+    const actor = getCurrentActor();
+    await recordAudit({
+      yatraId: selectedYatra.id,
+      yatraTitle: selectedYatra.name,
+      category: 'Expenses',
+      action: 'EXPENSE_ADDED',
+      details: `${actor.name} (${actor.phone || actor.email}) recorded expense of ₹${exp.amount.toLocaleString()} for "${exp.category.toUpperCase()}". Paid by: ${exp.paidBy || 'Organizer'}. Remarks: ${exp.remarks || 'None'}.`,
+      metadata: { amount: exp.amount, category: exp.category, paidBy: exp.paidBy }
+    });
     setIsAddExpenseOpen(false);
     setNewExpense({ date: new Date().toISOString().split('T')[0], category: 'hotel', amount: '', paidBy: '', remarks: '', appliesTo: 'everyone', targetIds: [], billImageUrl: '' });
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleDeleteExpense = async (exp) => {
+    if (window.confirm(`Delete expense of ₹${exp.amount?.toLocaleString()} (${exp.category})?`)) {
+      await db.deleteExpense(exp.id);
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Expenses',
+        action: 'EXPENSE_DELETED',
+        details: `${actor.name} (${actor.phone || actor.email}) deleted expense of ₹${exp.amount?.toLocaleString()} (${exp.category.toUpperCase()}, Paid by: ${exp.paidBy || 'Organizer'}).`,
+        metadata: { expenseId: exp.id, amount: exp.amount }
+      });
+      setRefreshTrigger(prev => prev + 1);
+    }
   };
 
   // Image upload handler with intelligent client-side canvas compression (prevents LocalStorage QuotaExceeded errors)
@@ -2092,6 +2369,21 @@ export default function App() {
     };
     await db.addParticipant(participantRecord);
     await db.saveDevoteeProfile(participantRecord);
+    await recordAudit({
+      yatraId: selectedYatra.id,
+      yatraTitle: selectedYatra.name,
+      category: 'Participants',
+      action: 'DEVOTEE_REGISTERED',
+      details: `Devotee "${participantRecord.name}" (Mobile: ${participantRecord.phone}) registered online for ${selectedYatra.name} (${participantRecord.type === 'family' ? `Family of ${participantRecord.membersCount}` : 'Individual'}).`,
+      actorOverride: {
+        id: participantRecord.id,
+        name: participantRecord.name,
+        phone: participantRecord.phone,
+        email: participantRecord.email || '',
+        role: 'devotee'
+      },
+      metadata: { participantId: participantRecord.id, membersCount: participantRecord.membersCount }
+    });
     setPaymentParticipant(participantRecord);
     
     // Pre-calculate payment amount
@@ -2136,6 +2428,21 @@ export default function App() {
       partUpdates.cashPromiseAmount = parseFloat(publicPayAmount);
     }
     await db.updateParticipant(currentRoute.id, partUpdates);
+    await recordAudit({
+      yatraId: selectedYatra.id,
+      yatraTitle: selectedYatra.name,
+      category: 'Payments',
+      action: 'PAYMENT_SUBMITTED',
+      details: `Devotee "${paymentParticipant?.name || 'Devotee'}" (Mobile: ${paymentParticipant?.phone || ''}) submitted payment proof of ₹${publicPayAmount} via ${publicPayMethod.toUpperCase()} (Ref: ${publicPayMethod === 'upi' ? publicPayRef : 'Cash Promised'}).`,
+      actorOverride: {
+        id: paymentParticipant?.id || '',
+        name: paymentParticipant?.name || 'Devotee',
+        phone: paymentParticipant?.phone || '',
+        email: paymentParticipant?.email || '',
+        role: 'devotee'
+      },
+      metadata: { amount: publicPayAmount, paymentMethod: publicPayMethod }
+    });
     setPublicPayStatus('success');
   };
 
@@ -2160,6 +2467,21 @@ export default function App() {
       paymentStatus: 'pending'
     };
     const updated = await db.updateParticipant(myParticipantData.id, updates);
+    await recordAudit({
+      yatraId: selectedYatra.id,
+      yatraTitle: selectedYatra.name,
+      category: 'Payments',
+      action: 'CASH_PROMISED',
+      details: `Devotee "${myParticipantData.name}" (Mobile: ${myParticipantData.phone}) promised cash contribution of ₹${cleanAmount.toLocaleString()} by ${devoteeCashPromiseDate}. Handover Notes: ${devoteeCashPromiseNotes || 'None'}.`,
+      actorOverride: {
+        id: myParticipantData.id,
+        name: myParticipantData.name,
+        phone: myParticipantData.phone,
+        email: myParticipantData.email || '',
+        role: 'devotee'
+      },
+      metadata: { promisedAmount: cleanAmount, promiseDate: devoteeCashPromiseDate, notes: devoteeCashPromiseNotes }
+    });
     setMyParticipantData(updated);
     setRefreshTrigger(prev => prev + 1);
     alert(`Hare Krishna! Your commitment to pay ₹${cleanAmount.toLocaleString()} in cash by ${devoteeCashPromiseDate} has been recorded. The organizers will verify upon receiving the cash.`);
@@ -2194,6 +2516,15 @@ export default function App() {
       paymentStatus: newPayStatus,
       status: 'confirmed',
       cashReceivedDate: new Date().toISOString()
+    });
+    const actor = getCurrentActor();
+    await recordAudit({
+      yatraId: selectedYatra.id,
+      yatraTitle: selectedYatra.name,
+      category: 'Payments',
+      action: 'CASH_COLLECTED',
+      details: `${actor.name} (${actor.phone || actor.email}) recorded & verified cash received of ₹${amount.toLocaleString()} from devotee "${part.name}" (Mobile: ${part.phone}).`,
+      metadata: { participantId: part.id, amount, paymentMethod: 'cash' }
     });
     setRefreshTrigger(prev => prev + 1);
     alert(`✓ Successfully recorded cash payment of ₹${amount.toLocaleString()} for ${part.name}!`);
@@ -2242,6 +2573,21 @@ export default function App() {
 
     const updated = await db.updateParticipant(myParticipantData.id, dataToSave);
     await db.saveDevoteeProfile(dataToSave);
+    await recordAudit({
+      yatraId: selectedYatra?.id || 'global',
+      yatraTitle: selectedYatra?.name || 'Devotee Profile',
+      category: 'Participants',
+      action: 'DEVOTEE_PROFILE_UPDATED',
+      details: `Devotee "${dataToSave.name}" (Mobile: ${dataToSave.phone}) updated profile details (${isFamily ? `Family Group with ${membersCount} members: ${memberDetails}` : 'Individual'}). Location: ${dataToSave.location || 'N/A'}.`,
+      actorOverride: {
+        id: myParticipantData.id,
+        name: dataToSave.name,
+        phone: dataToSave.phone,
+        email: dataToSave.email || '',
+        role: 'devotee'
+      },
+      metadata: { membersCount, familyName: dataToSave.familyName, location: dataToSave.location }
+    });
     setMyParticipantData(updated);
     setIsEditProfileOpen(false);
     alert("✓ Profile updated successfully!");
@@ -2283,6 +2629,16 @@ export default function App() {
     } else {
       await db.updateParticipant(participantId, { paymentStatus: 'pending' });
     }
+    const actor = getCurrentActor();
+    const targetPart = participants.find(p => p.id === participantId);
+    await recordAudit({
+      yatraId: selectedYatra?.id,
+      yatraTitle: selectedYatra?.name,
+      category: 'Payments',
+      action: 'PAYMENT_VERIFIED',
+      details: `${actor.name} (${actor.phone || actor.email}) updated payment verification status to "${status}" for devotee "${targetPart?.name || participantId}" (Mobile: ${targetPart?.phone || 'N/A'}).`,
+      metadata: { paymentId, participantId, status }
+    });
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -2443,12 +2799,22 @@ export default function App() {
     if (!window.confirm("Are you sure you want to permanently delete this photo? It will be removed immediately from both Admin and Devotee galleries.")) {
       return;
     }
+    const targetPhoto = (photos && photos.find(p => p.id === photoId)) || (myPhotos && myPhotos.find(p => p.id === photoId));
     // Optimistic UI update: instantly remove from screen
     setPhotos(prev => prev.filter(p => p.id !== photoId));
     setMyPhotos(prev => prev.filter(p => p.id !== photoId));
 
     try {
       await db.deletePhoto(photoId);
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Gallery',
+        action: 'PHOTO_DELETED',
+        details: `${actor.name} (${actor.phone || actor.email}) deleted photo from Yatra gallery (Uploader: ${targetPhoto?.uploader || 'Unknown'}, ID: ${photoId}).`,
+        metadata: { photoId, uploader: targetPhoto?.uploader }
+      });
       setRefreshTrigger(prev => prev + 1);
     } catch (err) {
       console.error("Failed to delete photo:", err);
@@ -2585,6 +2951,14 @@ export default function App() {
     };
 
     const added = await db.addUser(adminRecord);
+    await recordAudit({
+      yatraId: 'global',
+      yatraTitle: 'Super Admin Access',
+      category: 'Admin Access',
+      action: 'ADMIN_INVITED',
+      details: `Super Admin invited secondary administrator "${adminRecord.name}" (Email: ${adminRecord.email}, Mobile: ${adminRecord.phone || 'N/A'}).`,
+      metadata: { adminEmail: adminRecord.email, adminName: adminRecord.name }
+    });
     setCreatedAdminSuccess({
       ...added,
       loginUrl: generateAdminInviteUrl(added)
@@ -2603,6 +2977,14 @@ export default function App() {
         password: tempPassword,
         mustChangePassword: true,
         passwordUpdatedAt: new Date().toISOString()
+      });
+      await recordAudit({
+        yatraId: 'global',
+        yatraTitle: 'Super Admin Access',
+        category: 'Admin Access',
+        action: 'ADMIN_PASSWORD_RESET',
+        details: `Super Admin reset temporary credentials for administrator "${adminUser.name}" (Email: ${adminUser.email}). First-login password change enforced.`,
+        metadata: { adminEmail: adminUser.email }
       });
       const updatedAdmin = {
         ...adminUser,
@@ -2628,7 +3010,16 @@ export default function App() {
 
   const handleDeleteAdmin = async (id) => {
     if (window.confirm("Are you sure you want to completely remove this admin's access?")) {
+      const targetAdmin = systemUsers.find(u => u.id === id);
       await db.deleteUser(id);
+      await recordAudit({
+        yatraId: 'global',
+        yatraTitle: 'Super Admin Access',
+        category: 'Admin Access',
+        action: 'ADMIN_DELETED',
+        details: `Super Admin deleted administrator access for "${targetAdmin?.name || 'Administrator'}" (Email: ${targetAdmin?.email || id}).`,
+        metadata: { adminId: id, adminEmail: targetAdmin?.email }
+      });
       setRefreshTrigger(prev => prev + 1);
     }
   };
@@ -2892,9 +3283,33 @@ export default function App() {
                 </>
               )}
               {currentUser.role === 'super_admin' && (
-                <button className="btn btn-outline" style={{ padding: '0.5rem' }} onClick={() => setIsSettingsOpen(true)}>
-                  <Settings size={18} />
-                </button>
+                <>
+                  <button 
+                    type="button"
+                    className="btn btn-outline" 
+                    style={{ 
+                      display: 'inline-flex', 
+                      alignItems: 'center', 
+                      gap: '0.4rem', 
+                      padding: '0.4rem 0.75rem', 
+                      fontSize: '0.82rem', 
+                      fontWeight: 600,
+                      borderColor: '#f59e0b',
+                      color: '#b45309',
+                      backgroundColor: '#fef3c7'
+                    }} 
+                    onClick={() => {
+                      setIsAuditTrailOpen(true);
+                      loadAuditLogs();
+                    }}
+                    title="Super Admin Audit Trail & Change Log"
+                  >
+                    <ShieldCheck size={16} /> Audit Trail
+                  </button>
+                  <button className="btn btn-outline" style={{ padding: '0.5rem' }} onClick={() => setIsSettingsOpen(true)} title="Super Admin Settings">
+                    <Settings size={18} />
+                  </button>
+                </>
               )}
               <button className="btn btn-danger" onClick={handleLogout}>
                 <LogOut size={16} /> Logout
@@ -6333,7 +6748,7 @@ export default function App() {
                                 <td><span style={{ textTransform: 'capitalize' }}>{exp.appliesTo}</span></td>
                                 <td style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>{exp.remarks}</td>
                                 <td>
-                                  <button className="btn btn-danger btn-icon" onClick={() => db.deleteExpense(exp.id).then(() => setRefreshTrigger(prev => prev + 1))}>
+                                  <button className="btn btn-danger btn-icon" onClick={() => handleDeleteExpense(exp)} title="Delete Expense">
                                     <Trash2 size={14} />
                                   </button>
                                 </td>
@@ -9274,6 +9689,30 @@ export default function App() {
               <h3>Super Admin Settings</h3>
               <button className="modal-close" onClick={() => setIsSettingsOpen(false)}>×</button>
             </div>
+
+            {/* Quick Action: Super Admin Audit Trail */}
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: '#fef3c7', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.75rem 1rem', marginBottom: '1.25rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                <ShieldCheck size={22} style={{ color: '#d97706', flexShrink: 0 }} />
+                <div>
+                  <strong style={{ color: '#92400e', fontSize: '0.88rem', display: 'block' }}>Super Admin Audit Trail & Change Log</strong>
+                  <span style={{ color: '#b45309', fontSize: '0.76rem' }}>Monitor changes, registrations, profile edits, and payments across all Yatras</span>
+                </div>
+              </div>
+              <button
+                type="button"
+                className="btn btn-primary"
+                style={{ padding: '0.4rem 0.85rem', fontSize: '0.8rem', backgroundColor: '#d97706', borderColor: '#b45309', whiteSpace: 'nowrap' }}
+                onClick={() => {
+                  setIsSettingsOpen(false);
+                  setIsAuditTrailOpen(true);
+                  loadAuditLogs();
+                }}
+              >
+                View Audit Trail
+              </button>
+            </div>
+
             <form onSubmit={saveFirebaseSettings}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
                 <strong>Firebase Firestore Settings</strong>
@@ -9598,6 +10037,391 @@ export default function App() {
           </div>
         </div>
       )}
+
+      {/* MODAL: SUPER ADMIN AUDIT TRAIL & CHANGE LOG */}
+      {isAuditTrailOpen && currentUser?.role === 'super_admin' && (() => {
+        // Compute filtered logs
+        const filteredLogs = auditLogs.filter(log => {
+          // Yatra filter
+          if (auditYatraFilter !== 'all' && log.yatraId !== auditYatraFilter) {
+            return false;
+          }
+          // Role filter
+          if (auditRoleFilter !== 'all') {
+            const role = (log.actor?.role || '').toLowerCase();
+            if (auditRoleFilter === 'devotee' && !['devotee', 'participant', 'guest'].includes(role)) return false;
+            if (auditRoleFilter === 'admin' && role !== 'admin') return false;
+            if (auditRoleFilter === 'super_admin' && role !== 'super_admin') return false;
+          }
+          // Category filter
+          if (auditCategoryFilter !== 'all') {
+            if ((log.category || '').toLowerCase() !== auditCategoryFilter.toLowerCase()) return false;
+          }
+          // Date filter
+          if (auditDateFilter !== 'all') {
+            const ts = log.timestampMs || new Date(log.timestamp || 0).getTime();
+            const now = Date.now();
+            if (auditDateFilter === 'today') {
+              const startOfToday = new Date().setHours(0, 0, 0, 0);
+              if (ts < startOfToday) return false;
+            } else if (auditDateFilter === '7days') {
+              if (now - ts > 7 * 24 * 60 * 60 * 1000) return false;
+            } else if (auditDateFilter === '30days') {
+              if (now - ts > 30 * 24 * 60 * 60 * 1000) return false;
+            }
+          }
+          // Search query
+          if (auditSearchQuery && auditSearchQuery.trim()) {
+            const q = auditSearchQuery.trim().toLowerCase();
+            const name = (log.actor?.name || '').toLowerCase();
+            const phone = (log.actor?.phone || '').toLowerCase();
+            const email = (log.actor?.email || '').toLowerCase();
+            const details = (log.details || '').toLowerCase();
+            const action = (log.action || '').toLowerCase();
+            const yatra = (log.yatraTitle || '').toLowerCase();
+            const category = (log.category || '').toLowerCase();
+            return name.includes(q) || phone.includes(q) || email.includes(q) || details.includes(q) || action.includes(q) || yatra.includes(q) || category.includes(q);
+          }
+          return true;
+        });
+
+        // Metric counts
+        const totalLogsCount = auditLogs.length;
+        const devoteeActionsCount = auditLogs.filter(l => ['devotee', 'participant', 'guest'].includes((l.actor?.role || '').toLowerCase())).length;
+        const adminActionsCount = auditLogs.filter(l => (l.actor?.role || '').toLowerCase() === 'admin').length;
+        const paymentEventsCount = auditLogs.filter(l => (l.category || '').toLowerCase() === 'payments').length;
+
+        // Category color mapper
+        const getCategoryBadgeStyle = (cat) => {
+          switch ((cat || '').toLowerCase()) {
+            case 'payments':
+              return { bg: '#ecfdf5', color: '#047857', border: '#a7f3d0' };
+            case 'participants':
+              return { bg: '#eff6ff', color: '#1d4ed8', border: '#bfdbfe' };
+            case 'expenses':
+              return { bg: '#fff7ed', color: '#c2410c', border: '#fed7aa' };
+            case 'logistics':
+              return { bg: '#faf5ff', color: '#7e22ce', border: '#e9d5ff' };
+            case 'gallery':
+              return { bg: '#f0fdfa', color: '#0f766e', border: '#99f6e4' };
+            case 'admin access':
+              return { bg: '#fdf2f8', color: '#be185d', border: '#fbcfe8' };
+            case 'yatra settings':
+            case 'yatra':
+              return { bg: '#fef3c7', color: '#b45309', border: '#fde68a' };
+            default:
+              return { bg: 'var(--bg)', color: 'var(--text-muted)', border: 'var(--border)' };
+          }
+        };
+
+        return (
+          <div className="modal-overlay" style={{ zIndex: 9998 }}>
+            <div className="modal-content" style={{ maxWidth: '1050px', width: '95%', maxHeight: '92vh', display: 'flex', flexDirection: 'column', padding: '1.25rem' }}>
+              
+              {/* Header */}
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', borderBottom: '1px solid var(--border)', paddingBottom: '0.85rem', marginBottom: '1rem' }}>
+                <div>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <ShieldCheck size={24} style={{ color: '#d97706' }} />
+                    <h3 style={{ margin: 0, fontSize: '1.25rem' }}>Super Admin Audit Trail & Change Log</h3>
+                    <span style={{ fontSize: '0.72rem', backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: '12px', padding: '0.15rem 0.55rem', fontWeight: 600 }}>
+                      🔒 Super Admin Confidential
+                    </span>
+                  </div>
+                  <p style={{ margin: '0.25rem 0 0', fontSize: '0.82rem', color: 'var(--text-muted)' }}>
+                    Tamper-evident chronological timeline of all devotee updates, registrations, cash promises, room/bus allocations, payments, and admin operations.
+                  </p>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                  <button 
+                    type="button" 
+                    className="btn btn-outline" 
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.35rem 0.7rem', fontSize: '0.78rem' }}
+                    onClick={loadAuditLogs}
+                    title="Fetch latest audit logs from cloud"
+                  >
+                    <RefreshCw size={13} className={isLoadingAudit ? "spin" : ""} /> {isLoadingAudit ? 'Refreshing...' : 'Refresh'}
+                  </button>
+                  <button 
+                    type="button" 
+                    className="btn btn-primary" 
+                    style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', padding: '0.35rem 0.75rem', fontSize: '0.78rem', backgroundColor: '#d97706', borderColor: '#b45309' }}
+                    onClick={() => exportAuditCsv(filteredLogs)}
+                    title="Export currently filtered audit logs as CSV"
+                  >
+                    <Download size={13} /> Export CSV ({filteredLogs.length})
+                  </button>
+                  <button 
+                    type="button" 
+                    className="modal-close" 
+                    style={{ background: 'none', border: 'none', fontSize: '1.5rem', cursor: 'pointer', lineHeight: 1 }}
+                    onClick={() => setIsAuditTrailOpen(false)}
+                  >
+                    ×
+                  </button>
+                </div>
+              </div>
+
+              {/* Stats Summary Bar */}
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.75rem', marginBottom: '1rem' }}>
+                <div style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.85rem' }}>
+                  <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Total Logged Events</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: 'var(--text)' }}>{totalLogsCount}</div>
+                </div>
+                <div style={{ backgroundColor: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.85rem' }}>
+                  <div style={{ fontSize: '0.72rem', color: '#1d4ed8' }}>Devotee Self-Updates</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#1e40af' }}>{devoteeActionsCount}</div>
+                </div>
+                <div style={{ backgroundColor: '#faf5ff', border: '1px solid #e9d5ff', borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.85rem' }}>
+                  <div style={{ fontSize: '0.72rem', color: '#7e22ce' }}>Admin Operations</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#6b21a8' }}>{adminActionsCount}</div>
+                </div>
+                <div style={{ backgroundColor: '#ecfdf5', border: '1px solid #a7f3d0', borderRadius: 'var(--radius-sm)', padding: '0.65rem 0.85rem' }}>
+                  <div style={{ fontSize: '0.72rem', color: '#047857' }}>Payment & Cash Events</div>
+                  <div style={{ fontSize: '1.25rem', fontWeight: 'bold', color: '#065f46' }}>{paymentEventsCount}</div>
+                </div>
+              </div>
+
+              {/* Search & Filter Toolbar */}
+              <div style={{ backgroundColor: 'var(--bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.75rem', marginBottom: '1rem', display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
+                <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                  
+                  {/* Search Input */}
+                  <div style={{ flex: '1 1 260px', position: 'relative' }}>
+                    <Search size={15} style={{ position: 'absolute', left: '10px', top: '50%', transform: 'translateY(-50%)', color: 'var(--text-muted)' }} />
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      placeholder="Search by Mobile, Devotee/Admin Name, Action, or Change..." 
+                      style={{ paddingLeft: '2rem', fontSize: '0.82rem' }}
+                      value={auditSearchQuery}
+                      onChange={(e) => setAuditSearchQuery(e.target.value)}
+                    />
+                    {auditSearchQuery && (
+                      <button 
+                        type="button" 
+                        onClick={() => setAuditSearchQuery('')}
+                        style={{ position: 'absolute', right: '8px', top: '50%', transform: 'translateY(-50%)', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-muted)', fontSize: '0.85rem' }}
+                      >
+                        ×
+                      </button>
+                    )}
+                  </div>
+
+                  {/* Yatra Filter */}
+                  <select 
+                    className="form-control" 
+                    style={{ flex: '1 1 180px', fontSize: '0.82rem' }}
+                    value={auditYatraFilter}
+                    onChange={(e) => setAuditYatraFilter(e.target.value)}
+                  >
+                    <option value="all">All Yatras ({yatras.length})</option>
+                    {yatras.map(y => (
+                      <option key={y.id} value={y.id}>{y.name}</option>
+                    ))}
+                    <option value="global">System Wide / Super Admin Settings</option>
+                  </select>
+
+                  {/* Actor Role Filter */}
+                  <select 
+                    className="form-control" 
+                    style={{ flex: '0 1 140px', fontSize: '0.82rem' }}
+                    value={auditRoleFilter}
+                    onChange={(e) => setAuditRoleFilter(e.target.value)}
+                  >
+                    <option value="all">All Roles</option>
+                    <option value="devotee">👤 Devotee Only</option>
+                    <option value="admin">🛡️ Admin Only</option>
+                    <option value="super_admin">👑 Super Admin Only</option>
+                  </select>
+
+                  {/* Category Filter */}
+                  <select 
+                    className="form-control" 
+                    style={{ flex: '0 1 140px', fontSize: '0.82rem' }}
+                    value={auditCategoryFilter}
+                    onChange={(e) => setAuditCategoryFilter(e.target.value)}
+                  >
+                    <option value="all">All Categories</option>
+                    <option value="Participants">Participants</option>
+                    <option value="Payments">Payments</option>
+                    <option value="Expenses">Expenses</option>
+                    <option value="Yatra Settings">Yatra Settings</option>
+                    <option value="Gallery">Gallery Photos</option>
+                    <option value="Admin Access">Admin Access</option>
+                  </select>
+
+                  {/* Date Filter */}
+                  <select 
+                    className="form-control" 
+                    style={{ flex: '0 1 120px', fontSize: '0.82rem' }}
+                    value={auditDateFilter}
+                    onChange={(e) => setAuditDateFilter(e.target.value)}
+                  >
+                    <option value="all">All Time</option>
+                    <option value="today">Today</option>
+                    <option value="7days">Last 7 Days</option>
+                    <option value="30days">Last 30 Days</option>
+                  </select>
+
+                  {(auditSearchQuery || auditYatraFilter !== 'all' || auditRoleFilter !== 'all' || auditCategoryFilter !== 'all' || auditDateFilter !== 'all') && (
+                    <button 
+                      type="button" 
+                      className="btn btn-outline" 
+                      style={{ fontSize: '0.78rem', padding: '0.35rem 0.65rem' }}
+                      onClick={() => {
+                        setAuditSearchQuery('');
+                        setAuditYatraFilter('all');
+                        setAuditRoleFilter('all');
+                        setAuditCategoryFilter('all');
+                        setAuditDateFilter('all');
+                      }}
+                    >
+                      Reset Filters
+                    </button>
+                  )}
+                </div>
+
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>Showing <strong>{filteredLogs.length}</strong> of <strong>{totalLogsCount}</strong> audit events</span>
+                  {filteredLogs.length > 0 && <span>Sorted chronologically (Newest on top)</span>}
+                </div>
+              </div>
+
+              {/* Audit Log Timeline Feed */}
+              <div style={{ flex: 1, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: '0.65rem', paddingRight: '0.25rem' }}>
+                {filteredLogs.length === 0 ? (
+                  <div style={{ textAlign: 'center', padding: '3.5rem 1rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
+                    <ShieldCheck size={40} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                    <h4 style={{ margin: '0 0 0.25rem' }}>No Audit Events Found</h4>
+                    <p style={{ margin: 0, fontSize: '0.85rem' }}>
+                      {auditSearchQuery || auditRoleFilter !== 'all' || auditCategoryFilter !== 'all' || auditYatraFilter !== 'all' 
+                        ? 'Try clearing your search query or adjusting your filters to see more events.'
+                        : 'Any updates made by devotees, admins, or super admins will appear here in real-time.'}
+                    </p>
+                    {(auditSearchQuery || auditRoleFilter !== 'all' || auditCategoryFilter !== 'all' || auditYatraFilter !== 'all' || auditDateFilter !== 'all') && (
+                      <button 
+                        type="button" 
+                        className="btn btn-primary" 
+                        style={{ marginTop: '0.75rem', fontSize: '0.8rem' }}
+                        onClick={() => {
+                          setAuditSearchQuery('');
+                          setAuditYatraFilter('all');
+                          setAuditRoleFilter('all');
+                          setAuditCategoryFilter('all');
+                          setAuditDateFilter('all');
+                        }}
+                      >
+                        Reset All Filters
+                      </button>
+                    )}
+                  </div>
+                ) : (
+                  filteredLogs.map(log => {
+                    const actorRole = (log.actor?.role || '').toLowerCase();
+                    const isSuper = actorRole === 'super_admin';
+                    const isAdmin = actorRole === 'admin';
+                    const isDevotee = !isSuper && !isAdmin;
+                    const catStyle = getCategoryBadgeStyle(log.category);
+                    const relTime = getRelativeTime(log.timestampMs || log.timestamp);
+                    const cleanPhone = (log.actor?.phone || '').replace(/[^0-9]/g, '').slice(-10);
+
+                    return (
+                      <div 
+                        key={log.id} 
+                        style={{ 
+                          backgroundColor: 'var(--card-bg)', 
+                          border: '1px solid var(--border)', 
+                          borderLeft: `4px solid ${catStyle.color}`, 
+                          borderRadius: 'var(--radius-sm)', 
+                          padding: '0.75rem 1rem',
+                          boxShadow: '0 1px 2px rgba(0,0,0,0.03)'
+                        }}
+                      >
+                        {/* Event Header */}
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.5rem', marginBottom: '0.45rem' }}>
+                          
+                          {/* Actor Info */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                            {/* Role Badge */}
+                            {isSuper && (
+                              <span style={{ fontSize: '0.72rem', backgroundColor: '#fef3c7', color: '#92400e', border: '1px solid #fde68a', borderRadius: '4px', padding: '0.15rem 0.45rem', fontWeight: 600 }}>
+                                👑 Super Admin
+                              </span>
+                            )}
+                            {isAdmin && (
+                              <span style={{ fontSize: '0.72rem', backgroundColor: '#faf5ff', color: '#6b21a8', border: '1px solid #e9d5ff', borderRadius: '4px', padding: '0.15rem 0.45rem', fontWeight: 600 }}>
+                                🛡️ Admin
+                              </span>
+                            )}
+                            {isDevotee && (
+                              <span style={{ fontSize: '0.72rem', backgroundColor: '#eff6ff', color: '#1e40af', border: '1px solid #bfdbfe', borderRadius: '4px', padding: '0.15rem 0.45rem', fontWeight: 600 }}>
+                                👤 Devotee
+                              </span>
+                            )}
+
+                            {/* Actor Name */}
+                            <strong style={{ fontSize: '0.88rem', color: 'var(--text)' }}>
+                              {log.actor?.name || 'Unknown User'}
+                            </strong>
+
+                            {/* Actor Mobile Number */}
+                            {cleanPhone && cleanPhone.length === 10 && (
+                              <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                                📱 <strong>+91 {cleanPhone}</strong>
+                                <a 
+                                  href={`https://wa.me/91${cleanPhone}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  style={{ color: '#16a34a', textDecoration: 'none', marginLeft: '0.25rem', fontSize: '0.72rem' }}
+                                  title="Chat with user on WhatsApp"
+                                >
+                                  (WhatsApp ↗)
+                                </a>
+                              </span>
+                            )}
+
+                            {/* Actor Email (for Admins) */}
+                            {log.actor?.email && !isDevotee && (
+                              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                ✉️ {log.actor.email}
+                              </span>
+                            )}
+                          </div>
+
+                          {/* Timestamp */}
+                          <div style={{ textAlign: 'right', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            <div style={{ fontWeight: 600, color: 'var(--text)' }}>
+                              {formatAuditTimestamp(log.timestamp)}
+                            </div>
+                            {relTime && <div style={{ fontSize: '0.7rem' }}>{relTime}</div>}
+                          </div>
+                        </div>
+
+                        {/* Yatra & Action Badges */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', flexWrap: 'wrap', marginBottom: '0.45rem' }}>
+                          <span style={{ fontSize: '0.72rem', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', borderRadius: '4px', padding: '0.15rem 0.45rem', color: 'var(--text-muted)' }}>
+                            🏛️ {log.yatraTitle || 'System Wide'}
+                          </span>
+                          <span style={{ fontSize: '0.72rem', backgroundColor: catStyle.bg, color: catStyle.color, border: `1px solid ${catStyle.border}`, borderRadius: '4px', padding: '0.15rem 0.45rem', fontWeight: 600 }}>
+                            {log.category} • {log.action}
+                          </span>
+                        </div>
+
+                        {/* Details Message */}
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.55rem 0.75rem', borderRadius: 'var(--radius-sm)', fontSize: '0.82rem', color: 'var(--text)', lineHeight: '1.45', border: '1px solid var(--border)' }}>
+                          {log.details}
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+
+            </div>
+          </div>
+        );
+      })()}
 
       {/* MODAL: FORCED FIRST LOGIN PASSWORD CHANGE */}
       {isFirstLoginOpen && firstLoginUser && (

@@ -7,6 +7,26 @@ const DEMO_DATA = {
     { id: 'super_admin_1', email: 'rohit.wadhwani83@gmail.com', role: 'super_admin', name: 'Rohit Wadhwani', phone: '+919876543210', password: 'admin123', mustChangePassword: false },
     { id: 'admin_1', email: 'admin@yatra.com', role: 'admin', name: 'Krishna Das', phone: '+919999988888', password: 'admin123', mustChangePassword: false }
   ],
+  audit_logs: [
+    {
+      id: 'audit_init_1',
+      timestamp: '2026-10-01T09:00:00.000Z',
+      timestampMs: 1790838000000,
+      yatraId: 'yatra_vrindavan_2026',
+      yatraTitle: 'Vrindavan Dham Yatra',
+      category: 'Yatra',
+      action: 'YATRA_CREATED',
+      details: 'Super Admin Rohit Wadhwani initialized Vrindavan Dham Yatra 2026.',
+      actor: {
+        id: 'super_admin_1',
+        name: 'Rohit Wadhwani',
+        phone: '+919876543210',
+        email: 'rohit.wadhwani83@gmail.com',
+        role: 'super_admin'
+      },
+      metadata: {}
+    }
+  ],
   yatras: [
     {
       id: 'yatra_vrindavan_2026',
@@ -1031,6 +1051,46 @@ class Database {
   async updateRoom(id, updates) { return this.updateDocument('rooms', id, updates); }
   async deleteRoom(id) { return this.deleteDocument('rooms', id); }
 
+  // --- Audit Trail Methods (Super Admin Exclusive) ---
+  async logAudit({ yatraId = 'global', yatraTitle = '', category = 'General', action = 'UPDATE', details = '', actor = {}, metadata = {} }) {
+    try {
+      const now = new Date();
+      const auditEntry = {
+        id: `audit_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`,
+        timestamp: now.toISOString(),
+        timestampMs: Date.now(),
+        yatraId: yatraId || 'global',
+        yatraTitle: yatraTitle || '',
+        category: category || 'General',
+        action: action || 'UPDATE',
+        details: details || '',
+        actor: {
+          id: actor.id || '',
+          name: actor.name || 'Unknown',
+          phone: actor.phone || '',
+          email: actor.email || '',
+          role: actor.role || 'system'
+        },
+        metadata: metadata || {}
+      };
+
+      await this.addDocument('audit_logs', auditEntry);
+      return auditEntry;
+    } catch (err) {
+      console.warn("Audit logging notice:", err);
+      return null;
+    }
+  }
+
+  async getAuditLogs() {
+    const list = await this.getCollection('audit_logs');
+    return (list || []).sort((a, b) => {
+      const tA = a.timestampMs || new Date(a.timestamp || 0).getTime();
+      const tB = b.timestampMs || new Date(b.timestamp || 0).getTime();
+      return tB - tA;
+    });
+  }
+
   // Complete Database Backup (JSON)
   async getFullBackup() {
     const backup = {
@@ -1038,7 +1098,7 @@ class Database {
       exportedAt: new Date().toISOString(),
       collections: {}
     };
-    const collectionKeys = ['yatras', 'hotels', 'rooms', 'buses', 'participants', 'expenses', 'payments', 'photos', 'users', 'devotee_profiles'];
+    const collectionKeys = ['yatras', 'hotels', 'rooms', 'buses', 'participants', 'expenses', 'payments', 'photos', 'users', 'devotee_profiles', 'audit_logs'];
     for (const key of collectionKeys) {
       backup.collections[key] = await this.getCollection(key);
     }
