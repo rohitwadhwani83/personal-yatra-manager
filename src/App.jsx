@@ -2201,11 +2201,49 @@ export default function App() {
   const handleUpdateProfile = async (e) => {
     e.preventDefault();
     if (!editProfileData || !myParticipantData) return;
-    const updated = await db.updateParticipant(myParticipantData.id, editProfileData);
-    await db.saveDevoteeProfile(editProfileData);
+
+    const isFamily = editProfileData.type === 'family';
+    let familyMembers = [];
+    if (isFamily) {
+      familyMembers = (editProfileData.familyMembers || []).filter(m => m && m.name && m.name.trim().length > 0);
+      if (familyMembers.length === 0) {
+        alert("Please add at least one member in your family group (including yourself).");
+        return;
+      }
+    } else {
+      familyMembers = [{
+        name: editProfileData.name,
+        relation: 'Self',
+        age: (editProfileData.familyMembers && editProfileData.familyMembers[0]?.age) || '',
+        phone: editProfileData.phone || ''
+      }];
+    }
+
+    const membersCount = isFamily ? familyMembers.length : 1;
+    const memberDetails = isFamily
+      ? familyMembers.map(m => `${m.name}${m.age ? ` (${m.age})` : ''}`).join(', ')
+      : `${editProfileData.name} (Self)`;
+
+    const dataToSave = {
+      ...editProfileData,
+      type: isFamily ? 'family' : 'individual',
+      familyName: isFamily ? (editProfileData.familyName || `${editProfileData.name} Family`) : '',
+      familyMembers,
+      membersCount,
+      memberDetails,
+      location: editProfileData.location || editProfileData.city || '',
+      city: editProfileData.location || editProfileData.city || ''
+    };
+
+    // Remove obsolete dietary and medical fields
+    delete dataToSave.specialRequirements;
+    delete dataToSave.medicalNotes;
+
+    const updated = await db.updateParticipant(myParticipantData.id, dataToSave);
+    await db.saveDevoteeProfile(dataToSave);
     setMyParticipantData(updated);
     setIsEditProfileOpen(false);
-    alert("Profile updated successfully!");
+    alert("✓ Profile updated successfully!");
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -7603,7 +7641,17 @@ export default function App() {
                   <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                     <h3>Yatra Schedule & General Reference</h3>
                     <button className="btn btn-outline" style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem' }} onClick={() => {
-                      setEditProfileData({ ...myParticipantData });
+                      const existingMembers = (myParticipantData.familyMembers && Array.isArray(myParticipantData.familyMembers) && myParticipantData.familyMembers.length > 0)
+                        ? myParticipantData.familyMembers.map(m => ({ ...m }))
+                        : (myParticipantData.name ? [{ name: myParticipantData.name, relation: 'Self', age: '', phone: myParticipantData.phone || '' }] : []);
+
+                      setEditProfileData({
+                        ...myParticipantData,
+                        type: myParticipantData.type || (existingMembers.length > 1 ? 'family' : 'individual'),
+                        familyName: myParticipantData.familyName || (myParticipantData.name ? `${myParticipantData.name} Family` : ''),
+                        familyMembers: existingMembers,
+                        location: myParticipantData.location || myParticipantData.city || ''
+                      });
                       setIsEditProfileOpen(true);
                     }}>
                       <Edit2 size={14} /> Update My Profile
@@ -7863,44 +7911,279 @@ export default function App() {
       {/* MODAL DIALOGS */}
       {/* ======================================================== */}
 
-      {/* MODAL: CREATE YATRA */}
+      {/* MODAL: UPDATE PROFILE & FAMILY DETAILS (DEVOTEE PORTAL) */}
       {isEditProfileOpen && editProfileData && (
         <div className="modal-overlay">
-          <div className="modal-content">
+          <div className="modal-content" style={{ maxWidth: '640px', maxHeight: '90vh', overflowY: 'auto' }}>
             <div className="modal-header">
-              <h3>Update Profile Details</h3>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                <Edit2 size={20} style={{ color: 'var(--primary)' }} />
+                <h3 style={{ margin: 0 }}>Update Profile & Family Details</h3>
+              </div>
               <button className="modal-close" onClick={() => setIsEditProfileOpen(false)}>×</button>
             </div>
             <form onSubmit={handleUpdateProfile}>
               <div className="grid-cols-2">
                 <div className="form-group">
-                  <label>Full Name</label>
-                  <input type="text" required className="form-control" value={editProfileData.name} onChange={(e) => setEditProfileData({...editProfileData, name: e.target.value})} />
+                  <label>Full Name (Primary Devotee)</label>
+                  <input 
+                    type="text" 
+                    required 
+                    className="form-control" 
+                    value={editProfileData.name || ''} 
+                    onChange={(e) => setEditProfileData({...editProfileData, name: e.target.value})} 
+                  />
                 </div>
                 <div className="form-group">
-                  <label>Email Address</label>
-                  <input type="email" className="form-control" value={editProfileData.email} onChange={(e) => setEditProfileData({...editProfileData, email: e.target.value})} />
+                  <label>Registered Mobile Number</label>
+                  <input 
+                    type="tel" 
+                    disabled 
+                    className="form-control" 
+                    value={editProfileData.phone || ''} 
+                    style={{ backgroundColor: 'var(--bg)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
+                    title="Mobile number is your login identifier"
+                  />
+                  <small style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '0.2rem', display: 'block' }}>
+                    🔒 Login identifier linked to your account
+                  </small>
                 </div>
               </div>
+
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>Email Address <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem', fontWeight: 'normal' }}>(Optional)</span></label>
+                  <input 
+                    type="email" 
+                    className="form-control" 
+                    placeholder="name@gmail.com" 
+                    value={editProfileData.email || ''} 
+                    onChange={(e) => setEditProfileData({...editProfileData, email: e.target.value})} 
+                  />
+                </div>
+                <div className="form-group">
+                  <label>City / Location</label>
+                  <input 
+                    type="text" 
+                    className="form-control" 
+                    placeholder="e.g. Mumbai, Delhi" 
+                    value={editProfileData.location || editProfileData.city || ''} 
+                    onChange={(e) => setEditProfileData({...editProfileData, location: e.target.value, city: e.target.value})} 
+                  />
+                </div>
+              </div>
+
+              {/* REGISTRATION TYPE SELECTOR */}
               <div className="form-group">
-                <label>City</label>
-                <input type="text" className="form-control" value={editProfileData.city} onChange={(e) => setEditProfileData({...editProfileData, city: e.target.value})} />
+                <label>Registration Type</label>
+                <select 
+                  className="form-control"
+                  value={editProfileData.type || 'individual'} 
+                  onChange={(e) => {
+                    const newType = e.target.value;
+                    let members = editProfileData.familyMembers || [];
+                    if (newType === 'family' && members.length === 0) {
+                      members = [{ name: editProfileData.name || '', relation: 'Self', age: '', phone: editProfileData.phone || '' }];
+                    }
+                    setEditProfileData({
+                      ...editProfileData, 
+                      type: newType, 
+                      familyMembers: members,
+                      familyName: editProfileData.familyName || (newType === 'family' ? `${editProfileData.name || 'My'} Family` : '')
+                    });
+                  }}
+                >
+                  <option value="individual">Individual Traveller (1 Person)</option>
+                  <option value="family">Family Group (Multiple Members / Seats)</option>
+                </select>
               </div>
+
+              {/* FAMILY GROUP MEMBERS ROSTER (SAME FORMAT AS REGISTRATION FORM) */}
               {editProfileData.type === 'family' && (
-                <div className="form-group">
-                  <label>Members Details (Names/Ages)</label>
-                  <textarea className="form-control" rows={2} value={editProfileData.memberDetails} onChange={(e) => setEditProfileData({...editProfileData, memberDetails: e.target.value})} />
+                <div style={{ backgroundColor: 'var(--bg)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.25rem', border: '1px solid var(--border)' }}>
+                  <div className="form-group">
+                    <label>Family Name / Title</label>
+                    <input 
+                      type="text" 
+                      className="form-control" 
+                      placeholder="e.g. Sharma Family" 
+                      value={editProfileData.familyName || ''} 
+                      onChange={(e) => setEditProfileData({...editProfileData, familyName: e.target.value})} 
+                    />
+                  </div>
+
+                  {/* Warning Banner */}
+                  <div style={{ backgroundColor: 'var(--warning-light)', color: 'var(--warning)', border: '1px solid hsla(38,92%,50%,0.3)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '1rem', display: 'flex', gap: '0.5rem', alignItems: 'flex-start', fontSize: '0.82rem' }}>
+                    <AlertTriangle size={18} style={{ flexShrink: 0, marginTop: '2px' }} />
+                    <div style={{ lineHeight: '1.4' }}>
+                      <strong>Important:</strong> Please ensure yourself is included with relation <strong>"Self"</strong> along with all accompanying members so your group roster and seat count stay accurate.
+                    </div>
+                  </div>
+
+                  {/* Quick Add Myself Button if not yet added */}
+                  {!(editProfileData.familyMembers || []).some(m => m.relation === 'Self') && (
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{ marginBottom: '1rem', fontSize: '0.82rem', padding: '0.4rem 0.75rem', borderColor: 'var(--primary)', color: 'var(--primary)', width: '100%', backgroundColor: 'var(--primary-light)', fontWeight: '600' }}
+                      onClick={() => {
+                        const selfMember = { name: editProfileData.name || '', relation: 'Self', age: '', phone: editProfileData.phone || '' };
+                        const current = editProfileData.familyMembers || [];
+                        const updated = [selfMember, ...current];
+                        setEditProfileData({ ...editProfileData, familyMembers: updated, membersCount: updated.length });
+                      }}
+                    >
+                      👤 Click to Add Yourself ({editProfileData.name || 'Primary Devotee'}) as 1st Member
+                    </button>
+                  )}
+
+                  {/* Individual Family Member Rows */}
+                  <div style={{ marginBottom: '0.75rem' }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                      <label style={{ fontWeight: '600', fontSize: '0.9rem', margin: 0 }}>Family Members Roster</label>
+                      <span style={{ fontSize: '0.8rem', color: 'var(--primary)', fontWeight: 'bold' }}>
+                        {editProfileData.familyMembers?.length || 0} Member{(editProfileData.familyMembers?.length || 0) === 1 ? '' : 's'}
+                      </span>
+                    </div>
+                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>Children under 5 years are exempt from yatra fees (Free seat).</p>
+
+                    {(editProfileData.familyMembers || []).map((member, idx) => (
+                      <div key={idx} style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', marginBottom: '0.5rem', padding: '0.5rem', backgroundColor: 'var(--card-bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                        <div style={{ flex: 2 }}>
+                          <input 
+                            type="text" 
+                            required 
+                            className="form-control" 
+                            placeholder="Full Name" 
+                            value={member.name || ''} 
+                            onChange={(e) => {
+                              const updated = [...editProfileData.familyMembers];
+                              updated[idx] = { ...updated[idx], name: e.target.value };
+                              setEditProfileData({...editProfileData, familyMembers: updated});
+                            }} 
+                            style={{ fontSize: '0.85rem', padding: '0.4rem' }} 
+                          />
+                        </div>
+                        <div style={{ flex: 1.2 }}>
+                          <select 
+                            className="form-control" 
+                            value={member.relation || ''} 
+                            onChange={(e) => {
+                              const updated = [...editProfileData.familyMembers];
+                              updated[idx] = { ...updated[idx], relation: e.target.value };
+                              setEditProfileData({...editProfileData, familyMembers: updated});
+                            }} 
+                            style={{ fontSize: '0.85rem', padding: '0.4rem' }}
+                          >
+                            <option value="">Relation</option>
+                            <option value="Self">Self</option>
+                            <option value="Spouse">Spouse</option>
+                            <option value="Son">Son</option>
+                            <option value="Daughter">Daughter</option>
+                            <option value="Father">Father</option>
+                            <option value="Mother">Mother</option>
+                            <option value="Brother">Brother</option>
+                            <option value="Sister">Sister</option>
+                            <option value="Other">Other</option>
+                          </select>
+                        </div>
+                        <div style={{ width: '65px' }}>
+                          <input 
+                            type="number" 
+                            className="form-control" 
+                            placeholder="Age" 
+                            min={0} 
+                            max={120} 
+                            value={member.age || ''} 
+                            onChange={(e) => {
+                              const updated = [...editProfileData.familyMembers];
+                              updated[idx] = { ...updated[idx], age: e.target.value };
+                              setEditProfileData({...editProfileData, familyMembers: updated});
+                            }} 
+                            style={{ fontSize: '0.85rem', padding: '0.4rem' }} 
+                          />
+                        </div>
+                        <div style={{ flex: 1.5 }}>
+                          <input 
+                            type="tel" 
+                            className="form-control" 
+                            placeholder="Phone No." 
+                            value={member.phone || ''} 
+                            onChange={(e) => {
+                              const updated = [...editProfileData.familyMembers];
+                              updated[idx] = { ...updated[idx], phone: e.target.value };
+                              setEditProfileData({...editProfileData, familyMembers: updated});
+                            }} 
+                            style={{ fontSize: '0.85rem', padding: '0.4rem' }} 
+                          />
+                        </div>
+                        <button 
+                          type="button" 
+                          className="btn btn-danger btn-icon" 
+                          style={{ padding: '0.3rem', flexShrink: 0 }} 
+                          onClick={() => {
+                            const updated = editProfileData.familyMembers.filter((_, i) => i !== idx);
+                            setEditProfileData({...editProfileData, familyMembers: updated, membersCount: updated.length || 1});
+                          }}
+                          title="Remove Member"
+                        >
+                          <Trash2 size={12} />
+                        </button>
+                      </div>
+                    ))}
+
+                    <button 
+                      type="button" 
+                      className="btn btn-outline" 
+                      style={{ width: '100%', marginTop: '0.5rem', padding: '0.5rem', fontSize: '0.85rem', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: '0.4rem' }} 
+                      onClick={() => {
+                        const updated = [...(editProfileData.familyMembers || []), { name: '', relation: '', age: '', phone: '' }];
+                        setEditProfileData({...editProfileData, familyMembers: updated, membersCount: updated.length});
+                      }}
+                    >
+                      <Plus size={14} /> Add Another Family Member
+                    </button>
+
+                    {/* Summary Card */}
+                    <div style={{ backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', padding: '0.85rem', marginTop: '1rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.35rem' }}>
+                        <strong style={{ fontSize: '0.85rem' }}>Total Members: {editProfileData.familyMembers?.length || 0}</strong>
+                        {selectedYatra?.pricePerPerson && (
+                          <span style={{ fontSize: '0.85rem', color: 'var(--primary)', fontWeight: 'bold' }}>
+                            Yatra Total: ₹{((editProfileData.familyMembers?.filter(m => !m.age || parseInt(m.age) >= 5).length || 0) * parseFloat(selectedYatra.pricePerPerson)).toLocaleString()}
+                          </span>
+                        )}
+                      </div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>
+                        {editProfileData.familyMembers?.filter(m => !m.age || parseInt(m.age) >= 5).length || 0} billable member(s)
+                        {(editProfileData.familyMembers?.filter(m => m.age && parseInt(m.age) < 5).length || 0) > 0 && (
+                          <span style={{ color: 'var(--success)', fontWeight: 'bold' }}>
+                            {' '}(+{editProfileData.familyMembers.filter(m => m.age && parseInt(m.age) < 5).length} child under 5 yrs traveling FREE)
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
-              <div className="form-group">
-                <label>Special Dietary Requirements</label>
-                <input type="text" className="form-control" value={editProfileData.specialRequirements} onChange={(e) => setEditProfileData({...editProfileData, specialRequirements: e.target.value})} />
+
+              <div style={{ display: 'flex', gap: '0.75rem', marginTop: '1.25rem' }}>
+                <button 
+                  type="button" 
+                  className="btn btn-outline" 
+                  style={{ flex: 1 }} 
+                  onClick={() => setIsEditProfileOpen(false)}
+                >
+                  Cancel
+                </button>
+                <button 
+                  type="submit" 
+                  className="btn btn-primary" 
+                  style={{ flex: 2 }}
+                >
+                  Save Profile Changes
+                </button>
               </div>
-              <div className="form-group">
-                <label>Medical Comments / Notes</label>
-                <input type="text" className="form-control" value={editProfileData.medicalNotes} onChange={(e) => setEditProfileData({...editProfileData, medicalNotes: e.target.value})} />
-              </div>
-              <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem' }}>Save Changes</button>
             </form>
           </div>
         </div>
