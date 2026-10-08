@@ -2874,13 +2874,15 @@ export default function App() {
 
   // --- Flattened Participant CSV (family members as individual rows) ---
   const exportParticipantCSV = () => {
-    const headers = ['Registration ID', 'Family/Group Name', 'Member Name', 'Relation', 'Age', 'Phone', 'Email', 'Location', 'Travel Mode', 'Travel Type', 'Boarding Station', 'Dropping Station', 'Status', 'Payment Status', 'Remarks'];
+    const headers = ['Registration ID', 'Family/Group Name', 'Member Name', 'Relation', 'Age', 'Phone', 'Email', 'Location', 'Travel Mode', 'Travel Type', 'Boarding Station', 'Dropping Station', 'Eligibility', 'Status', 'Payment Status', 'Remarks'];
     
     const rows = [];
     participants.forEach(p => {
       const splitData = expCalc.splits.find(s => s.id === p.id);
       const payStatus = splitData?.dynamicPaymentStatus || p.paymentStatus;
       const devoteeStatus = (payStatus === 'completed' && p.status === 'interested') ? 'confirmed' : (splitData?.dynamicDevoteeStatus || p.status);
+      const isApproved = isDevoteeApproved(p);
+      const eligibilityStatus = p.approvalStatus === 'rejected' ? 'Rejected' : (isApproved ? 'Approved' : 'Pending Approval');
 
       if (p.type === 'family' && p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
         // Each family member becomes a row
@@ -2898,6 +2900,7 @@ export default function App() {
             p.travelType || '',
             p.boardingStation || '',
             p.droppingStation || '',
+            eligibilityStatus,
             devoteeStatus,
             payStatus,
             p.remarks || ''
@@ -2918,6 +2921,7 @@ export default function App() {
           p.travelType || '',
           p.boardingStation || '',
           p.droppingStation || '',
+          eligibilityStatus,
           devoteeStatus,
           payStatus,
           p.remarks || ''
@@ -4272,6 +4276,8 @@ export default function App() {
               const targetSeats = selectedYatra.expectedParticipants || 30;
               const yPrice = parseFloat(selectedYatra.pricePerPerson) || 0;
               const totalRegisteredSeats = participants.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              const approvedSeats = participants.filter(p => isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              const pendingApprovalSeats = participants.filter(p => !isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
               const confirmedSeats = participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'confirmed').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
               const interestedSeats = participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'interested').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
               const seatPercent = Math.min(100, Math.round((totalRegisteredSeats / targetSeats) * 100));
@@ -4418,23 +4424,28 @@ export default function App() {
                         <div style={{ width: `${seatPercent}%`, height: '100%', backgroundColor: seatPercent >= 100 ? 'var(--success)' : 'var(--primary)', transition: 'width 0.3s ease' }} />
                       </div>
 
-                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.75rem' }}>
-                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Target Seats</span>
-                          <h4 style={{ fontSize: '1.3rem', margin: '0.2rem 0 0' }}>{targetSeats}</h4>
+                      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: '0.6rem' }}>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem 0.5rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>Target Seats</span>
+                          <h4 style={{ fontSize: '1.25rem', margin: '0.2rem 0 0' }}>{targetSeats}</h4>
                         </div>
-                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Registered</span>
-                          <h4 style={{ fontSize: '1.3rem', margin: '0.2rem 0 0', color: 'var(--primary)' }}>{totalRegisteredSeats}</h4>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem 0.5rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>Registered</span>
+                          <h4 style={{ fontSize: '1.25rem', margin: '0.2rem 0 0', color: 'var(--primary)' }}>{totalRegisteredSeats}</h4>
                         </div>
-                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
-                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Confirmed</span>
-                          <h4 style={{ fontSize: '1.3rem', margin: '0.2rem 0 0', color: 'var(--success)' }}>{confirmedSeats}</h4>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem 0.5rem', borderRadius: 'var(--radius-sm)', textAlign: 'center', border: '1px solid #a7f3d0' }}>
+                          <span style={{ fontSize: '0.72rem', color: '#047857', fontWeight: 600, display: 'block' }}>Approved</span>
+                          <h4 style={{ fontSize: '1.25rem', margin: '0.2rem 0 0', color: '#059669' }}>{approvedSeats}</h4>
+                        </div>
+                        <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem 0.5rem', borderRadius: 'var(--radius-sm)', textAlign: 'center' }}>
+                          <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', display: 'block' }}>Confirmed</span>
+                          <h4 style={{ fontSize: '1.25rem', margin: '0.2rem 0 0', color: 'var(--success)' }}>{confirmedSeats}</h4>
                         </div>
                       </div>
 
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                        <span>Interested Devotees: <strong>{interestedSeats}</strong></span>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', fontSize: '0.8rem', color: 'var(--text-muted)', flexWrap: 'wrap', gap: '0.5rem' }}>
+                        <span>Pending Approval: <strong style={{ color: '#b45309' }}>{pendingApprovalSeats}</strong></span>
+                        <span>Interested: <strong>{interestedSeats}</strong></span>
                         <span>Available Seats: <strong>{Math.max(0, targetSeats - totalRegisteredSeats)}</strong></span>
                       </div>
                     </div>
@@ -7240,6 +7251,14 @@ export default function App() {
                           <tr>
                             <td style={{ padding: '0.5rem 0' }}>Confirmed Devotees (Paid & Pending):</td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{expCalc.confirmedCount}</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '0.5rem 0' }}>Approved & Eligible Devotees:</td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>{participants.filter(p => isDevoteeApproved(p)).length}</td>
+                          </tr>
+                          <tr>
+                            <td style={{ padding: '0.5rem 0' }}>Pending Eligibility Review:</td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#b45309' }}>{participants.filter(p => !isDevoteeApproved(p)).length}</td>
                           </tr>
                           <tr>
                             <td style={{ padding: '0.5rem 0' }}>Interested / Enquiries:</td>
