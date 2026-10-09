@@ -915,3 +915,90 @@ a:hover {
   }
 }
 
+/* ========================================================= */
+/* DEVOTEE PORTAL RESPONSIVE LAYOUT (Android & iOS)          */
+/* ========================================================= */
+.devotee-portal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 1rem;
+  margin-bottom: 1.75rem;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.devotee-header-badges {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.devotee-portal-layout {
+  display: grid;
+  grid-template-columns: 1.8fr 1.2fr;
+  gap: 1.75rem;
+  align-items: start;
+}
+
+.devotee-passes-col {
+  min-width: 0;
+  width: 100%;
+}
+
+.devotee-payments-col {
+  min-width: 0;
+  width: 100%;
+}
+
+.devotee-payments-card {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+/* Tablet & Mobile Breakpoint: Stack vertically and elevate payments to the top */
+@media (max-width: 900px) {
+  .devotee-portal-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.85rem;
+    margin-bottom: 1.25rem;
+  }
+
+  .devotee-header-badges {
+    width: 100%;
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+
+  .devotee-portal-layout {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 1.25rem !important;
+    width: 100% !important;
+  }
+
+  /* Critical: Elevate Payments portlet to top on mobile so devotees never need to rotate device or scroll through passes to view payments/options */
+  .devotee-payments-col {
+    order: -1 !important;
+    width: 100% !important;
+  }
+
+  .devotee-passes-col {
+    order: 1 !important;
+    width: 100% !important;
+  }
+
+  .devotee-payments-card {
+    padding: 1.15rem 1rem !important;
+  }
+
+  .devotee-payments-card img {
+    max-width: 100% !important;
+    height: auto !important;
+  }
+}
+

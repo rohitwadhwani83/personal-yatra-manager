@@ -8117,12 +8117,12 @@ export default function App() {
         {/* ======================================= */}
         {currentRoute.path === 'my-yatra' && myParticipantData && selectedYatra && (
           <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', borderBottom: '1px solid var(--border)', paddingBottom: '1rem', marginBottom: '2rem' }}>
+            <div className="devotee-portal-header">
               <div>
                 <h2>Hare Krishna, {myParticipantData.name}!</h2>
                 <p style={{ color: 'var(--text-muted)' }}>Devotee Space for <strong>{selectedYatra.name}</strong></p>
               </div>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+              <div className="devotee-header-badges">
                 <button 
                   type="button"
                   className="btn btn-outline" 
@@ -8150,8 +8150,8 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1.25fr', gap: '2rem' }}>
-              <div>
+            <div className="devotee-portal-layout">
+              <div className="devotee-passes-col">
                 {/* DEVOTEE PASSES: BUS ALLOCATION & HOTEL ROOM */}
                 {(() => {
                   const currentDevotee = (participants && participants.find(p => p.id === myParticipantData.id)) || myParticipantData;
@@ -8551,8 +8551,8 @@ export default function App() {
               </div>
 
               {/* PAYMENTS PORTLET */}
-              <div>
-                <div className="card" style={{ textAlign: 'center' }}>
+              <div className="devotee-payments-col">
+                <div className="card devotee-payments-card" style={{ textAlign: 'center' }}>
                   <h3>Booking Status & Payments</h3>
                   {myParticipantData.paymentStatus === 'completed' ? (
                     <div style={{ padding: '1rem 0' }}>
