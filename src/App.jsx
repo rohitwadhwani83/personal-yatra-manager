@@ -214,15 +214,30 @@ export default function App() {
   const [newExpense, setNewExpense] = useState({ date: new Date().toISOString().split('T')[0], category: 'hotel', amount: '', paidBy: '', remarks: '', appliesTo: 'everyone', targetIds: [], billImageUrl: '' });
   const [newDocument, setNewDocument] = useState({ name: '', fileUrl: '', type: 'pdf' });
 
-  // Eligibility Helper: Devotee can pay only after admin approval
+  // Eligibility Helper: Devotee can pay only after admin approval (full or partial)
   const isDevoteeApproved = (p) => {
     if (!p) return false;
-    if (p.approvalStatus === 'approved' || p.isApproved === true) return true;
+    if (p.approvalStatus === 'approved' || p.approvalStatus === 'partially_approved' || p.isApproved === true) return true;
+    if (p.status === 'approved' || p.status === 'partially_approved' || p.status === 'partially_confirmed' || p.status === 'confirmed') return true;
     if (p.approvalStatus === 'pending' || p.approvalStatus === 'rejected') return false;
     if (p.isApproved === false) return false;
     // Backward compatibility: existing confirmed/paid devotees in mock/database are treated as approved
-    if (p.status === 'confirmed' || p.paymentStatus === 'completed' || p.paymentStatus === 'partially_paid') return true;
+    if (p.paymentStatus === 'completed' || p.paymentStatus === 'partially_paid') return true;
     return false;
+  };
+
+  // Helper to format 6-stage devotee lifecycle status display name
+  const getLifecycleStatusLabel = (status) => {
+    switch (status) {
+      case 'interested': return 'Interested';
+      case 'partially_approved': return 'Partially Approved';
+      case 'approved': return 'Approved';
+      case 'partially_confirmed': return 'Partially Confirmed';
+      case 'confirmed': return 'Confirmed';
+      case 'cancelled': return 'Cancelled';
+      case 'waiting': return 'Waiting List';
+      default: return (status || '').replace('_', ' ');
+    }
   };
   
   // Public registration form states
@@ -1562,27 +1577,104 @@ export default function App() {
 
   const handleApproveEligibility = async (participant) => {
     const actor = getCurrentActor();
+    const isFamily = participant.type === 'family' && participant.familyMembers && participant.familyMembers.length > 0;
+    const updatedFamily = isFamily 
+      ? participant.familyMembers.map(m => ({ ...m, isApproved: true }))
+      : [];
+
+    const newStatus = (participant.paymentStatus === 'completed' || participant.status === 'confirmed')
+      ? 'confirmed'
+      : (participant.paymentStatus === 'partially_paid' || participant.status === 'partially_confirmed')
+        ? 'partially_confirmed'
+        : 'approved';
+
     await db.updateParticipant(participant.id, {
       approvalStatus: 'approved',
-      isApproved: true
+      isApproved: true,
+      status: newStatus,
+      ...(isFamily ? { familyMembers: updatedFamily } : {})
     });
     await recordAudit({
       yatraId: selectedYatra?.id,
       yatraTitle: selectedYatra?.name,
       category: 'Participants',
       action: 'ELIGIBILITY_APPROVED',
-      details: `${actor.name} (${actor.phone || actor.email}) approved Yatra eligibility for ${participant.name} (Mobile: ${participant.phone || 'N/A'}). Payment options unlocked.`,
+      details: `${actor.name} (${actor.phone || actor.email}) approved Yatra eligibility for ${participant.name} (Mobile: ${participant.phone || 'N/A'}). Status updated to "${newStatus}". Payment options unlocked.`,
       metadata: { participantId: participant.id }
     });
+    setRefreshTrigger(prev => prev + 1);
+  };
+
+  const handleToggleMemberApproval = async (participant, memberIndex) => {
+    if (!participant.familyMembers || !participant.familyMembers[memberIndex]) return;
+    const updatedMembers = participant.familyMembers.map((m, idx) => {
+      if (idx === memberIndex) {
+        const nextApproved = m.isApproved === false ? true : false;
+        return { ...m, isApproved: nextApproved };
+      }
+      return m;
+    });
+
+    const approvedCount = updatedMembers.filter(m => m.isApproved !== false).length;
+    let newApprovalStatus = 'pending';
+    let newStatus = 'interested';
+
+    if (approvedCount === updatedMembers.length) {
+      newApprovalStatus = 'approved';
+      newStatus = 'approved';
+    } else if (approvedCount > 0) {
+      newApprovalStatus = 'partially_approved';
+      newStatus = 'partially_approved';
+    } else {
+      newApprovalStatus = 'pending';
+      newStatus = 'interested';
+    }
+
+    const finalStatus = (participant.paymentStatus === 'completed' || participant.status === 'confirmed')
+      ? 'confirmed'
+      : (participant.paymentStatus === 'partially_paid' || participant.status === 'partially_confirmed')
+        ? 'partially_confirmed'
+        : newStatus;
+
+    await db.updateParticipant(participant.id, {
+      familyMembers: updatedMembers,
+      approvalStatus: newApprovalStatus,
+      isApproved: approvedCount > 0,
+      status: finalStatus
+    });
+
+    const actor = getCurrentActor();
+    await recordAudit({
+      yatraId: selectedYatra?.id,
+      yatraTitle: selectedYatra?.name,
+      category: 'Participants',
+      action: 'FAMILY_MEMBER_APPROVAL_UPDATED',
+      details: `${actor.name} updated member approval for ${participant.name}'s family (${approvedCount}/${updatedMembers.length} members approved: "${newApprovalStatus}").`,
+      metadata: { participantId: participant.id, memberIndex, approvedCount }
+    });
+
     setRefreshTrigger(prev => prev + 1);
   };
 
   const handleRevokeEligibility = async (participant) => {
     if (window.confirm(`Revoke Yatra eligibility approval for ${participant.name || 'this devotee'}? This will lock payment options for them.`)) {
       const actor = getCurrentActor();
+      const isFamily = participant.type === 'family' && participant.familyMembers && participant.familyMembers.length > 0;
+      const updatedFamily = isFamily 
+        ? participant.familyMembers.map(m => ({ ...m, isApproved: false }))
+        : [];
+
+      const newStatus = (participant.paymentStatus === 'completed' || participant.status === 'confirmed')
+        ? 'confirmed'
+        : (participant.paymentStatus === 'partially_paid' || participant.status === 'partially_confirmed')
+          ? 'partially_confirmed'
+          : 'interested';
+
       await db.updateParticipant(participant.id, {
         approvalStatus: 'pending',
-        isApproved: false
+        isApproved: false,
+        status: newStatus,
+        ...(isFamily ? { familyMembers: updatedFamily } : {})
       });
       await recordAudit({
         yatraId: selectedYatra?.id,
@@ -1603,9 +1695,19 @@ export default function App() {
     if (window.confirm(`Approve all ${totalPendingSeats} pending devotee(s) across ${pendingParticipants.length} registration group(s) for "${selectedYatra?.name || 'this Yatra'}"? This will enable payment options for all of them.`)) {
       const actor = getCurrentActor();
       for (const p of pendingParticipants) {
+        const isFamily = p.type === 'family' && p.familyMembers && p.familyMembers.length > 0;
+        const updatedFamily = isFamily ? p.familyMembers.map(m => ({ ...m, isApproved: true })) : [];
+        const newStatus = (p.paymentStatus === 'completed' || p.status === 'confirmed')
+          ? 'confirmed'
+          : (p.paymentStatus === 'partially_paid' || p.status === 'partially_confirmed')
+            ? 'partially_confirmed'
+            : 'approved';
+
         await db.updateParticipant(p.id, {
           approvalStatus: 'approved',
-          isApproved: true
+          isApproved: true,
+          status: newStatus,
+          ...(isFamily ? { familyMembers: updatedFamily } : {})
         });
       }
       await recordAudit({
@@ -2627,7 +2729,7 @@ export default function App() {
     const newPayStatus = alreadyPaid >= totalDue ? 'completed' : 'partially_paid';
     await db.updateParticipant(part.id, {
       paymentStatus: newPayStatus,
-      status: 'confirmed',
+      status: newPayStatus === 'completed' ? 'confirmed' : 'partially_confirmed',
       cashReceivedDate: new Date().toISOString()
     });
     const actor = getCurrentActor();
@@ -2770,9 +2872,32 @@ export default function App() {
   };
 
   const cycleParticipantStatus = async (participantId, currentStatus) => {
-    const statuses = ['interested', 'confirmed', 'waiting', 'cancelled'];
+    const statuses = ['interested', 'partially_approved', 'approved', 'partially_confirmed', 'confirmed', 'cancelled'];
     const nextIndex = (statuses.indexOf(currentStatus) + 1) % statuses.length;
-    await db.updateParticipant(participantId, { status: statuses[nextIndex] });
+    const nextStatus = statuses[nextIndex];
+    const updates = { status: nextStatus };
+    if (nextStatus === 'approved') {
+      updates.approvalStatus = 'approved';
+      updates.isApproved = true;
+    } else if (nextStatus === 'partially_approved') {
+      updates.approvalStatus = 'partially_approved';
+      updates.isApproved = true;
+    } else if (nextStatus === 'interested') {
+      updates.approvalStatus = 'pending';
+      updates.isApproved = false;
+      updates.paymentStatus = 'pending';
+    } else if (nextStatus === 'partially_confirmed') {
+      updates.approvalStatus = 'approved';
+      updates.isApproved = true;
+      updates.paymentStatus = 'partially_paid';
+    } else if (nextStatus === 'confirmed') {
+      updates.approvalStatus = 'approved';
+      updates.isApproved = true;
+      updates.paymentStatus = 'completed';
+    } else if (nextStatus === 'cancelled') {
+      updates.status = 'cancelled';
+    }
+    await db.updateParticipant(participantId, updates);
     setRefreshTrigger(prev => prev + 1);
   };
 
@@ -2792,7 +2917,9 @@ export default function App() {
         paymentStatus: isCompleted ? 'completed' : 'partially_paid'
       };
       if (isCompleted) {
-        updates.status = 'confirmed'; // Automatically update status to confirmed when payment completed
+        updates.status = 'confirmed'; // Automatically update status to confirmed when full payment completed
+      } else if (verifiedPaid > 0) {
+        updates.status = 'partially_confirmed'; // Automatically update status to partially_confirmed when part payment verified
       }
       await db.updateParticipant(participantId, updates);
     } else {
@@ -2850,7 +2977,32 @@ export default function App() {
 
       const balance = share - verifiedPaid;
       const dynamicPaymentStatus = verifiedPaid === 0 ? 'pending' : (balance > 0 ? 'partially_paid' : 'completed');
-      const dynamicDevoteeStatus = (dynamicPaymentStatus === 'completed' && p.status === 'interested') ? 'confirmed' : p.status;
+
+      // Determine 6-stage lifecycle status
+      let dynamicDevoteeStatus = p.status || 'interested';
+      if (p.status === 'cancelled') {
+        dynamicDevoteeStatus = 'cancelled';
+      } else if (dynamicPaymentStatus === 'completed' || p.status === 'confirmed' || p.paymentStatus === 'completed') {
+        dynamicDevoteeStatus = 'confirmed';
+      } else if (dynamicPaymentStatus === 'partially_paid' || p.status === 'partially_confirmed' || p.paymentStatus === 'partially_paid') {
+        dynamicDevoteeStatus = 'partially_confirmed';
+      } else {
+        const hasFamily = p.type === 'family' && p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0;
+        const approvedMemberCount = hasFamily ? p.familyMembers.filter(m => m.isApproved === true || m.approvalStatus === 'approved').length : 0;
+        const isPartiallyApproved = p.approvalStatus === 'partially_approved' || 
+          p.status === 'partially_approved' ||
+          (hasFamily && approvedMemberCount > 0 && approvedMemberCount < p.familyMembers.length);
+
+        const isFullyApproved = isDevoteeApproved(p) || p.status === 'approved' || p.approvalStatus === 'approved';
+
+        if (isPartiallyApproved) {
+          dynamicDevoteeStatus = 'partially_approved';
+        } else if (isFullyApproved) {
+          dynamicDevoteeStatus = 'approved';
+        } else {
+          dynamicDevoteeStatus = 'interested';
+        }
+      }
 
       return {
         ...p,
@@ -3021,9 +3173,10 @@ export default function App() {
     participants.forEach(p => {
       const splitData = expCalc.splits.find(s => s.id === p.id);
       const payStatus = splitData?.dynamicPaymentStatus || p.paymentStatus;
-      const devoteeStatus = (payStatus === 'completed' && p.status === 'interested') ? 'confirmed' : (splitData?.dynamicDevoteeStatus || p.status);
+      const devoteeStatus = getLifecycleStatusLabel(splitData?.dynamicDevoteeStatus || p.status);
       const isApproved = isDevoteeApproved(p);
-      const eligibilityStatus = p.approvalStatus === 'rejected' ? 'Rejected' : (isApproved ? 'Approved' : 'Pending Approval');
+      const isPartAppr = (splitData?.dynamicDevoteeStatus || p.status) === 'partially_approved' || p.approvalStatus === 'partially_approved';
+      const eligibilityStatus = p.approvalStatus === 'rejected' ? 'Rejected' : (isPartAppr ? 'Partially Approved' : (isApproved ? 'Approved' : 'Pending Approval'));
 
       if (p.type === 'family' && p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
         // Each family member becomes a row
@@ -6158,20 +6311,21 @@ export default function App() {
                 ? participants.filter(p => matchesParticipant(p, q, qDigits))
                 : participants;
 
+              const getPartStatus = (p) => expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status || 'interested';
+
               // 2. Participants matching both search filter AND active status filter pill
               const filteredList = baseFiltered.filter(p => {
-                const split = expCalc.splits.find(s => s.id === p.id);
-                const devStatus = (split?.dynamicPaymentStatus === 'completed' && p.status === 'interested') ? 'confirmed' : (split?.dynamicDevoteeStatus || p.status);
-                const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
+                const devStatus = getPartStatus(p);
+                const payStatus = expCalc.splits.find(s => s.id === p.id)?.dynamicPaymentStatus || p.paymentStatus;
                 
                 if (participantFilter === 'pending_approval') return !isDevoteeApproved(p);
-                if (participantFilter === 'approved') return isDevoteeApproved(p);
-                if (participantFilter === 'registered_unpaid') return payStatus !== 'completed' && p.status !== 'cancelled';
-                if (participantFilter === 'cash_promised') return Boolean(p.cashPromiseDate) && payStatus !== 'completed';
-                if (participantFilter === 'confirmed') return devStatus === 'confirmed';
                 if (participantFilter === 'interested') return devStatus === 'interested';
-                if (participantFilter === 'partially_paid') return payStatus === 'partially_paid';
-                if (participantFilter === 'completed') return payStatus === 'completed';
+                if (participantFilter === 'partially_approved') return devStatus === 'partially_approved';
+                if (participantFilter === 'approved') return devStatus === 'approved';
+                if (participantFilter === 'partially_confirmed') return devStatus === 'partially_confirmed';
+                if (participantFilter === 'confirmed') return devStatus === 'confirmed';
+                if (participantFilter === 'cancelled') return devStatus === 'cancelled';
+                if (participantFilter === 'cash_promised') return Boolean(p.cashPromiseDate) && payStatus !== 'completed';
                 return true; // 'all'
               });
 
@@ -6200,22 +6354,19 @@ export default function App() {
               const countCumulativePax = (list) => (list || []).reduce((sum, p) => sum + getPaxCount(p), 0);
 
               const totalPax = countCumulativePax(participants);
+              const interestedPax = countCumulativePax(participants.filter(p => getPartStatus(p) === 'interested'));
+              const partiallyApprovedPax = countCumulativePax(participants.filter(p => getPartStatus(p) === 'partially_approved'));
+              const approvedPax = countCumulativePax(participants.filter(p => getPartStatus(p) === 'approved'));
+              const partiallyConfirmedPax = countCumulativePax(participants.filter(p => getPartStatus(p) === 'partially_confirmed'));
+              const confirmedPax = countCumulativePax(participants.filter(p => getPartStatus(p) === 'confirmed'));
+              const cancelledPax = countCumulativePax(participants.filter(p => getPartStatus(p) === 'cancelled'));
+
               const pendingPax = countCumulativePax(participants.filter(p => !isDevoteeApproved(p)));
-              const approvedPax = countCumulativePax(participants.filter(p => isDevoteeApproved(p)));
-              const unpaidPax = countCumulativePax(participants.filter(p => {
-                const split = expCalc.splits.find(s => s.id === p.id);
-                const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
-                return payStatus !== 'completed' && p.status !== 'cancelled';
-              }));
               const cashPromisedPax = countCumulativePax(participants.filter(p => {
                 const split = expCalc.splits.find(s => s.id === p.id);
                 const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
                 return Boolean(p.cashPromiseDate) && payStatus !== 'completed';
               }));
-              const confirmedPax = countCumulativePax(participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'confirmed'));
-              const interestedPax = countCumulativePax(participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'interested'));
-              const partiallyPaidPax = countCumulativePax(participants.filter(p => expCalc.splits.find(s => s.id === p.id)?.dynamicPaymentStatus === 'partially_paid'));
-              const fullyPaidPax = countCumulativePax(participants.filter(p => expCalc.splits.find(s => s.id === p.id)?.dynamicPaymentStatus === 'completed'));
 
               return (
                 <div>
@@ -6277,26 +6428,52 @@ export default function App() {
                         All ({totalPax})
                       </button>
                       <button 
-                        className={`btn ${participantFilter === 'pending_approval' ? 'btn-primary' : 'btn-outline'}`}
-                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'pending_approval' ? '' : '#f59e0b', color: participantFilter === 'pending_approval' ? '' : '#b45309' }}
-                        onClick={() => setParticipantFilter('pending_approval')}
+                        className={`btn ${participantFilter === 'interested' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'interested' ? '' : '#f59e0b', color: participantFilter === 'interested' ? '' : '#b45309' }}
+                        onClick={() => setParticipantFilter('interested')}
+                        title="Registration Done / Initial Submission"
                       >
-                        ⏳ {t('filterPendingApproval') || 'Pending Approval'} ({pendingPax})
+                        🟡 Interested ({interestedPax})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'partially_approved' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'partially_approved' ? '' : '#a855f7', color: participantFilter === 'partially_approved' ? '' : '#7e22ce' }}
+                        onClick={() => setParticipantFilter('partially_approved')}
+                        title="Partially Approved (Some family members approved)"
+                      >
+                        🟣 Partially Approved ({partiallyApprovedPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'approved' ? 'btn-primary' : 'btn-outline'}`}
-                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'approved' ? '' : '#10b981', color: participantFilter === 'approved' ? '' : '#059669' }}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'approved' ? '' : '#0d9488', color: participantFilter === 'approved' ? '' : '#0f766e' }}
                         onClick={() => setParticipantFilter('approved')}
+                        title="Registration Approved (Fully approved)"
                       >
-                        ✓ {t('filterApproved') || 'Approved (Eligible)'} ({approvedPax})
+                        🟢 Approved ({approvedPax})
                       </button>
                       <button 
-                        className={`btn ${participantFilter === 'registered_unpaid' ? 'btn-primary' : 'btn-outline'}`}
-                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'registered_unpaid' ? '' : '#ef4444', color: participantFilter === 'registered_unpaid' ? '' : '#dc2626' }}
-                        onClick={() => setParticipantFilter('registered_unpaid')}
-                        title="Devotees registered but not yet fully paid"
+                        className={`btn ${participantFilter === 'partially_confirmed' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'partially_confirmed' ? '' : '#6366f1', color: participantFilter === 'partially_confirmed' ? '' : '#4338ca' }}
+                        onClick={() => setParticipantFilter('partially_confirmed')}
+                        title="Part Payment Received by Admin"
                       >
-                        ⚠️ {t('filterRegisteredUnpaid') || 'Registered (Unpaid)'} ({unpaidPax})
+                        🔵 Partially Confirmed ({partiallyConfirmedPax})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'confirmed' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'confirmed' ? '' : '#10b981', color: participantFilter === 'confirmed' ? '' : '#059669' }}
+                        onClick={() => setParticipantFilter('confirmed')}
+                        title="Full Payment Received by Admin"
+                      >
+                        ❇️ Confirmed ({confirmedPax})
+                      </button>
+                      <button 
+                        className={`btn ${participantFilter === 'cancelled' ? 'btn-primary' : 'btn-outline'}`}
+                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'cancelled' ? '' : '#ef4444', color: participantFilter === 'cancelled' ? '' : '#dc2626' }}
+                        onClick={() => setParticipantFilter('cancelled')}
+                        title="Devotee or Admin Cancels"
+                      >
+                        🔴 Cancelled ({cancelledPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'cash_promised' ? 'btn-primary' : 'btn-outline'}`}
@@ -6305,34 +6482,6 @@ export default function App() {
                         title="Devotees who promised to pay via cash on a future date"
                       >
                         💵 Cash Promised ({cashPromisedPax})
-                      </button>
-                      <button 
-                        className={`btn ${participantFilter === 'confirmed' ? 'btn-primary' : 'btn-outline'}`}
-                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
-                        onClick={() => setParticipantFilter('confirmed')}
-                      >
-                        Confirmed ({confirmedPax})
-                      </button>
-                      <button 
-                        className={`btn ${participantFilter === 'interested' ? 'btn-primary' : 'btn-outline'}`}
-                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
-                        onClick={() => setParticipantFilter('interested')}
-                      >
-                        Interested ({interestedPax})
-                      </button>
-                      <button 
-                        className={`btn ${participantFilter === 'partially_paid' ? 'btn-primary' : 'btn-outline'}`}
-                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
-                        onClick={() => setParticipantFilter('partially_paid')}
-                      >
-                        Partially Paid ({partiallyPaidPax})
-                      </button>
-                      <button 
-                        className={`btn ${participantFilter === 'completed' ? 'btn-primary' : 'btn-outline'}`}
-                        style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
-                        onClick={() => setParticipantFilter('completed')}
-                      >
-                        Fully Paid ({fullyPaidPax})
                       </button>
                     </div>
 
@@ -6498,15 +6647,38 @@ export default function App() {
                                       className={`badge badge-${effectiveDevoteeStatus}`} 
                                       style={{ cursor: 'pointer', border: 'none' }} 
                                       onClick={() => cycleParticipantStatus(part.id, effectiveDevoteeStatus)}
-                                      title="Click to cycle status"
+                                      title="Click to cycle status: Interested → Partially Approved → Approved → Partially Confirmed → Confirmed → Cancelled"
                                     >
-                                      {effectiveDevoteeStatus}
+                                      {getLifecycleStatusLabel(effectiveDevoteeStatus)}
                                     </button>
                                   </td>
 
                                   {/* Eligibility & Admin Approval */}
                                   <td>
-                                    {isDevoteeApproved(part) ? (
+                                    {effectiveDevoteeStatus === 'partially_approved' ? (
+                                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start' }}>
+                                        <span className="badge badge-partially_approved" style={{ fontWeight: '600' }}>
+                                          ⚡ Partially Approved
+                                        </span>
+                                        <button
+                                          type="button"
+                                          className="btn btn-primary"
+                                          style={{ padding: '0.15rem 0.45rem', fontSize: '0.7rem', backgroundColor: '#16a34a', borderColor: '#15803d', display: 'inline-flex', alignItems: 'center', gap: '0.2rem', marginTop: '0.15rem' }}
+                                          onClick={() => handleApproveEligibility(part)}
+                                          title="Approve all remaining members for Yatra"
+                                        >
+                                          <Check size={11} /> Approve All
+                                        </button>
+                                        <button
+                                          type="button"
+                                          onClick={() => handleRevokeEligibility(part)}
+                                          style={{ background: 'none', border: 'none', color: '#b91c1c', fontSize: '0.68rem', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}
+                                          title="Revoke approvals"
+                                        >
+                                          {t('revokeApproval') || 'Revoke All'}
+                                        </button>
+                                      </div>
+                                    ) : isDevoteeApproved(part) ? (
                                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.2rem', alignItems: 'flex-start' }}>
                                         <span className="badge" style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', border: '1px solid var(--success-border)', fontWeight: '600' }}>
                                           ✓ {t('approvedEligible') || 'Approved'}
@@ -6662,24 +6834,63 @@ export default function App() {
                                       <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr 1fr', gap: '1.5rem', backgroundColor: 'var(--card-bg)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
                                         {/* SECTION A: FAMILY MEMBERS ROSTER */}
                                         <div>
-                                          <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '0.9rem', color: 'var(--text)' }}>
-                                            👨‍👩‍👧‍👦 Family Members ({totalSeats})
-                                          </h4>
+                                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                                            <h4 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text)' }}>
+                                              👨‍👩‍👧‍👦 Family Members ({totalSeats})
+                                            </h4>
+                                            {part.type === 'family' && part.familyMembers && part.familyMembers.length > 0 && (
+                                              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                                                Click button to approve/exclude member
+                                              </span>
+                                            )}
+                                          </div>
                                           {part.familyMembers && part.familyMembers.length > 0 ? (
                                             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.35rem' }}>
-                                              {part.familyMembers.map((m, idx) => (
-                                                <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', padding: '0.35rem 0.5rem', backgroundColor: 'var(--bg)', borderRadius: '4px', fontSize: '0.8rem' }}>
-                                                  <span>
-                                                    <strong>{idx + 1}. {m.name || 'Unnamed'}</strong> ({m.relation || 'Relation N/A'})
-                                                  </span>
-                                                  <span>
-                                                    {m.age ? `${m.age} yrs` : 'Age N/A'}
-                                                    {m.age && parseInt(m.age) < 5 ? (
-                                                      <span style={{ color: 'var(--success)', fontWeight: 'bold', marginLeft: '0.35rem' }}>🆓 FREE</span>
-                                                    ) : ''}
-                                                  </span>
-                                                </div>
-                                              ))}
+                                              {part.familyMembers.map((m, idx) => {
+                                                const isMemApproved = m.isApproved === true || (m.isApproved !== false && isDevoteeApproved(part));
+                                                return (
+                                                  <div key={idx} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '0.35rem 0.5rem', backgroundColor: 'var(--bg)', borderRadius: '4px', fontSize: '0.8rem' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                      <button
+                                                        type="button"
+                                                        onClick={() => handleToggleMemberApproval(part, idx)}
+                                                        title={isMemApproved ? "Click to disapprove this member" : "Click to approve this member"}
+                                                        style={{
+                                                          border: 'none',
+                                                          background: isMemApproved ? '#10b981' : '#cbd5e1',
+                                                          color: 'white',
+                                                          borderRadius: '3px',
+                                                          width: '20px',
+                                                          height: '20px',
+                                                          display: 'inline-flex',
+                                                          alignItems: 'center',
+                                                          justifyContent: 'center',
+                                                          cursor: 'pointer',
+                                                          fontSize: '11px',
+                                                          fontWeight: 'bold',
+                                                          padding: 0
+                                                        }}
+                                                      >
+                                                        {isMemApproved ? '✓' : '—'}
+                                                      </button>
+                                                      <span style={{ textDecoration: !isMemApproved && isDevoteeApproved(part) ? 'line-through' : 'none', color: !isMemApproved && isDevoteeApproved(part) ? 'var(--text-muted)' : 'inherit' }}>
+                                                        <strong>{idx + 1}. {m.name || 'Unnamed'}</strong> ({m.relation || 'Relation N/A'})
+                                                      </span>
+                                                    </div>
+                                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem' }}>
+                                                      <span style={{ fontSize: '0.7rem', padding: '0.1rem 0.35rem', borderRadius: '3px', backgroundColor: isMemApproved ? '#ccfbf1' : '#f1f5f9', color: isMemApproved ? '#0f766e' : '#64748b', fontWeight: 600 }}>
+                                                        {isMemApproved ? 'Approved' : 'Pending/Excluded'}
+                                                      </span>
+                                                      <span>
+                                                        {m.age ? `${m.age} yrs` : 'Age N/A'}
+                                                        {m.age && parseInt(m.age) < 5 ? (
+                                                          <span style={{ color: 'var(--success)', fontWeight: 'bold', marginLeft: '0.35rem' }}>🆓 FREE</span>
+                                                        ) : ''}
+                                                      </span>
+                                                    </div>
+                                                  </div>
+                                                );
+                                              })}
                                             </div>
                                           ) : (
                                             <div style={{ fontSize: '0.82rem', color: 'var(--text-muted)' }}>
@@ -6843,7 +7054,7 @@ export default function App() {
                       {displayedParticipants.map(part => {
                         const splitInfo = expCalc.splits.find(s => s.id === part.id);
                         const dynamicPaymentStatus = splitInfo?.dynamicPaymentStatus || part.paymentStatus;
-                        const effectiveDevoteeStatus = (dynamicPaymentStatus === 'completed' && part.status === 'interested') ? 'confirmed' : (splitInfo?.dynamicDevoteeStatus || part.status);
+                        const effectiveDevoteeStatus = splitInfo?.dynamicDevoteeStatus || part.status;
                         const totalSeats = part.type === 'family' ? (part.membersCount || part.familyMembers?.length || 1) : 1;
                         const computedShare = splitInfo ? splitInfo.share : 0;
                         const paid = splitInfo ? splitInfo.paid : 0;
@@ -6867,8 +7078,9 @@ export default function App() {
                                   className={`badge badge-${effectiveDevoteeStatus}`} 
                                   style={{ cursor: 'pointer', border: 'none' }} 
                                   onClick={() => cycleParticipantStatus(part.id, effectiveDevoteeStatus)}
+                                  title="Click to cycle status: Interested → Partially Approved → Approved → Partially Confirmed → Confirmed → Cancelled"
                                 >
-                                  {effectiveDevoteeStatus}
+                                  {getLifecycleStatusLabel(effectiveDevoteeStatus)}
                                 </button>
                               </div>
 
@@ -6890,16 +7102,35 @@ export default function App() {
                               )}
 
                               {/* Eligibility Status Block */}
-                              <div style={{ backgroundColor: isDevoteeApproved(part) ? 'var(--success-light)' : '#fffbeb', border: `1px solid ${isDevoteeApproved(part) ? 'var(--success-border)' : '#fde68a'}`, padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                              <div style={{ backgroundColor: effectiveDevoteeStatus === 'partially_approved' ? '#f3e8ff' : (isDevoteeApproved(part) ? 'var(--success-light)' : '#fffbeb'), border: `1px solid ${effectiveDevoteeStatus === 'partially_approved' ? '#d8b4fe' : (isDevoteeApproved(part) ? 'var(--success-border)' : '#fde68a')}`, padding: '0.5rem 0.75rem', borderRadius: 'var(--radius-sm)', marginBottom: '0.75rem', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                                 <div>
-                                  <span style={{ fontSize: '0.78rem', fontWeight: 'bold', color: isDevoteeApproved(part) ? 'var(--success)' : '#b45309' }}>
-                                    {isDevoteeApproved(part) ? `✓ ${t('approvedEligible') || 'Approved for Yatra'}` : `⏳ ${t('pendingApproval') || 'Eligibility Pending'}`}
+                                  <span style={{ fontSize: '0.78rem', fontWeight: 'bold', color: effectiveDevoteeStatus === 'partially_approved' ? '#7e22ce' : (isDevoteeApproved(part) ? 'var(--success)' : '#b45309') }}>
+                                    {effectiveDevoteeStatus === 'partially_approved' ? '⚡ Partially Approved' : (isDevoteeApproved(part) ? `✓ ${t('approvedEligible') || 'Approved for Yatra'}` : `⏳ ${t('pendingApproval') || 'Eligibility Pending'}`)}
                                   </span>
-                                  <div style={{ fontSize: '0.7rem', color: isDevoteeApproved(part) ? '#047857' : '#92400e', marginTop: '0.1rem' }}>
-                                    {isDevoteeApproved(part) ? 'Payment options enabled' : 'Payment options locked'}
+                                  <div style={{ fontSize: '0.7rem', color: effectiveDevoteeStatus === 'partially_approved' ? '#6b21a8' : (isDevoteeApproved(part) ? '#047857' : '#92400e'), marginTop: '0.1rem' }}>
+                                    {effectiveDevoteeStatus === 'partially_approved' ? 'Some family members approved' : (isDevoteeApproved(part) ? 'Payment options enabled' : 'Payment options locked')}
                                   </div>
                                 </div>
-                                {isDevoteeApproved(part) ? (
+                                {effectiveDevoteeStatus === 'partially_approved' ? (
+                                  <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                    <button
+                                      type="button"
+                                      className="btn btn-primary"
+                                      style={{ padding: '0.2rem 0.45rem', fontSize: '0.7rem', backgroundColor: '#16a34a', borderColor: '#15803d' }}
+                                      onClick={() => handleApproveEligibility(part)}
+                                      title="Approve all remaining members"
+                                    >
+                                      Approve All
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleRevokeEligibility(part)}
+                                      style={{ background: 'none', border: 'none', color: '#b91c1c', fontSize: '0.7rem', textDecoration: 'underline', cursor: 'pointer', padding: 0 }}
+                                    >
+                                      {t('revokeApproval') || 'Revoke'}
+                                    </button>
+                                  </div>
+                                ) : isDevoteeApproved(part) ? (
                                   <button
                                     type="button"
                                     onClick={() => handleRevokeEligibility(part)}
@@ -8417,8 +8648,12 @@ export default function App() {
                 >
                   <Printer size={15} /> {t('printBadge')}
                 </button>
-                <span className={`badge badge-${myParticipantData.status}`}>{myParticipantData.status}</span>
-                {isDevoteeApproved(myParticipantData) ? (
+                <span className={`badge badge-${myParticipantData.status}`}>{getLifecycleStatusLabel(myParticipantData.status)}</span>
+                {myParticipantData.status === 'partially_approved' ? (
+                  <span className="badge badge-partially_approved" style={{ fontWeight: 600 }}>
+                    ⚡ Partially Approved
+                  </span>
+                ) : isDevoteeApproved(myParticipantData) ? (
                   <span className="badge" style={{ backgroundColor: 'var(--success-light)', color: 'var(--success)', border: '1px solid var(--success-border)', fontWeight: 600 }}>
                     ✓ {t('approvedEligible') || 'Eligible for Yatra'}
                   </span>
@@ -8427,8 +8662,8 @@ export default function App() {
                     ⏳ {t('pendingApproval') || 'Pending Eligibility Approval'}
                   </span>
                 )}
-                <span className="badge" style={{ backgroundColor: myParticipantData.paymentStatus === 'completed' ? 'var(--success-light)' : 'var(--warning-light)', color: myParticipantData.paymentStatus === 'completed' ? 'var(--success)' : 'var(--warning)' }}>
-                  Payment: {myParticipantData.paymentStatus}
+                <span className="badge" style={{ backgroundColor: myParticipantData.paymentStatus === 'completed' ? 'var(--success-light)' : (myParticipantData.paymentStatus === 'partially_paid' ? 'var(--primary-light)' : 'var(--warning-light)'), color: myParticipantData.paymentStatus === 'completed' ? 'var(--success)' : (myParticipantData.paymentStatus === 'partially_paid' ? 'var(--primary)' : 'var(--warning)') }}>
+                  Payment: {myParticipantData.paymentStatus ? myParticipantData.paymentStatus.replace('_', ' ') : 'Pending'}
                 </span>
               </div>
             </div>
@@ -9743,19 +9978,22 @@ export default function App() {
                     onChange={(e) => setNewParticipant({
                       ...newParticipant, 
                       approvalStatus: e.target.value,
-                      isApproved: e.target.value === 'approved'
+                      isApproved: e.target.value === 'approved' || e.target.value === 'partially_approved'
                     })}
                   >
                     <option value="pending">{t('pendingApproval') || '⏳ Pending Approval (Locked)'}</option>
+                    <option value="partially_approved">⚡ Partially Approved (Family)</option>
                     <option value="approved">{t('approvedEligible') || '✓ Approved Eligible (Open)'}</option>
                   </select>
                 </div>
                 <div className="form-group">
                   <label>Verification Status</label>
                   <select value={newParticipant.status} onChange={(e) => setNewParticipant({...newParticipant, status: e.target.value})}>
-                    <option value="interested">Interested</option>
-                    <option value="confirmed">Confirmed</option>
-                    <option value="waiting">Waiting List</option>
+                    <option value="interested">Interested (Registration Done)</option>
+                    <option value="partially_approved">Partially Approved</option>
+                    <option value="approved">Approved (Registration Approved)</option>
+                    <option value="partially_confirmed">Partially Confirmed (Part Payment)</option>
+                    <option value="confirmed">Confirmed (Full Payment)</option>
                     <option value="cancelled">Cancelled</option>
                   </select>
                 </div>
