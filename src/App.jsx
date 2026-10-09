@@ -1584,7 +1584,8 @@ export default function App() {
   const handleApproveAllPending = async () => {
     const pendingParticipants = participants.filter(p => !isDevoteeApproved(p));
     if (pendingParticipants.length === 0) return;
-    if (window.confirm(`Approve all ${pendingParticipants.length} pending devotee registration(s) for ${selectedYatra?.name || 'this Yatra'}? This will enable payment options for all of them.`)) {
+    const totalPendingSeats = pendingParticipants.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+    if (window.confirm(`Approve all ${totalPendingSeats} pending devotee(s) across ${pendingParticipants.length} registration group(s) for "${selectedYatra?.name || 'this Yatra'}"? This will enable payment options for all of them.`)) {
       const actor = getCurrentActor();
       for (const p of pendingParticipants) {
         await db.updateParticipant(p.id, {
@@ -1597,8 +1598,8 @@ export default function App() {
         yatraTitle: selectedYatra?.name,
         category: 'Participants',
         action: 'BULK_ELIGIBILITY_APPROVED',
-        details: `${actor.name} (${actor.phone || actor.email}) bulk-approved Yatra eligibility for ${pendingParticipants.length} pending devotee registrations.`,
-        metadata: { count: pendingParticipants.length }
+        details: `${actor.name} (${actor.phone || actor.email}) bulk-approved Yatra eligibility for ${totalPendingSeats} devotees across ${pendingParticipants.length} registration groups.`,
+        metadata: { count: totalPendingSeats, registrationGroups: pendingParticipants.length }
       });
       setRefreshTrigger(prev => prev + 1);
     }
@@ -5912,17 +5913,26 @@ export default function App() {
                 return 0;
               });
 
-              const pendingCount = participants.filter(p => !isDevoteeApproved(p)).length;
-              const unpaidCount = participants.filter(p => {
+              const getPaxCount = (p) => p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1;
+              const countCumulativePax = (list) => (list || []).reduce((sum, p) => sum + getPaxCount(p), 0);
+
+              const totalPax = countCumulativePax(participants);
+              const pendingPax = countCumulativePax(participants.filter(p => !isDevoteeApproved(p)));
+              const approvedPax = countCumulativePax(participants.filter(p => isDevoteeApproved(p)));
+              const unpaidPax = countCumulativePax(participants.filter(p => {
                 const split = expCalc.splits.find(s => s.id === p.id);
                 const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
                 return payStatus !== 'completed' && p.status !== 'cancelled';
-              }).length;
-              const cashPromisedCount = participants.filter(p => {
+              }));
+              const cashPromisedPax = countCumulativePax(participants.filter(p => {
                 const split = expCalc.splits.find(s => s.id === p.id);
                 const payStatus = split?.dynamicPaymentStatus || p.paymentStatus;
                 return Boolean(p.cashPromiseDate) && payStatus !== 'completed';
-              }).length;
+              }));
+              const confirmedPax = countCumulativePax(participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'confirmed'));
+              const interestedPax = countCumulativePax(participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'interested'));
+              const partiallyPaidPax = countCumulativePax(participants.filter(p => expCalc.splits.find(s => s.id === p.id)?.dynamicPaymentStatus === 'partially_paid'));
+              const fullyPaidPax = countCumulativePax(participants.filter(p => expCalc.splits.find(s => s.id === p.id)?.dynamicPaymentStatus === 'completed'));
 
               return (
                 <div>
@@ -5953,12 +5963,12 @@ export default function App() {
                   )}
 
                   {/* PENDING ELIGIBILITY APPROVAL ALERT BANNER */}
-                  {pendingCount > 0 && (
+                  {pendingPax > 0 && (
                     <div style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.85rem 1.15rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '1rem', flexWrap: 'wrap' }}>
                       <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
                         <Clock size={20} style={{ color: '#d97706', flexShrink: 0 }} />
                         <span style={{ fontSize: '0.88rem', color: '#92400e' }}>
-                          <strong>{pendingCount} Devotee(s) Pending Eligibility Review:</strong> Devotees submitted interest with no upfront payment. Once approved, UPI payment options unlock in their portal.
+                          <strong>{pendingPax} Devotee(s) Pending Eligibility Review:</strong> Devotees submitted interest with no upfront payment. Once approved, UPI payment options unlock in their portal.
                         </span>
                       </div>
                       <button 
@@ -5981,21 +5991,21 @@ export default function App() {
                         style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
                         onClick={() => setParticipantFilter('all')}
                       >
-                        All ({participants.length})
+                        All ({totalPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'pending_approval' ? 'btn-primary' : 'btn-outline'}`}
                         style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'pending_approval' ? '' : '#f59e0b', color: participantFilter === 'pending_approval' ? '' : '#b45309' }}
                         onClick={() => setParticipantFilter('pending_approval')}
                       >
-                        ⏳ {t('filterPendingApproval') || 'Pending Approval'} ({pendingCount})
+                        ⏳ {t('filterPendingApproval') || 'Pending Approval'} ({pendingPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'approved' ? 'btn-primary' : 'btn-outline'}`}
                         style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem', borderColor: participantFilter === 'approved' ? '' : '#10b981', color: participantFilter === 'approved' ? '' : '#059669' }}
                         onClick={() => setParticipantFilter('approved')}
                       >
-                        ✓ {t('filterApproved') || 'Approved'} ({participants.filter(p => isDevoteeApproved(p)).length})
+                        ✓ {t('filterApproved') || 'Approved (Eligible)'} ({approvedPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'registered_unpaid' ? 'btn-primary' : 'btn-outline'}`}
@@ -6003,7 +6013,7 @@ export default function App() {
                         onClick={() => setParticipantFilter('registered_unpaid')}
                         title="Devotees registered but not yet fully paid"
                       >
-                        ⚠️ {t('filterRegisteredUnpaid') || 'Registered (Unpaid)'} ({unpaidCount})
+                        ⚠️ {t('filterRegisteredUnpaid') || 'Registered (Unpaid)'} ({unpaidPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'cash_promised' ? 'btn-primary' : 'btn-outline'}`}
@@ -6011,35 +6021,35 @@ export default function App() {
                         onClick={() => setParticipantFilter('cash_promised')}
                         title="Devotees who promised to pay via cash on a future date"
                       >
-                        💵 Cash Promised ({cashPromisedCount})
+                        💵 Cash Promised ({cashPromisedPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'confirmed' ? 'btn-primary' : 'btn-outline'}`}
                         style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
                         onClick={() => setParticipantFilter('confirmed')}
                       >
-                        Confirmed ({participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'confirmed').length})
+                        Confirmed ({confirmedPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'interested' ? 'btn-primary' : 'btn-outline'}`}
                         style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
                         onClick={() => setParticipantFilter('interested')}
                       >
-                        Interested ({participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'interested').length})
+                        Interested ({interestedPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'partially_paid' ? 'btn-primary' : 'btn-outline'}`}
                         style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
                         onClick={() => setParticipantFilter('partially_paid')}
                       >
-                        Partially Paid ({expCalc.splits.filter(s => s.dynamicPaymentStatus === 'partially_paid').length})
+                        Partially Paid ({partiallyPaidPax})
                       </button>
                       <button 
                         className={`btn ${participantFilter === 'completed' ? 'btn-primary' : 'btn-outline'}`}
                         style={{ padding: '0.3rem 0.65rem', fontSize: '0.8rem' }}
                         onClick={() => setParticipantFilter('completed')}
                       >
-                        Fully Paid ({expCalc.splits.filter(s => s.dynamicPaymentStatus === 'completed').length})
+                        Fully Paid ({fullyPaidPax})
                       </button>
                     </div>
 
@@ -7349,24 +7359,36 @@ export default function App() {
                             <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{selectedYatra.expectedParticipants}</td>
                           </tr>
                           <tr>
+                            <td style={{ padding: '0.5rem 0' }}>Total Registered Devotees (Cumulative):</td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{participants.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0)}</td>
+                          </tr>
+                          <tr>
                             <td style={{ padding: '0.5rem 0' }}>Confirmed Devotees (Paid & Pending):</td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{expCalc.confirmedCount}</td>
                           </tr>
                           <tr>
                             <td style={{ padding: '0.5rem 0' }}>Approved & Eligible Devotees:</td>
-                            <td style={{ textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>{participants.filter(p => isDevoteeApproved(p)).length}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>
+                              {participants.filter(p => isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0)}
+                            </td>
                           </tr>
                           <tr>
                             <td style={{ padding: '0.5rem 0' }}>Pending Eligibility Review:</td>
-                            <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#b45309' }}>{participants.filter(p => !isDevoteeApproved(p)).length}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#b45309' }}>
+                              {participants.filter(p => !isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0)}
+                            </td>
                           </tr>
                           <tr>
                             <td style={{ padding: '0.5rem 0' }}>Interested / Enquiries:</td>
-                            <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{participants.filter(p => p.status === 'interested').length}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold' }}>
+                              {participants.filter(p => p.status === 'interested').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0)}
+                            </td>
                           </tr>
                           <tr>
                             <td style={{ padding: '0.5rem 0' }}>Waiting List Count:</td>
-                            <td style={{ textAlign: 'right', fontWeight: 'bold' }}>{participants.filter(p => p.status === 'waiting').length}</td>
+                            <td style={{ textAlign: 'right', fontWeight: 'bold' }}>
+                              {participants.filter(p => p.status === 'waiting').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0)}
+                            </td>
                           </tr>
                         </tbody>
                       </table>
