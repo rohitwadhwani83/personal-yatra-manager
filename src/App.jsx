@@ -2437,16 +2437,15 @@ export default function App() {
       return;
     }
 
-    // Verify Yatra target capacity limit
+    // Verify Yatra target capacity limit based on approved devotees
     const targetCapacity = parseInt(selectedYatra.expectedParticipants) || 0;
     if (targetCapacity > 0) {
       const freshParticipants = await db.getParticipants(selectedYatra.id);
-      const currentSeats = (freshParticipants || [])
-        .filter(p => !p.isDeleted)
+      const currentApprovedSeats = (freshParticipants || [])
+        .filter(p => !p.isDeleted && isDevoteeApproved(p))
         .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
-      const incomingSeats = newParticipant.type === 'family' ? (newParticipant.familyMembers?.length || newParticipant.membersCount || 1) : 1;
       
-      if (currentSeats >= targetCapacity || currentSeats + incomingSeats > targetCapacity) {
+      if (currentApprovedSeats >= targetCapacity) {
         alert(t('registrationCapacityFullMessage') || "The registration for this yatra has reached full capacity. Please reach out to admins for further assistance. Hare Krishna!");
         setRefreshTrigger(prev => prev + 1);
         return;
@@ -4277,19 +4276,19 @@ export default function App() {
                       >
                         <Compass size={14} /> Completed
                       </button>
-                    ) : (selectedYatra.expectedParticipants && participants.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0) >= parseInt(selectedYatra.expectedParticipants)) ? (
+                    ) : (selectedYatra.expectedParticipants && participants.filter(p => !p.isDeleted && isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0) >= parseInt(selectedYatra.expectedParticipants)) ? (
                       <button 
-                        type="button"
+                        type="button" 
                         className="btn btn-outline" 
                         style={{ borderColor: '#fde68a', backgroundColor: '#fffbeb', color: '#b45309', fontSize: '0.82rem', padding: '0.45rem 0.8rem', fontWeight: 600 }} 
                         onClick={() => {
                           const baseUrl = window.location.href.split('#')[0];
                           navigator.clipboard.writeText(`${baseUrl}#/register/${selectedYatra.id}`);
-                          alert(`This Yatra has reached full capacity (${selectedYatra.expectedParticipants} target reached). Public registrations are currently closed.\n\nTo accept more devotees, click 'Edit' and increase the target capacity.`);
+                          alert(`This Yatra has reached full capacity (${selectedYatra.expectedParticipants} approved seats reached). Public registrations are currently closed.\n\nTo accept more devotees, click 'Edit' and increase the target capacity.`);
                         }}
-                        title="Yatra has reached target capacity. Increase capacity via 'Edit' to reopen registration link."
+                        title="Yatra has reached target capacity of approved devotees. Increase capacity via 'Edit' to reopen registration link."
                       >
-                        <Users size={14} /> Full Capacity ({selectedYatra.expectedParticipants})
+                        <Users size={14} /> Full Capacity ({selectedYatra.expectedParticipants} Approved)
                       </button>
                     ) : (
                       <button 
@@ -4547,7 +4546,7 @@ export default function App() {
                       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', paddingTop: '0.75rem', borderTop: '1px solid var(--border)', fontSize: '0.8rem', color: 'var(--text-muted)', flexWrap: 'wrap', gap: '0.5rem' }}>
                         <span>Pending Approval: <strong style={{ color: '#b45309' }}>{pendingApprovalSeats}</strong></span>
                         <span>Interested: <strong>{interestedSeats}</strong></span>
-                        <span>Available Seats: <strong>{Math.max(0, targetSeats - totalRegisteredSeats)}</strong></span>
+                        <span>Available Capacity: <strong style={{ color: approvedSeats >= targetSeats ? 'var(--danger)' : 'var(--success)' }}>{Math.max(0, targetSeats - approvedSeats)}</strong></span>
                       </div>
                     </div>
 
@@ -7382,10 +7381,13 @@ export default function App() {
         {/* ======================================= */}
         {currentRoute.path === 'register' && selectedYatra && (() => {
           const yatraTargetCapacity = parseInt(selectedYatra.expectedParticipants) || 0;
+          const currentApprovedSeats = participants
+            .filter(p => (p.yatraId === selectedYatra.id) && !p.isDeleted && isDevoteeApproved(p))
+            .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
           const currentRegisteredSeats = participants
             .filter(p => (p.yatraId === selectedYatra.id) && !p.isDeleted)
             .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
-          const isCapacityReached = yatraTargetCapacity > 0 && currentRegisteredSeats >= yatraTargetCapacity;
+          const isCapacityReached = yatraTargetCapacity > 0 && currentApprovedSeats >= yatraTargetCapacity;
 
           return (
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '80vh' }}>
@@ -7485,10 +7487,12 @@ export default function App() {
                       {t('registrationCapacityFullMessage') || 'The registration for this yatra has reached full capacity. Please reach out to admins for further assistance. Hare Krishna!'}
                     </p>
                   </div>
-                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem', color: 'var(--text-muted)', fontSize: '0.85rem' }}>
-                    <span>Registered: <strong>{currentRegisteredSeats}</strong></span>
+                  <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.6rem', color: 'var(--text-muted)', fontSize: '0.85rem', flexWrap: 'wrap' }}>
+                    <span>Approved Pilgrims: <strong>{currentApprovedSeats}</strong></span>
                     <span>•</span>
                     <span>Target Capacity: <strong>{yatraTargetCapacity}</strong></span>
+                    <span>•</span>
+                    <span>Total Registered: <strong>{currentRegisteredSeats}</strong></span>
                   </div>
                   <div style={{ marginTop: '1.5rem', display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
                     <button className="btn btn-outline" onClick={() => navigateTo('home')}>
