@@ -266,6 +266,11 @@ export default function App() {
   const [adminAutoFilledDevotee, setAdminAutoFilledDevotee] = useState(null);
   const [isSearchingPhone, setIsSearchingPhone] = useState(false);
 
+  // Command Center Global Aggregates & Broadcast states
+  const [allSystemParticipants, setAllSystemParticipants] = useState([]);
+  const [allSystemPayments, setAllSystemPayments] = useState([]);
+  const [copiedBroadcast, setCopiedBroadcast] = useState(false);
+
   // General state triggers
   const [refreshTrigger, setRefreshTrigger] = useState(0);
 
@@ -290,6 +295,16 @@ export default function App() {
 
       const uData = await db.getUsers();
       setSystemUsers(uData);
+
+      // Load all participants and payments across all yatras for Command Center aggregates
+      try {
+        const allParts = await db.getCollection('participants');
+        const allPays = await db.getCollection('payments');
+        setAllSystemParticipants(allParts || []);
+        setAllSystemPayments(allPays || []);
+      } catch (err) {
+        console.warn("Could not load global participant aggregates:", err);
+      }
 
       // If a yatra is selected, load its detailed collections
       if (selectedYatra) {
@@ -3860,196 +3875,464 @@ export default function App() {
         {/* ======================================= */}
         {/* VIEW 2: ORGANIZER DASHBOARD */}
         {/* ======================================= */}
-        {currentRoute.path === 'dashboard' && currentUser && (
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'between', alignItems: 'center', marginBottom: '2rem' }}>
-              <div>
-                <h2>Devotee Yatras Command Center</h2>
-                <p style={{ color: 'var(--text-muted)' }}>Manage overall spiritual tours, hotel research, and verification</p>
-              </div>
-              <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
-                {isSuperAdmin && (
+        {currentRoute.path === 'dashboard' && currentUser && (() => {
+          const dashActiveYatras = yatras.filter(y => y.status !== 'completed');
+          const dashActiveYatraIds = new Set(dashActiveYatras.map(y => y.id));
+
+          // Active participants & payments across all active yatras
+          const dashParticipants = allSystemParticipants.length > 0 
+            ? allSystemParticipants.filter(p => dashActiveYatraIds.has(p.yatraId))
+            : participants;
+
+          const dashPayments = allSystemPayments.length > 0
+            ? allSystemPayments.filter(p => dashActiveYatraIds.has(p.yatraId))
+            : payments;
+
+          // Confirmed Devotees (cumulative headcount of confirmed participants, NO || 7)
+          const dashConfirmedPax = dashParticipants
+            .filter(p => p.status === 'confirmed')
+            .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+
+          // Total verified amount collected across active yatras
+          const dashCollected = dashPayments
+            .filter(p => p.status === 'verified')
+            .reduce((sum, p) => sum + (parseFloat(p.amountPaid) || 0), 0);
+
+          // Total outstanding payments across active yatras
+          const dashOutstanding = dashParticipants.reduce((sum, p) => {
+            const yObj = yatras.find(y => y.id === p.yatraId);
+            if (!yObj || yObj.status === 'completed') return sum;
+            const yPrice = yObj.pricePerPerson ? parseFloat(yObj.pricePerPerson) : 0;
+            let billablePax = 1;
+            if (p.type === 'family') {
+              if (p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
+                billablePax = Math.max(p.familyMembers.filter(m => !m.age || parseInt(m.age) >= 5).length, 1);
+              } else {
+                billablePax = p.membersCount || 1;
+              }
+            }
+            const share = (p.customPrice && parseFloat(p.customPrice) > 0) ? parseFloat(p.customPrice) : (billablePax * yPrice);
+            const paid = dashPayments
+              .filter(pay => pay.participantId === p.id && pay.status === 'verified')
+              .reduce((s, pay) => s + (parseFloat(pay.amountPaid) || 0), 0);
+            return sum + Math.max(0, share - paid);
+          }, 0);
+
+          // Pending eligibility review across active yatras
+          const dashPendingApprovalParts = dashParticipants.filter(p => !isDevoteeApproved(p));
+          const dashPendingApprovalPax = dashPendingApprovalParts.reduce(
+            (sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 
+            0
+          );
+
+          return (
+            <div>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.75rem', flexWrap: 'wrap', gap: '1rem' }}>
+                <div>
+                  <h2 style={{ margin: 0 }}>Devotee Yatras Command Center</h2>
+                  <p style={{ color: 'var(--text-muted)', marginTop: '0.25rem' }}>Manage overall spiritual tours, hotel research, and verification</p>
+                </div>
+                <div style={{ display: 'flex', gap: '0.65rem', flexWrap: 'wrap' }}>
+                  {isSuperAdmin && (
+                    <button 
+                      type="button"
+                      className="btn" 
+                      style={{ 
+                        display: 'inline-flex', 
+                        alignItems: 'center', 
+                        gap: '0.45rem', 
+                        padding: '0.5rem 1rem', 
+                        fontSize: '0.85rem', 
+                        fontWeight: 700,
+                        background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
+                        color: '#ffffff',
+                        border: '1px solid #b45309',
+                        borderRadius: 'var(--radius-sm)',
+                        boxShadow: '0 2px 8px rgba(217, 119, 6, 0.4)',
+                        cursor: 'pointer'
+                      }} 
+                      onClick={() => {
+                        setIsAuditTrailOpen(true);
+                        loadAuditLogs();
+                      }}
+                      title="Open Super Admin Audit Trail & Change Log"
+                    >
+                      <ShieldCheck size={18} /> Audit Trail
+                    </button>
+                  )}
                   <button 
                     type="button"
-                    className="btn" 
-                    style={{ 
-                      display: 'inline-flex', 
-                      alignItems: 'center', 
-                      gap: '0.45rem', 
-                      padding: '0.5rem 1rem', 
-                      fontSize: '0.85rem', 
-                      fontWeight: 700,
-                      background: 'linear-gradient(135deg, #f59e0b 0%, #d97706 100%)',
-                      color: '#ffffff',
-                      border: '1px solid #b45309',
-                      borderRadius: 'var(--radius-sm)',
-                      boxShadow: '0 2px 8px rgba(217, 119, 6, 0.4)',
-                      cursor: 'pointer'
-                    }} 
-                    onClick={() => {
-                      setIsAuditTrailOpen(true);
-                      loadAuditLogs();
-                    }}
-                    title="Open Super Admin Audit Trail & Change Log"
+                    className="btn btn-outline" 
+                    style={{ borderColor: '#8b5cf6', color: '#7c3aed', backgroundColor: 'hsla(260, 80%, 60%, 0.08)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
+                    onClick={handleCreateSandboxYatra}
+                    title="Create an isolated Sandbox Yatra with mock devotees, buses & rooms for safe testing"
                   >
-                    <ShieldCheck size={18} /> Audit Trail
+                    <Sparkles size={16} /> 🧪 Create Sandbox Test Yatra
                   </button>
-                )}
-                <button 
-                  type="button"
-                  className="btn btn-outline" 
-                  style={{ borderColor: '#8b5cf6', color: '#7c3aed', backgroundColor: 'hsla(260, 80%, 60%, 0.08)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.4rem' }}
-                  onClick={handleCreateSandboxYatra}
-                  title="Create an isolated Sandbox Yatra with mock devotees, buses & rooms for safe testing"
-                >
-                  <Sparkles size={16} /> 🧪 Create Sandbox Test Yatra
-                </button>
-                <button className="btn btn-primary" onClick={() => setIsCreateYatraOpen(true)}>
-                  <Plus size={18} /> Create New Yatra
-                </button>
-              </div>
-            </div>
-
-            {/* DASHBOARD STATISTICS BANNER */}
-            <div className="grid-cols-4" style={{ marginBottom: '2.5rem' }}>
-              <div className="card stat-card">
-                <div className="stat-info">
-                  <h3>Active Yatras</h3>
-                  <div className="value">{yatras.filter(y => y.status !== 'completed').length}</div>
+                  <button className="btn btn-primary" onClick={() => setIsCreateYatraOpen(true)}>
+                    <Plus size={18} /> Create New Yatra
+                  </button>
                 </div>
-                <div className="stat-icon"><Compass /></div>
               </div>
-              <div className="card stat-card">
-                <div className="stat-info">
-                  <h3>Confirmed Devotees</h3>
-                  <div className="value">
-                    {/* Sum of all confirmed participants across all yatras */}
-                    {participants.reduce((sum, p) => sum + (p.status === 'confirmed' ? (p.type === 'family' ? p.membersCount : 1) : 0), 0) || 7}
+
+              {/* DASHBOARD STATISTICS BANNER */}
+              <div className="grid-cols-4" style={{ marginBottom: '2rem' }}>
+                <div className="card stat-card">
+                  <div className="stat-info">
+                    <h3>Active Yatras</h3>
+                    <div className="value">{dashActiveYatras.length}</div>
+                  </div>
+                  <div className="stat-icon"><Compass /></div>
+                </div>
+                <div className="card stat-card">
+                  <div className="stat-info">
+                    <h3>Confirmed Devotees</h3>
+                    <div className="value">
+                      {dashConfirmedPax}
+                    </div>
+                  </div>
+                  <div className="stat-icon"><Users /></div>
+                </div>
+                <div className="card stat-card">
+                  <div className="stat-info">
+                    <h3>Amount Collected</h3>
+                    <div className="value">₹{dashCollected.toLocaleString()}</div>
+                  </div>
+                  <div className="stat-icon" style={{ color: 'var(--success)', backgroundColor: 'var(--success-light)' }}><CreditCard /></div>
+                </div>
+                <div className="card stat-card">
+                  <div className="stat-info">
+                    <h3>Outstanding Payments</h3>
+                    <div className="value">₹{dashOutstanding.toLocaleString()}</div>
+                  </div>
+                  <div className="stat-icon" style={{ color: 'var(--danger)', backgroundColor: 'var(--danger-light)' }}><AlertTriangle /></div>
+                </div>
+              </div>
+
+              {/* OPTION B: PENDING APPROVALS ACTION ALERT BANNER */}
+              {dashPendingApprovalParts.length > 0 && (
+                <div style={{
+                  backgroundColor: '#fffbeb',
+                  border: '1.5px solid #fde68a',
+                  borderRadius: 'var(--radius-md)',
+                  padding: '1.1rem 1.35rem',
+                  marginBottom: '2rem',
+                  display: 'flex',
+                  justifyContent: 'space-between',
+                  alignItems: 'center',
+                  flexWrap: 'wrap',
+                  gap: '1rem',
+                  boxShadow: '0 2px 8px rgba(217, 119, 6, 0.08)'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
+                    <div style={{
+                      width: '42px',
+                      height: '42px',
+                      borderRadius: '50%',
+                      backgroundColor: '#fef3c7',
+                      color: '#d97706',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      flexShrink: 0
+                    }}>
+                      <Clock size={22} />
+                    </div>
+                    <div>
+                      <div style={{ fontWeight: 700, color: '#92400e', fontSize: '0.96rem' }}>
+                        ⏳ Action Needed: {dashPendingApprovalPax} Devotee{dashPendingApprovalPax > 1 ? 's' : ''} ({dashPendingApprovalParts.length} Registration{dashPendingApprovalParts.length > 1 ? 's' : ''}) Awaiting Eligibility Approval
+                      </div>
+                      <p style={{ margin: '0.2rem 0 0', fontSize: '0.84rem', color: '#b45309' }}>
+                        Devotees cannot view UPI QR payment options or confirm seats until an organizer reviews and approves their registration.
+                      </p>
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    {(() => {
+                      const targetYatra = yatras.find(y => dashPendingApprovalParts.some(p => p.yatraId === y.id)) || dashActiveYatras[0];
+                      return targetYatra ? (
+                        <button
+                          type="button"
+                          className="btn btn-primary"
+                          style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', fontSize: '0.85rem', fontWeight: 600, padding: '0.55rem 1.15rem' }}
+                          onClick={() => {
+                            setSelectedYatra(targetYatra);
+                            setActiveTab('participants');
+                            setParticipantFilter('pending_approval');
+                            navigateTo('yatra', targetYatra.id);
+                          }}
+                        >
+                          <UserCheck size={16} /> Review & Approve Now ({dashPendingApprovalParts.length})
+                        </button>
+                      ) : null;
+                    })()}
                   </div>
                 </div>
-                <div className="stat-icon"><Users /></div>
-              </div>
-              <div className="card stat-card">
-                <div className="stat-info">
-                  <h3>Amount Collected</h3>
-                  <div className="value">₹{expCalc.totalCollected.toLocaleString()}</div>
-                </div>
-                <div className="stat-icon" style={{ color: 'var(--success)', backgroundColor: 'var(--success-light)' }}><CreditCard /></div>
-              </div>
-              <div className="card stat-card">
-                <div className="stat-info">
-                  <h3>Outstanding Payments</h3>
-                  <div className="value">₹{expCalc.totalOutstanding.toLocaleString()}</div>
-                </div>
-                <div className="stat-icon" style={{ color: 'var(--danger)', backgroundColor: 'var(--danger-light)' }}><AlertTriangle /></div>
-              </div>
-            </div>
+              )}
 
-            {/* RECENT EXPENSES BANNER */}
-            <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '2rem' }}>
-              {/* YATRAS Trello/List View */}
-              <div>
-                <h3 style={{ marginBottom: '1rem' }}>Active Yatras</h3>
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  {yatras.map(yatra => {
-                    const statusClass = `badge-${yatra.status}`;
-                    return (
-                      <div key={yatra.id} className="card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', cursor: 'pointer' }} onClick={() => navigateTo('yatra', yatra.id)}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-                            <h4 style={{ fontSize: '1.2rem' }}>{yatra.name}</h4>
-                            <span className={`badge ${statusClass}`}>{yatra.status.replace('_', ' ')}</span>
-                            {yatra.isSandbox && (
-                              <span className="badge" style={{ backgroundColor: '#ede9fe', color: '#7c3aed', border: '1px solid #c4b5fd', fontWeight: 'bold' }}>
-                                🧪 Sandbox Test
-                              </span>
-                            )}
-                          </div>
-                          <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                            📍 {yatra.destination} | 📅 {yatra.startDate} to {yatra.endDate}
-                          </p>
-                        </div>
-                        <div style={{ display: 'flex', gap: '1.5rem', alignItems: 'center' }}>
-                          <div style={{ textAlign: 'right' }}>
-                            <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Expected Devotees</span>
-                            <div style={{ fontWeight: '600' }}>{yatra.expectedParticipants}</div>
-                          </div>
-                          <button className="btn btn-outline btn-icon" onClick={(e) => {
-                            e.stopPropagation();
+              {/* DASHBOARD MAIN SECTION: YATRAS & QUICK ACTIONS */}
+              <div className="dashboard-main-grid" style={{ display: 'grid', gridTemplateColumns: '2fr 1.1fr', gap: '2rem' }}>
+                {/* OPTION C: ENHANCED YATRAS LIST */}
+                <div>
+                  <h3 style={{ marginBottom: '1rem', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    Active Yatras <span className="badge" style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary)' }}>{dashActiveYatras.length}</span>
+                  </h3>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {dashActiveYatras.map(yatra => {
+                      const statusClass = `badge-${yatra.status}`;
+                      const yatraParts = allSystemParticipants.filter(p => p.yatraId === yatra.id);
+                      const yatraPax = yatraParts.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+                      const yatraApprovedPax = yatraParts.filter(p => isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+                      const yatraConfirmedPax = yatraParts.filter(p => p.status === 'confirmed').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+                      const targetCap = parseInt(yatra.expectedParticipants) || 100;
+                      const occupancyPct = Math.min(Math.round((yatraPax / targetCap) * 100), 100);
+
+                      return (
+                        <div 
+                          key={yatra.id} 
+                          className="card" 
+                          style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', cursor: 'pointer', transition: 'box-shadow 0.2s', padding: '1.25rem' }} 
+                          onClick={() => {
+                            setSelectedYatra(yatra);
                             navigateTo('yatra', yatra.id);
-                          }}>
-                            <Eye size={16} />
-                          </button>
-                          {yatra.isSandbox && (
-                            <button 
+                          }}
+                        >
+                          {/* Top Header: Title, Stage Badge, Expected Count & View */}
+                          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '0.75rem' }}>
+                            <div>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                                <h4 style={{ fontSize: '1.15rem', margin: 0, fontWeight: 700 }}>{yatra.name}</h4>
+                                <span className={`badge ${statusClass}`} style={{ textTransform: 'capitalize' }}>
+                                  {yatra.status.replace('_', ' ')}
+                                </span>
+                                {yatra.isSandbox && (
+                                  <span className="badge" style={{ backgroundColor: '#ede9fe', color: '#7c3aed', border: '1px solid #c4b5fd', fontWeight: 'bold' }}>
+                                    🧪 Sandbox Test
+                                  </span>
+                                )}
+                              </div>
+                              <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.35rem', marginBottom: 0 }}>
+                                📍 {yatra.destination} | 📅 {yatra.startDate} to {yatra.endDate}
+                              </p>
+                            </div>
+
+                            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                              <button 
+                                type="button"
+                                className="btn btn-outline" 
+                                style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setSelectedYatra(yatra);
+                                  navigateTo('yatra', yatra.id);
+                                }}
+                              >
+                                <Eye size={15} /> Open Workspace
+                              </button>
+                              {yatra.isSandbox && (
+                                <button 
+                                  type="button"
+                                  className="btn btn-outline btn-icon" 
+                                  style={{ borderColor: '#fca5a5', color: '#dc2626' }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handlePurgeSandbox(yatra.id);
+                                  }}
+                                  title="1-Click Purge Sandbox Test Yatra"
+                                >
+                                  <Trash2 size={16} />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+
+                          {/* Visual Capacity Progress Bar */}
+                          <div style={{ backgroundColor: 'var(--bg)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.82rem', marginBottom: '0.4rem', flexWrap: 'wrap', gap: '0.4rem' }}>
+                              <span style={{ color: 'var(--text-muted)' }}>
+                                Capacity: <strong>{yatraPax}</strong> / {targetCap} Devotees
+                                <span style={{ fontSize: '0.75rem', marginLeft: '0.5rem', color: 'var(--success)', fontWeight: 600 }}>
+                                  ({yatraApprovedPax} Approved • {yatraConfirmedPax} Confirmed)
+                                </span>
+                              </span>
+                              <span style={{ fontWeight: 700, color: occupancyPct >= 100 ? 'var(--danger)' : 'var(--primary)' }}>
+                                {occupancyPct}% Filled
+                              </span>
+                            </div>
+                            <div style={{ width: '100%', height: '8px', backgroundColor: 'var(--border)', borderRadius: '999px', overflow: 'hidden' }}>
+                              <div 
+                                style={{ 
+                                  width: `${occupancyPct}%`, 
+                                  height: '100%', 
+                                  backgroundColor: occupancyPct >= 100 ? '#ef4444' : occupancyPct >= 80 ? '#f59e0b' : '#10b981',
+                                  borderRadius: '999px',
+                                  transition: 'width 0.4s ease'
+                                }} 
+                              />
+                            </div>
+                          </div>
+
+                          {/* Quick 1-Click Tab Shortcuts */}
+                          <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', borderTop: '1px solid var(--border)', paddingTop: '0.75rem' }}>
+                            <button
                               type="button"
-                              className="btn btn-outline btn-icon" 
-                              style={{ borderColor: '#fca5a5', color: '#dc2626' }}
+                              className="btn btn-outline"
+                              style={{ fontSize: '0.78rem', padding: '0.35rem 0.65rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handlePurgeSandbox(yatra.id);
+                                setSelectedYatra(yatra);
+                                setActiveTab('participants');
+                                navigateTo('yatra', yatra.id);
                               }}
-                              title="1-Click Purge Sandbox Test Yatra"
                             >
-                              <Trash2 size={16} />
+                              <Users size={14} color="var(--primary)" /> Devotees ({yatraPax})
                             </button>
-                          )}
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              style={{ fontSize: '0.78rem', padding: '0.35rem 0.65rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedYatra(yatra);
+                                setActiveTab('hotels');
+                                navigateTo('yatra', yatra.id);
+                              }}
+                            >
+                              <Hotel size={14} color="#8b5cf6" /> Hotels & Rooms
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              style={{ fontSize: '0.78rem', padding: '0.35rem 0.65rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedYatra(yatra);
+                                setActiveTab('transport');
+                                navigateTo('yatra', yatra.id);
+                              }}
+                            >
+                              <Bus size={14} color="#059669" /> Bus Travel
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-outline"
+                              style={{ fontSize: '0.78rem', padding: '0.35rem 0.65rem', display: 'inline-flex', alignItems: 'center', gap: '0.3rem' }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setSelectedYatra(yatra);
+                                setActiveTab('reports');
+                                navigateTo('yatra', yatra.id);
+                              }}
+                            >
+                              <BarChart2 size={14} color="#d97706" /> Reports & CSV
+                            </button>
+                          </div>
                         </div>
-                      </div>
-                    );
-                  })}
+                      );
+                    })}
+                  </div>
                 </div>
-              </div>
 
-              {/* Side Stats */}
-              <div>
-                <h3 style={{ marginBottom: '1rem' }}>Quick Actions & Info</h3>
-                <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-                  <div>
-                    <h5 style={{ color: 'var(--text-muted)' }}>UPI QR Payment ID</h5>
-                    <div style={{ fontWeight: '600', fontSize: '1.05rem', wordBreak: 'break-all' }}>rohit.wadhwani83@okaxis</div>
-                  </div>
-                  <hr style={{ borderColor: 'var(--border)' }} />
-                  <div>
-                    <h5>Self-Service Registration URL</h5>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>Devotees can register themselves via links generated for each specific yatra in the detail workspace.</p>
-                  </div>
-                  <hr style={{ borderColor: 'var(--border)' }} />
-                  <div>
-                    <h5>{t('userGuides')}</h5>
-                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.65rem' }}>
-                      {t('downloadGuidesDesc')}
-                    </p>
-                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-                      <a 
-                        href="./guides/Devotee_Pilgrim_User_Guide.pdf" 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        download="Devotee_Pilgrim_User_Guide.pdf"
-                        className="btn btn-outline" 
-                        style={{ fontSize: '0.8rem', padding: '0.45rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.45rem', justifyContent: 'flex-start', textDecoration: 'none' }}
-                      >
-                        <FileText size={15} color="var(--primary)" />
-                        <span>{t('devoteeGuidePdf')}</span>
-                      </a>
-                      <a 
-                        href="./guides/Admin_Organizer_Operations_Guide.pdf" 
-                        target="_blank" 
-                        rel="noreferrer" 
-                        download="Admin_Organizer_Operations_Guide.pdf"
-                        className="btn btn-outline" 
-                        style={{ fontSize: '0.8rem', padding: '0.45rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.45rem', justifyContent: 'flex-start', textDecoration: 'none' }}
-                      >
-                        <BookOpen size={15} color="#2563eb" />
-                        <span>{t('adminGuidePdf')}</span>
-                      </a>
+                {/* OPTION D: SIDE STATS & WHATSAPP QUICK LAUNCH */}
+                <div>
+                  <h3 style={{ marginBottom: '1rem' }}>Quick Actions & Info</h3>
+                  <div className="card" style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+                    {/* WHATSAPP ANNOUNCEMENT QUICK LAUNCH */}
+                    <div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.45rem', marginBottom: '0.4rem', color: '#16a34a', fontWeight: 700, fontSize: '0.92rem' }}>
+                        <MessageSquare size={17} />
+                        <span>WhatsApp Announcement Quick Launch</span>
+                      </div>
+                      <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginBottom: '0.65rem', lineHeight: '1.4' }}>
+                        Broadcast announcement to notify devotees about eligibility approvals & payment options:
+                      </p>
+                      <div style={{
+                        backgroundColor: 'var(--bg)',
+                        border: '1px solid var(--border)',
+                        borderRadius: 'var(--radius-sm)',
+                        padding: '0.75rem',
+                        fontSize: '0.78rem',
+                        lineHeight: '1.45',
+                        color: 'var(--text)',
+                        whiteSpace: 'pre-line',
+                        maxHeight: '160px',
+                        overflowY: 'auto'
+                      }}>
+                        {`Hare Krishna Devotees! 🙏\n\nApprovals for Yatra registration have begun. Please log in to your Devotee Portal to check your approval status and payment options.\n\n• If your registration is not yet approved, please contact the Yatra Admins.\n• Please note: Photo uploads in the devotee gallery will open 1 day prior to the yatra commencement date.\n• Preferred payment mode is Cash; UPI is preferred for devotees outside Delhi NCR.`}
+                      </div>
+
+                      <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.75rem' }}>
+                        <button
+                          type="button"
+                          className="btn btn-outline"
+                          style={{ flex: 1, fontSize: '0.78rem', padding: '0.45rem 0.5rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', fontWeight: 600 }}
+                          onClick={() => {
+                            const msg = `Hare Krishna Devotees! 🙏\n\nApprovals for Yatra registration have begun. Please log in to your Devotee Portal to check your approval status and payment options.\n\n• If your registration is not yet approved, please contact the Yatra Admins.\n• Please note: Photo uploads in the devotee gallery will open 1 day prior to the yatra commencement date.\n• Preferred payment mode is Cash; UPI is preferred for devotees outside Delhi NCR.`;
+                            navigator.clipboard.writeText(msg);
+                            setCopiedBroadcast(true);
+                            setTimeout(() => setCopiedBroadcast(false), 2500);
+                          }}
+                        >
+                          {copiedBroadcast ? <Check size={14} color="var(--success)" /> : <Copy size={14} />}
+                          {copiedBroadcast ? 'Copied!' : 'Copy Message'}
+                        </button>
+                        <a
+                          href="https://web.whatsapp.com"
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="btn btn-primary"
+                          style={{ flex: 1, fontSize: '0.78rem', padding: '0.45rem 0.5rem', display: 'inline-flex', alignItems: 'center', justifyContent: 'center', gap: '0.35rem', textDecoration: 'none', backgroundColor: '#16a34a', borderColor: '#15803d', fontWeight: 600 }}
+                        >
+                          <ExternalLink size={14} /> Open WhatsApp
+                        </a>
+                      </div>
+                    </div>
+
+                    <hr style={{ borderColor: 'var(--border)' }} />
+
+                    <div>
+                      <h5 style={{ margin: '0 0 0.35rem 0', fontSize: '0.88rem' }}>Self-Service Registration URL</h5>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0, lineHeight: '1.45' }}>Devotees can register themselves via links generated for each specific yatra in the detail workspace.</p>
+                    </div>
+
+                    <hr style={{ borderColor: 'var(--border)' }} />
+
+                    <div>
+                      <h5 style={{ margin: '0 0 0.35rem 0', fontSize: '0.88rem' }}>{t('userGuides')}</h5>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.65rem' }}>
+                        {t('downloadGuidesDesc')}
+                      </p>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                        <a 
+                          href="./guides/Devotee_Pilgrim_User_Guide.pdf" 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          download="Devotee_Pilgrim_User_Guide.pdf"
+                          className="btn btn-outline" 
+                          style={{ fontSize: '0.8rem', padding: '0.45rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.45rem', justifyContent: 'flex-start', textDecoration: 'none' }}
+                        >
+                          <FileText size={15} color="var(--primary)" />
+                          <span>{t('devoteeGuidePdf')}</span>
+                        </a>
+                        <a 
+                          href="./guides/Admin_Organizer_Operations_Guide.pdf" 
+                          target="_blank" 
+                          rel="noreferrer" 
+                          download="Admin_Organizer_Operations_Guide.pdf"
+                          className="btn btn-outline" 
+                          style={{ fontSize: '0.8rem', padding: '0.45rem 0.65rem', display: 'flex', alignItems: 'center', gap: '0.45rem', justifyContent: 'flex-start', textDecoration: 'none' }}
+                        >
+                          <BookOpen size={15} color="#2563eb" />
+                          <span>{t('adminGuidePdf')}</span>
+                        </a>
+                      </div>
                     </div>
                   </div>
                 </div>
               </div>
             </div>
-          </div>
-        )}
+          );
+        })()}
 
         {/* ======================================= */}
         {/* VIEW 3: YATRA DETAIL WORKSPACE */}

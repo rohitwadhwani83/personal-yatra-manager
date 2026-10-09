@@ -1002,3 +1002,20 @@ a:hover {
   }
 }
 
+/* Command Center Dashboard Responsive Layout */
+.dashboard-main-grid {
+  display: grid;
+  grid-template-columns: 2fr 1.1fr;
+  gap: 2rem;
+  align-items: start;
+}
+
+@media (max-width: 900px) {
+  .dashboard-main-grid {
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 1.5rem !important;
+    width: 100% !important;
+  }
+}
+
