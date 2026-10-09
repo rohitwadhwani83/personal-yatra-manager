@@ -226,6 +226,18 @@ export default function App() {
     return false;
   };
 
+  // Approved Headcount Helper: returns actual approved seats count (excluding excluded family members)
+  const getParticipantApprovedPax = (p) => {
+    if (!p || p.isDeleted || p.status === 'cancelled') return 0;
+    if (!isDevoteeApproved(p)) return 0;
+    if (p.type !== 'family') return 1;
+    if (p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
+      const approvedCount = p.familyMembers.filter(m => m.isApproved !== false).length;
+      return approvedCount > 0 ? approvedCount : 1;
+    }
+    return p.membersCount || 1;
+  };
+
   // Helper to format 6-stage devotee lifecycle status display name
   const getLifecycleStatusLabel = (status) => {
     switch (status) {
@@ -2560,8 +2572,7 @@ export default function App() {
     if (targetCapacity > 0) {
       const freshParticipants = await db.getParticipants(selectedYatra.id);
       const currentApprovedSeats = (freshParticipants || [])
-        .filter(p => !p.isDeleted && isDevoteeApproved(p))
-        .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+        .reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
       
       if (currentApprovedSeats >= targetCapacity) {
         alert(t('registrationCapacityFullMessage') || "The registration for this yatra has reached full capacity. Please reach out to admins for further assistance. Hare Krishna!");
@@ -2944,19 +2955,23 @@ export default function App() {
 
     const confirmedCount = participants
       .filter(p => p.status === 'confirmed')
-      .reduce((sum, p) => sum + (p.type === 'family' ? p.membersCount : 1), 0);
+      .reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
 
     const totalExpenses = expenses.reduce((sum, e) => sum + e.amount, 0);
     // Use yatra pricePerPerson if set, else fall back to expense-based split
     const amountPerPerson = yatraPrice > 0 ? yatraPrice : (confirmedCount > 0 ? (totalExpenses / confirmedCount) : 0);
 
-    // Helper: count billable members for a participant (children under 5 are free)
+    // Helper: count billable members for a participant (children under 5 are free, excluded members omitted)
     const getBillableCount = (p) => {
       if (p.type !== 'family') return 1;
-      // If structured familyMembers array exists, exclude children under 5
+      // If structured familyMembers array exists, exclude children under 5 and unapproved members
       if (p.familyMembers && Array.isArray(p.familyMembers) && p.familyMembers.length > 0) {
-        const billable = p.familyMembers.filter(m => !m.age || parseInt(m.age) >= 5).length;
-        return Math.max(billable, 1); // At least 1 (the primary registrant)
+        const isPartial = p.status === 'partially_approved' || p.approvalStatus === 'partially_approved';
+        const membersToConsider = (isPartial || isDevoteeApproved(p))
+          ? p.familyMembers.filter(m => m.isApproved !== false)
+          : p.familyMembers;
+        const billable = membersToConsider.filter(m => !m.age || parseInt(m.age) >= 5).length;
+        return Math.max(billable, membersToConsider.length > 0 ? 0 : 1);
       }
       // Fallback to membersCount if no structured data
       return p.membersCount || 1;
@@ -2964,7 +2979,9 @@ export default function App() {
 
     // Calculate details for individuals and families
     const participantSplits = participants.map(p => {
-      const headCount = p.type === 'family' ? p.membersCount : 1;
+      const approvedPax = getParticipantApprovedPax(p);
+      const isPartial = p.status === 'partially_approved' || p.approvalStatus === 'partially_approved';
+      const headCount = p.type === 'family' ? ((isPartial || isDevoteeApproved(p)) ? approvedPax : (p.membersCount || 1)) : 1;
       const billableCount = getBillableCount(p);
       // If admin has set a customPrice for this participant, use it as the total share directly
       const customTotal = p.customPrice ? parseFloat(p.customPrice) : 0;
@@ -4235,7 +4252,7 @@ export default function App() {
                       const statusClass = `badge-${yatra.status}`;
                       const yatraParts = allSystemParticipants.filter(p => p.yatraId === yatra.id);
                       const yatraPax = yatraParts.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
-                      const yatraApprovedPax = yatraParts.filter(p => isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+                      const yatraApprovedPax = yatraParts.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
                       const yatraConfirmedPax = yatraParts.filter(p => p.status === 'confirmed').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
                       const targetCap = parseInt(yatra.expectedParticipants) || 100;
                       const occupancyPct = Math.min(Math.round((yatraPax / targetCap) * 100), 100);
@@ -4713,7 +4730,7 @@ export default function App() {
                       >
                         <Compass size={14} /> Completed
                       </button>
-                    ) : (selectedYatra.expectedParticipants && participants.filter(p => !p.isDeleted && isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0) >= parseInt(selectedYatra.expectedParticipants)) ? (
+                    ) : (selectedYatra.expectedParticipants && participants.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0) >= parseInt(selectedYatra.expectedParticipants)) ? (
                       <button 
                         type="button" 
                         className="btn btn-outline" 
@@ -4834,9 +4851,9 @@ export default function App() {
               const targetSeats = selectedYatra.expectedParticipants || 30;
               const yPrice = parseFloat(selectedYatra.pricePerPerson) || 0;
               const totalRegisteredSeats = participants.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
-              const approvedSeats = participants.filter(p => isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
-              const pendingApprovalSeats = participants.filter(p => !isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
-              const confirmedSeats = participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'confirmed').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              const approvedSeats = participants.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
+              const pendingApprovalSeats = Math.max(0, totalRegisteredSeats - approvedSeats);
+              const confirmedSeats = participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'confirmed').reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
               const interestedSeats = participants.filter(p => (expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status) === 'interested').reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
               const seatPercent = Math.min(100, Math.round((totalRegisteredSeats / targetSeats) * 100));
 
@@ -6350,7 +6367,15 @@ export default function App() {
                 return 0;
               });
 
-              const getPaxCount = (p) => p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1;
+              const getPaxCount = (p) => {
+                if (p.type !== 'family') return 1;
+                const status = getPartStatus(p);
+                if (status === 'partially_approved' || status === 'partially_confirmed') {
+                  const approvedCount = getParticipantApprovedPax(p);
+                  return approvedCount > 0 ? approvedCount : 1;
+                }
+                return p.membersCount || p.familyMembers?.length || 1;
+              };
               const countCumulativePax = (list) => (list || []).reduce((sum, p) => sum + getPaxCount(p), 0);
 
               const totalPax = countCumulativePax(participants);
@@ -6595,6 +6620,7 @@ export default function App() {
                             const computedShare = splitInfo ? splitInfo.share : 0;
                             const isCustom = part.customPrice && parseFloat(part.customPrice) > 0;
                             const totalSeats = part.type === 'family' ? (part.membersCount || part.familyMembers?.length || 1) : 1;
+                            const approvedPaxCount = getParticipantApprovedPax(part);
 
                             return (
                               <React.Fragment key={part.id}>
@@ -6625,7 +6651,16 @@ export default function App() {
                                       {part.type === 'family' ? `👨‍👩‍👧‍👦 ${part.familyName || 'Family'}` : '👤 Individual'}
                                     </span>
                                     <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                                      {totalSeats} seat{totalSeats === 1 ? '' : 's'} {part.type === 'family' && billable < totalSeats ? `(${totalSeats - billable} free <5)` : ''}
+                                      {part.type === 'family' && isDevoteeApproved(part) && approvedPaxCount < totalSeats ? (
+                                        <span>
+                                          <strong style={{ color: effectiveDevoteeStatus === 'partially_approved' ? '#7e22ce' : 'inherit' }}>{approvedPaxCount} seat{approvedPaxCount === 1 ? '' : 's'}</strong> ({totalSeats} registered)
+                                          {billable < approvedPaxCount ? ` (${approvedPaxCount - billable} free <5)` : ''}
+                                        </span>
+                                      ) : (
+                                        <span>
+                                          {totalSeats} seat{totalSeats === 1 ? '' : 's'} {part.type === 'family' && billable < totalSeats ? `(${totalSeats - billable} free <5)` : ''}
+                                        </span>
+                                      )}
                                     </div>
                                   </td>
 
@@ -6836,7 +6871,7 @@ export default function App() {
                                         <div>
                                           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
                                             <h4 style={{ margin: 0, fontSize: '0.9rem', color: 'var(--text)' }}>
-                                              👨‍👩‍👧‍👦 Family Members ({totalSeats})
+                                              👨‍👩‍👧‍👦 Family Members ({part.type === 'family' && isDevoteeApproved(part) && approvedPaxCount < totalSeats ? `${approvedPaxCount} approved / ${totalSeats} total` : totalSeats})
                                             </h4>
                                             {part.type === 'family' && part.familyMembers && part.familyMembers.length > 0 && (
                                               <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
@@ -7056,6 +7091,7 @@ export default function App() {
                         const dynamicPaymentStatus = splitInfo?.dynamicPaymentStatus || part.paymentStatus;
                         const effectiveDevoteeStatus = splitInfo?.dynamicDevoteeStatus || part.status;
                         const totalSeats = part.type === 'family' ? (part.membersCount || part.familyMembers?.length || 1) : 1;
+                        const approvedPaxCount = getParticipantApprovedPax(part);
                         const computedShare = splitInfo ? splitInfo.share : 0;
                         const paid = splitInfo ? splitInfo.paid : 0;
                         const balance = splitInfo ? splitInfo.balance : 0;
@@ -7087,7 +7123,11 @@ export default function App() {
                               {/* Group / Seats Badge */}
                               <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                                 <span style={{ fontSize: '0.75rem', backgroundColor: 'var(--bg)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border)' }}>
-                                  {part.type === 'family' ? `👨‍👩‍👧‍👦 ${part.familyName || 'Family'} (${totalSeats} seats)` : '👤 Individual'}
+                                  {part.type === 'family' 
+                                    ? (isDevoteeApproved(part) && approvedPaxCount < totalSeats
+                                        ? `👨‍👩‍👧‍👦 ${part.familyName || 'Family'} (${approvedPaxCount} approved of ${totalSeats} seats)`
+                                        : `👨‍👩‍👧‍👦 ${part.familyName || 'Family'} (${totalSeats} seats)`)
+                                    : '👤 Individual'}
                                 </span>
                                 <span style={{ fontSize: '0.75rem', backgroundColor: 'var(--bg)', padding: '0.2rem 0.5rem', borderRadius: '4px', border: '1px solid var(--border)' }}>
                                   {part.travelMode === 'organised' ? '🚌 Organised' : '🚗 Self Travel'}
@@ -7883,13 +7923,13 @@ export default function App() {
                           <tr>
                             <td style={{ padding: '0.5rem 0' }}>Approved & Eligible Devotees:</td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold', color: 'var(--success)' }}>
-                              {participants.filter(p => isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0)}
+                              {participants.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0)}
                             </td>
                           </tr>
                           <tr>
                             <td style={{ padding: '0.5rem 0' }}>Pending Eligibility Review:</td>
                             <td style={{ textAlign: 'right', fontWeight: 'bold', color: '#b45309' }}>
-                              {participants.filter(p => !isDevoteeApproved(p)).reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0)}
+                              {Math.max(0, participants.reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0) - participants.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0))}
                             </td>
                           </tr>
                           <tr>
@@ -7918,8 +7958,8 @@ export default function App() {
         {currentRoute.path === 'register' && selectedYatra && (() => {
           const yatraTargetCapacity = parseInt(selectedYatra.expectedParticipants) || 0;
           const currentApprovedSeats = participants
-            .filter(p => (p.yatraId === selectedYatra.id) && !p.isDeleted && isDevoteeApproved(p))
-            .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+            .filter(p => (p.yatraId === selectedYatra.id) && !p.isDeleted)
+            .reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
           const currentRegisteredSeats = participants
             .filter(p => (p.yatraId === selectedYatra.id) && !p.isDeleted)
             .reduce((sum, p) => sum + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
