@@ -8379,85 +8379,152 @@ export default function App() {
 
                 {/* MY SHARED PHOTOS */}
                 <div className="card">
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                    <h3>Shared Yatra Photo Gallery</h3>
-                    <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
-                      <Upload size={16} /> Upload Photo
-                      <input 
-                        type="file" 
-                        accept="image/*" 
-                        style={{ display: 'none' }} 
-                        onChange={(e) => {
-                          if (e.target.files && e.target.files[0]) {
-                            handleImageUpload(e.target.files[0], async (base64) => {
-                              await db.addPhoto({
-                                yatraId: selectedYatra.id,
-                                uploader: myParticipantData.name,
-                                date: new Date().toISOString().split('T')[0],
-                                caption: 'Shared by Devotee',
-                                imageUrl: base64
-                              });
-                              // Reload photos
-                              const updated = await db.getPhotos(selectedYatra.id);
-                              setMyPhotos(updated);
-                              setPhotos(updated);
-                            });
-                          }
-                        }}
-                      />
-                    </label>
-                  </div>
+                  {(() => {
+                    // Photo uploads unlock 1 day prior to Yatra commencement date
+                    const isPhotoUploadUnlocked = (() => {
+                      if (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') return true;
+                      if (!selectedYatra?.startDate) return true;
+                      const parts = selectedYatra.startDate.split('-').map(Number);
+                      if (parts.length < 3 || isNaN(parts[0])) return true;
+                      const [year, month, day] = parts;
+                      const commencementDate = new Date(year, month - 1, day, 0, 0, 0);
+                      const unlockDate = new Date(commencementDate.getTime() - (24 * 60 * 60 * 1000));
+                      return new Date() >= unlockDate;
+                    })();
 
-                  {myPhotos.length === 0 ? (
-                    <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
-                      <ImageIcon size={36} style={{ opacity: 0.5, marginBottom: '0.5rem' }} />
-                      <p>No photos have been shared for this Yatra yet.</p>
-                      <p style={{ fontSize: '0.85rem' }}>Be the first to upload and share memories with all devotees!</p>
-                    </div>
-                  ) : (
-                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
-                      {myPhotos.map(photo => {
-                        const canDelete = currentUser?.role === 'admin' || (myParticipantData && (photo.uploader === myParticipantData.name || photo.uploader === myParticipantData.phone));
-                        return (
-                          <div key={photo.id} style={{ position: 'relative', display: 'flex', flexDirection: 'column', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
-                            <img src={photo.imageUrl} alt="Shared" style={{ width: '100%', height: '130px', objectFit: 'cover' }} />
-                            {canDelete && (
-                              <button
-                                type="button"
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  handleDeletePhoto(photo.id);
+                    const unlockDateFormatted = (() => {
+                      if (!selectedYatra?.startDate) return '';
+                      const parts = selectedYatra.startDate.split('-').map(Number);
+                      if (parts.length < 3 || isNaN(parts[0])) return selectedYatra.startDate;
+                      const [year, month, day] = parts;
+                      const commencementDate = new Date(year, month - 1, day, 0, 0, 0);
+                      const unlockDate = new Date(commencementDate.getTime() - (24 * 60 * 60 * 1000));
+                      return unlockDate.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                    })();
+
+                    const startDateFormatted = (() => {
+                      if (!selectedYatra?.startDate) return '';
+                      const parts = selectedYatra.startDate.split('-').map(Number);
+                      if (parts.length < 3 || isNaN(parts[0])) return selectedYatra.startDate;
+                      const [year, month, day] = parts;
+                      const d = new Date(year, month - 1, day);
+                      return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+                    })();
+
+                    return (
+                      <>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                          <h3 style={{ margin: 0 }}>Shared Yatra Photo Gallery</h3>
+                          {isPhotoUploadUnlocked ? (
+                            <label className="btn btn-primary" style={{ cursor: 'pointer' }}>
+                              <Upload size={16} /> Upload Photo
+                              <input 
+                                type="file" 
+                                accept="image/*" 
+                                style={{ display: 'none' }} 
+                                onChange={(e) => {
+                                  if (e.target.files && e.target.files[0]) {
+                                    handleImageUpload(e.target.files[0], async (base64) => {
+                                      await db.addPhoto({
+                                        yatraId: selectedYatra.id,
+                                        uploader: myParticipantData.name,
+                                        date: new Date().toISOString().split('T')[0],
+                                        caption: 'Shared by Devotee',
+                                        imageUrl: base64
+                                      });
+                                      // Reload photos
+                                      const updated = await db.getPhotos(selectedYatra.id);
+                                      setMyPhotos(updated);
+                                      setPhotos(updated);
+                                    });
+                                  }
                                 }}
-                                style={{
-                                  position: 'absolute',
-                                  top: '6px',
-                                  right: '6px',
-                                  background: 'rgba(239, 68, 68, 0.85)',
-                                  color: 'white',
-                                  border: 'none',
-                                  borderRadius: '50%',
-                                  width: '26px',
-                                  height: '26px',
-                                  display: 'flex',
-                                  alignItems: 'center',
-                                  justifyContent: 'center',
-                                  cursor: 'pointer',
-                                  boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
-                                }}
-                                title="Delete Photo"
-                              >
-                                <Trash2 size={13} />
-                              </button>
-                            )}
-                            <div style={{ padding: '0.5rem', fontSize: '0.75rem' }}>
-                              <strong>{photo.uploader}</strong>
-                              <p style={{ color: 'var(--text-muted)' }}>{photo.date}</p>
+                              />
+                            </label>
+                          ) : (
+                            <button 
+                              type="button" 
+                              className="btn btn-outline" 
+                              style={{ borderColor: '#fde68a', backgroundColor: '#fffbeb', color: '#b45309', cursor: 'pointer', display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.82rem', padding: '0.45rem 0.8rem', fontWeight: 600 }}
+                              onClick={() => alert(`Photo uploads open 1 day prior to Yatra commencement (from ${unlockDateFormatted}).\n\nPlease keep your photos saved on your device until then. The gallery will open for all devotees to share memories once our sacred journey begins! Hare Krishna.`)}
+                              title={`Photo uploads unlock on ${unlockDateFormatted} (1 day prior to commencement)`}
+                            >
+                              <Lock size={15} /> Upload Locked (Opens {unlockDateFormatted})
+                            </button>
+                          )}
+                        </div>
+
+                        {!isPhotoUploadUnlocked && (
+                          <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.85rem 1rem', marginBottom: '1.25rem', display: 'flex', alignItems: 'flex-start', gap: '0.75rem', color: '#92400e', fontSize: '0.86rem', lineHeight: '1.5' }}>
+                            <Lock size={18} style={{ flexShrink: 0, marginTop: '2px', color: '#b45309' }} />
+                            <div>
+                              <div style={{ fontWeight: 'bold', marginBottom: '0.2rem', color: '#b45309' }}>
+                                📸 Photo Uploads Open 1 Day Prior to Commencement
+                              </div>
+                              <div>
+                                The shared gallery will open on <strong>{unlockDateFormatted}</strong> (1 day before Yatra starts on {startDateFormatted}). Devotees will be able to upload and share memories once the Yatra begins!
+                              </div>
                             </div>
                           </div>
-                        );
-                      })}
-                    </div>
-                  )}
+                        )}
+
+                        {myPhotos.length === 0 ? (
+                          <div style={{ textAlign: 'center', padding: '2rem', color: 'var(--text-muted)' }}>
+                            <ImageIcon size={36} style={{ opacity: 0.5, marginBottom: '0.5rem' }} />
+                            <p style={{ margin: '0.25rem 0', fontWeight: 500 }}>No photos in the gallery yet.</p>
+                            <p style={{ fontSize: '0.85rem', margin: 0 }}>
+                              {isPhotoUploadUnlocked 
+                                ? "Be the first to upload and share memories with all devotees!" 
+                                : `Photo uploads unlock on ${unlockDateFormatted}. Capture divine moments and share them here once the Yatra begins!`}
+                            </p>
+                          </div>
+                        ) : (
+                          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))', gap: '1rem' }}>
+                            {myPhotos.map(photo => {
+                              const canDelete = currentUser?.role === 'admin' || (myParticipantData && (photo.uploader === myParticipantData.name || photo.uploader === myParticipantData.phone));
+                              return (
+                                <div key={photo.id} style={{ position: 'relative', display: 'flex', flexDirection: 'column', border: '1px solid var(--border)', borderRadius: 'var(--radius-sm)', overflow: 'hidden' }}>
+                                  <img src={photo.imageUrl} alt="Shared" style={{ width: '100%', height: '130px', objectFit: 'cover' }} />
+                                  {canDelete && (
+                                    <button
+                                      type="button"
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        handleDeletePhoto(photo.id);
+                                      }}
+                                      style={{
+                                        position: 'absolute',
+                                        top: '6px',
+                                        right: '6px',
+                                        background: 'rgba(239, 68, 68, 0.85)',
+                                        color: 'white',
+                                        border: 'none',
+                                        borderRadius: '50%',
+                                        width: '26px',
+                                        height: '26px',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        cursor: 'pointer',
+                                        boxShadow: '0 2px 4px rgba(0,0,0,0.2)'
+                                      }}
+                                      title="Delete Photo"
+                                    >
+                                      <Trash2 size={13} />
+                                    </button>
+                                  )}
+                                  <div style={{ padding: '0.5rem', fontSize: '0.75rem' }}>
+                                    <strong>{photo.uploader}</strong>
+                                    <p style={{ color: 'var(--text-muted)' }}>{photo.date}</p>
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
+                      </>
+                    );
+                  })()}
                 </div>
               </div>
 
