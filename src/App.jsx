@@ -4863,9 +4863,9 @@ export default function App() {
               const projectedDeficit = Math.max(0, projectedBudget - totalCollected);
               const registeredDues = expCalc.totalOutstanding;
 
-              // Logistics & Accommodations
-              const organisedTravelCount = participants.filter(p => p.travelMode === 'organised').reduce((s, p) => s + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
-              const selfTravelCount = participants.filter(p => p.travelMode === 'self').reduce((s, p) => s + (p.type === 'family' ? (p.membersCount || p.familyMembers?.length || 1) : 1), 0);
+              // Logistics & Accommodations (Counts approved devotees only, including partially approved)
+              const organisedTravelCount = participants.filter(p => p.travelMode === 'organised').reduce((s, p) => s + getParticipantApprovedPax(p), 0);
+              const selfTravelCount = participants.filter(p => p.travelMode === 'self').reduce((s, p) => s + getParticipantApprovedPax(p), 0);
               const bookedHotels = hotels.filter(h => h.finalSelected);
 
               return (
@@ -5055,7 +5055,7 @@ export default function App() {
                       <h4 style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.75rem' }}>
                         🚌 Travel Logistics
                       </h4>
-                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>Overview of transport arrangements required:</p>
+                      <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginBottom: '0.75rem' }}>Overview of transport arrangements required (approved pilgrims):</p>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
                         <div style={{ display: 'flex', justifyContent: 'space-between', padding: '0.5rem 0.75rem', backgroundColor: 'var(--bg)', borderRadius: 'var(--radius-sm)' }}>
                           <span style={{ fontSize: '0.85rem' }}>🚌 <strong>As Organised (Bus/Train):</strong></span>
