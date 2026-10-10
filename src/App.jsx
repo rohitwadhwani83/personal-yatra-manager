@@ -238,6 +238,15 @@ export default function App() {
     return p.membersCount || 1;
   };
 
+  // Allocation Eligibility Helper: only approved devotees (approved, partially_approved, partially_confirmed, confirmed)
+  // are eligible for bus and room allocations. Devotees who only registered (interested) or cancelled are strictly excluded.
+  const isEligibleForAllocation = (p) => {
+    if (!p || p.isDeleted || p.status === 'cancelled') return false;
+    if (!isDevoteeApproved(p)) return false;
+    if (p.status === 'interested' && p.approvalStatus !== 'approved' && p.approvalStatus !== 'partially_approved' && p.isApproved !== true) return false;
+    return true;
+  };
+
   // Helper to format 6-stage devotee lifecycle status display name
   const getLifecycleStatusLabel = (status) => {
     switch (status) {
@@ -1860,16 +1869,16 @@ export default function App() {
       return;
     }
 
-    const organisedDevotees = participants.filter(p => p.travelMode === 'organised');
+    const organisedDevotees = participants.filter(p => isEligibleForAllocation(p) && p.travelMode === 'organised');
     if (organisedDevotees.length === 0) {
-      alert("No devotees found with 'Organised' travel mode. Auto-allocation only applies to devotees using organizer transport.");
+      alert("No approved devotees found with 'Organised' travel mode. Only approved devotees are allocated to buses.");
       return;
     }
 
     // Sort by group size descending (larger families first for optimal bin-packing)
     const sorted = [...organisedDevotees].sort((a, b) => {
-      const aCount = (a.familyMembers && a.familyMembers.length) || a.membersCount || 1;
-      const bCount = (b.familyMembers && b.familyMembers.length) || b.membersCount || 1;
+      const aCount = getParticipantApprovedPax(a);
+      const bCount = getParticipantApprovedPax(b);
       return bCount - aCount;
     });
 
@@ -1883,7 +1892,8 @@ export default function App() {
     let unallocatedCount = 0;
 
     for (const devotee of sorted) {
-      const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
+      const devoteePax = getParticipantApprovedPax(devotee);
+      if (devoteePax <= 0) continue;
       
       // Best fit: find a bus that has enough remaining capacity
       const suitable = tracker
@@ -2174,9 +2184,9 @@ export default function App() {
       return;
     }
 
-    const devotees = participants.filter(p => p.status === 'confirmed' || p.status === 'interested');
+    const devotees = participants.filter(p => isEligibleForAllocation(p));
     if (devotees.length === 0) {
-      alert("No participants found to allocate rooms for.");
+      alert("No approved participants found to allocate rooms for. Only approved devotees are allocated rooms.");
       return;
     }
 
@@ -2200,22 +2210,25 @@ export default function App() {
     const families = devotees.filter(p => p.type === 'family');
     const individuals = devotees.filter(p => p.type !== 'family');
 
-    // Sort families descending by size so larger families get dedicated suites first
+    // Sort families descending by approved pax so larger families get dedicated suites first
     families.sort((a, b) => {
-      const sizeA = (a.familyMembers && a.familyMembers.length) || a.membersCount || 1;
-      const sizeB = (b.familyMembers && b.familyMembers.length) || b.membersCount || 1;
+      const sizeA = getParticipantApprovedPax(a);
+      const sizeB = getParticipantApprovedPax(b);
       return sizeB - sizeA;
     });
 
     const participantUpdates = [];
     let unallocatedDevoteeCount = 0;
 
-    // 1. Allocate Families
+    // 1. Allocate Families (only approved family members receive room beds)
     for (const fam of families) {
-      const members = (fam.familyMembers && fam.familyMembers.length > 0)
-        ? [...fam.familyMembers]
-        : [{ name: fam.name, relation: 'Self', age: '', phone: fam.phone }];
-      const famSize = members.length;
+      const rawMembers = (fam.familyMembers && fam.familyMembers.length > 0)
+        ? fam.familyMembers
+        : [{ name: fam.name, relation: 'Self', age: '', phone: fam.phone, isApproved: true }];
+      const approvedMembers = rawMembers.filter(m => m.isApproved !== false);
+      const famSize = approvedMembers.length;
+
+      if (famSize === 0) continue;
 
       // STEP 1A: Look for an empty room that fits the entire family (e.g. 5-bed room for family of 5)
       const exactEmptyRooms = roomTracker
@@ -2226,7 +2239,16 @@ export default function App() {
         const chosen = exactEmptyRooms[0];
         chosen.remainingBeds -= famSize;
 
-        const updatedMembers = members.map(m => {
+        const updatedMembers = rawMembers.map(m => {
+          if (m.isApproved === false) {
+            return {
+              ...m,
+              roomId: '',
+              roomNumber: '',
+              hotelName: '',
+              hotelId: ''
+            };
+          }
           chosen.occupants.push({ name: m.name, famId: fam.id });
           return {
             ...m,
@@ -2266,15 +2288,19 @@ export default function App() {
         const totalHotelBeds = hotelAvailableRooms.reduce((sum, r) => sum + r.remainingBeds, 0);
         if (totalHotelBeds >= famSize) {
           let memberIdx = 0;
-          const updatedMembers = [...members];
+          const updatedMembers = rawMembers.map(m => ({ ...m }));
+          const approvedIndices = updatedMembers
+            .map((m, idx) => (m.isApproved !== false ? idx : -1))
+            .filter(idx => idx !== -1);
           const assignedRooms = [];
 
           for (const r of hotelAvailableRooms) {
-            if (memberIdx >= famSize) break;
-            const bedsToTake = Math.min(r.remainingBeds, famSize - memberIdx);
+            if (memberIdx >= approvedIndices.length) break;
+            const bedsToTake = Math.min(r.remainingBeds, approvedIndices.length - memberIdx);
             for (let i = 0; i < bedsToTake; i++) {
-              const m = updatedMembers[memberIdx];
-              updatedMembers[memberIdx] = {
+              const targetIdx = approvedIndices[memberIdx];
+              const m = updatedMembers[targetIdx];
+              updatedMembers[targetIdx] = {
                 ...m,
                 roomId: r.id,
                 roomNumber: r.roomNumber,
@@ -2287,6 +2313,18 @@ export default function App() {
             r.remainingBeds -= bedsToTake;
             assignedRooms.push(r);
           }
+
+          updatedMembers.forEach((m, idx) => {
+            if (m.isApproved === false || !m.roomId) {
+              updatedMembers[idx] = {
+                ...m,
+                roomId: m.roomId || '',
+                roomNumber: m.roomNumber || '',
+                hotelName: m.hotelName || '',
+                hotelId: m.hotelId || ''
+              };
+            }
+          });
 
           participantUpdates.push({
             id: fam.id,
@@ -2311,15 +2349,19 @@ export default function App() {
 
       if (totalRemaining >= famSize) {
         let memberIdx = 0;
-        const updatedMembers = [...members];
+        const updatedMembers = rawMembers.map(m => ({ ...m }));
+        const approvedIndices = updatedMembers
+          .map((m, idx) => (m.isApproved !== false ? idx : -1))
+          .filter(idx => idx !== -1);
         const assignedRooms = [];
 
         for (const r of anyAvailableRooms) {
-          if (memberIdx >= famSize) break;
-          const bedsToTake = Math.min(r.remainingBeds, famSize - memberIdx);
+          if (memberIdx >= approvedIndices.length) break;
+          const bedsToTake = Math.min(r.remainingBeds, approvedIndices.length - memberIdx);
           for (let i = 0; i < bedsToTake; i++) {
-            const m = updatedMembers[memberIdx];
-            updatedMembers[memberIdx] = {
+            const targetIdx = approvedIndices[memberIdx];
+            const m = updatedMembers[targetIdx];
+            updatedMembers[targetIdx] = {
               ...m,
               roomId: r.id,
               roomNumber: r.roomNumber,
@@ -2332,6 +2374,18 @@ export default function App() {
           r.remainingBeds -= bedsToTake;
           assignedRooms.push(r);
         }
+
+        updatedMembers.forEach((m, idx) => {
+          if (m.isApproved === false || !m.roomId) {
+            updatedMembers[idx] = {
+              ...m,
+              roomId: m.roomId || '',
+              roomNumber: m.roomNumber || '',
+              hotelName: m.hotelName || '',
+              hotelId: m.hotelId || ''
+            };
+          }
+        });
 
         participantUpdates.push({
           id: fam.id,
@@ -2346,7 +2400,7 @@ export default function App() {
       } else {
         // Not enough beds
         unallocatedDevoteeCount += famSize;
-        const updatedMembers = members.map(m => ({
+        const updatedMembers = rawMembers.map(m => ({
           ...m,
           roomId: '',
           roomNumber: '',
@@ -2403,10 +2457,11 @@ export default function App() {
     setRoomAllocationApproved(false);
     setRefreshTrigger(prev => prev + 1);
 
+    const totalEligiblePax = devotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
     if (unallocatedDevoteeCount > 0) {
-      alert(`Room allocation completed! ${devotees.length - unallocatedDevoteeCount} devotees placed across booked hotel rooms. Notice: ${unallocatedDevoteeCount} devotee beds could not be accommodated. Please add more rooms across your booked accommodations.`);
+      alert(`Room allocation completed! ${totalEligiblePax - unallocatedDevoteeCount} devotees placed across booked hotel rooms. Notice: ${unallocatedDevoteeCount} devotee beds could not be accommodated. Please add more rooms across your booked accommodations.`);
     } else {
-      alert(`🎉 Smart room allocation successful! All ${devotees.length} devotees have been allocated rooms matching their bed counts (with families kept together in suites or split into rooms at the same hotel). You can manually fine-tune any room or individual family member below.`);
+      alert(`🎉 Smart room allocation successful! All ${totalEligiblePax} devotees have been allocated rooms matching their bed counts (with families kept together in suites or split into rooms at the same hotel). You can manually fine-tune any room or individual family member below.`);
     }
   };
 
@@ -5192,13 +5247,14 @@ export default function App() {
 
                 {/* Fleet Overview KPIs */}
                 {(() => {
-                  const organisedDevotees = participants.filter(p => p.travelMode === 'organised');
-                  const totalOrganisedPax = organisedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                  const organisedDevotees = participants.filter(p => isEligibleForAllocation(p) && p.travelMode === 'organised');
+                  const totalOrganisedPax = organisedDevotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
                   const totalFleetCapacity = buses.reduce((sum, b) => sum + (parseInt(b.capacity) || 0), 0);
                   const allocatedDevotees = organisedDevotees.filter(p => p.busId);
-                  const totalAllocatedPax = allocatedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                  const totalAllocatedPax = allocatedDevotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
                   const unallocatedPax = totalOrganisedPax - totalAllocatedPax;
-                  const selfTravelCount = participants.filter(p => p.travelMode === 'self').length;
+                  const selfTravelDevotees = participants.filter(p => isEligibleForAllocation(p) && p.travelMode === 'self');
+                  const selfTravelCount = selfTravelDevotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
 
                   return (
                     <div className="grid-cols-4" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.5rem' }}>
@@ -5261,7 +5317,7 @@ export default function App() {
                           if (bus.coordinatorPhone && bus.coordinatorPhone.replace(/[^0-9]/g, '').includes(qDigits)) return true;
                           if (bus.driverPhone && bus.driverPhone.replace(/[^0-9]/g, '').includes(qDigits)) return true;
                         }
-                        const assignedDevotees = participants.filter(p => p.busId === bus.id);
+                        const assignedDevotees = participants.filter(p => isEligibleForAllocation(p) && p.busId === bus.id);
                         return assignedDevotees.some(p => matchesParticipant(p, q, qDigits));
                       });
 
@@ -5280,8 +5336,8 @@ export default function App() {
                       }
 
                       return filteredBuses.map(bus => {
-                      const assignedDevotees = participants.filter(p => p.busId === bus.id);
-                      const totalOccupiedSeats = assignedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+                      const assignedDevotees = participants.filter(p => isEligibleForAllocation(p) && p.busId === bus.id);
+                      const totalOccupiedSeats = assignedDevotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
                       const cap = parseInt(bus.capacity) || 35;
                       const occupancyPercent = Math.min(100, Math.round((totalOccupiedSeats / cap) * 100));
                       const isOverCapacity = totalOccupiedSeats > cap;
@@ -5398,7 +5454,7 @@ export default function App() {
                                   </thead>
                                   <tbody>
                                     {assignedDevotees.map(devotee => {
-                                      const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
+                                      const devoteePax = getParticipantApprovedPax(devotee);
                                       return (
                                         <tr key={devotee.id}>
                                           <td>
@@ -5416,7 +5472,7 @@ export default function App() {
                                           </td>
                                           <td style={{ color: 'var(--text-muted)', fontSize: '0.8rem', maxWidth: '300px' }}>
                                             {devotee.familyMembers && devotee.familyMembers.length > 0 
-                                              ? devotee.familyMembers.map(m => m.name).join(', ') 
+                                              ? devotee.familyMembers.filter(m => m.isApproved !== false).map(m => m.name).join(', ') 
                                               : devotee.name}
                                           </td>
                                           <td>
@@ -5464,7 +5520,7 @@ export default function App() {
 
                 {/* Unallocated Organiser Devotees (if any) */}
                 {(() => {
-                  const unallocated = participants.filter(p => p.travelMode === 'organised' && !p.busId);
+                  const unallocated = participants.filter(p => isEligibleForAllocation(p) && p.travelMode === 'organised' && !p.busId);
                   if (unallocated.length === 0) return null;
                   return (
                     <div className="card" style={{ marginTop: '2rem', border: '1.5px dashed var(--warning)', backgroundColor: 'var(--warning-light)' }}>
@@ -5487,14 +5543,14 @@ export default function App() {
                           </thead>
                           <tbody>
                             {unallocated.map(devotee => {
-                              const devoteePax = (devotee.familyMembers && devotee.familyMembers.length) || devotee.membersCount || 1;
+                              const devoteePax = getParticipantApprovedPax(devotee);
                               return (
                                 <tr key={devotee.id}>
                                   <td><strong>{devotee.name}</strong> ({devotee.phone})</td>
                                   <td><span className="badge">{devoteePax} Seat(s)</span></td>
                                   <td style={{ color: 'var(--text-muted)' }}>
                                     {devotee.familyMembers && devotee.familyMembers.length > 0 
-                                      ? devotee.familyMembers.map(m => m.name).join(', ') 
+                                      ? devotee.familyMembers.filter(m => m.isApproved !== false).map(m => m.name).join(', ') 
                                       : devotee.name}
                                   </td>
                                   <td>
@@ -5521,39 +5577,45 @@ export default function App() {
                 })()}
 
                 {/* Self-Arranged Devotees Reference */}
-                <div className="card" style={{ marginTop: '2rem' }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
-                    <h4 style={{ margin: 0 }}>🚗 Devotees on Self-Arranged Travel ({participants.filter(p => p.travelMode === 'self').length})</h4>
-                    <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Traveling via own car, train, or flight</span>
-                  </div>
-                  <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
-                    These devotees manage their own transit directly to the dham/hotel and do not require organizer bus seat allocation.
-                  </p>
-                  <div className="table-container" style={{ margin: 0 }}>
-                    <table style={{ fontSize: '0.85rem' }}>
-                      <thead>
-                        <tr>
-                          <th>Devotee</th>
-                          <th>Members</th>
-                          <th>Transit Mode</th>
-                          <th>Stations / Route</th>
-                          <th>Remarks</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {participants.filter(p => p.travelMode === 'self').map(p => (
-                          <tr key={p.id}>
-                            <td><strong>{p.name}</strong> ({p.phone})</td>
-                            <td>{(p.familyMembers && p.familyMembers.length) || p.membersCount || 1} Person(s)</td>
-                            <td><span className="badge" style={{ textTransform: 'capitalize' }}>{p.travelType || 'Self'}</span></td>
-                            <td style={{ color: 'var(--text-muted)' }}>{p.boardingStation ? `${p.boardingStation} ➔ ${p.droppingStation || selectedYatra.destination}` : 'Direct'}</td>
-                            <td style={{ color: 'var(--text-muted)' }}>{p.remarks || '-'}</td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
-                </div>
+                {(() => {
+                  const selfDevotees = participants.filter(p => isEligibleForAllocation(p) && p.travelMode === 'self');
+                  const selfPax = selfDevotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
+                  return (
+                    <div className="card" style={{ marginTop: '2rem' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                        <h4 style={{ margin: 0 }}>🚗 Devotees on Self-Arranged Travel ({selfDevotees.length} Groups • {selfPax} Devotees)</h4>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>Traveling via own car, train, or flight</span>
+                      </div>
+                      <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1rem' }}>
+                        These devotees manage their own transit directly to the dham/hotel and do not require organizer bus seat allocation.
+                      </p>
+                      <div className="table-container" style={{ margin: 0 }}>
+                        <table style={{ fontSize: '0.85rem' }}>
+                          <thead>
+                            <tr>
+                              <th>Devotee</th>
+                              <th>Members</th>
+                              <th>Transit Mode</th>
+                              <th>Stations / Route</th>
+                              <th>Remarks</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {selfDevotees.map(p => (
+                              <tr key={p.id}>
+                                <td><strong>{p.name}</strong> ({p.phone})</td>
+                                <td>{getParticipantApprovedPax(p)} Person(s)</td>
+                                <td><span className="badge" style={{ textTransform: 'capitalize' }}>{p.travelType || 'Self'}</span></td>
+                                <td style={{ color: 'var(--text-muted)' }}>{p.boardingStation ? `${p.boardingStation} ➔ ${p.droppingStation || selectedYatra.destination}` : 'Direct'}</td>
+                                <td style={{ color: 'var(--text-muted)' }}>{p.remarks || '-'}</td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </div>
+                  );
+                })()}
               </div>
             )}
 
@@ -5568,8 +5630,8 @@ export default function App() {
                 ...hotels.map(h => h.name)
               ].filter(Boolean)));
 
-              const confirmedDevotees = participants.filter(p => p.status === 'confirmed' || p.status === 'interested');
-              const totalPax = confirmedDevotees.reduce((sum, p) => sum + ((p.familyMembers && p.familyMembers.length) || p.membersCount || 1), 0);
+              const confirmedDevotees = participants.filter(p => isEligibleForAllocation(p));
+              const totalPax = confirmedDevotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
               const totalBedCapacity = rooms.reduce((sum, r) => sum + (parseInt(r.bedCount) || parseInt(r.capacity) || 2), 0);
 
               // Helper: get all assigned occupants for a specific room (individuals + family members)
@@ -5578,6 +5640,7 @@ export default function App() {
                 confirmedDevotees.forEach(p => {
                   if (p.type === 'family' && p.familyMembers && p.familyMembers.length > 0) {
                     p.familyMembers.forEach((m, idx) => {
+                      if (m.isApproved === false) return; // Skip unapproved family member
                       const assignedRoomId = m.roomId !== undefined && m.roomId !== '' ? m.roomId : p.roomId;
                       if (assignedRoomId === roomId) {
                         list.push({
@@ -5614,13 +5677,14 @@ export default function App() {
                 return list;
               };
 
-              // Calculate unallocated individuals and family members
+              // Calculate unallocated individuals and family members (only for approved attendees)
               const unallocatedMembers = [];
               const unallocatedIndividuals = [];
 
               confirmedDevotees.forEach(p => {
                 if (p.type === 'family' && p.familyMembers && p.familyMembers.length > 0) {
                   p.familyMembers.forEach((m, idx) => {
+                    if (m.isApproved === false) return; // Skip unapproved family member
                     const assignedRoomId = m.roomId !== undefined && m.roomId !== '' ? m.roomId : p.roomId;
                     if (!assignedRoomId) {
                       unallocatedMembers.push({
