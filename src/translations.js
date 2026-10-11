@@ -181,6 +181,10 @@ export const translations = {
     receiveCashBtn: 'Receive Cash',
     confirmCashReceipt: 'Confirm Cash Receipt',
     cashOverdue: 'Overdue',
+    paymentDeadlineTitle: 'Payment Acceptance Deadline',
+    paymentDeadlineNotice: 'Please complete your UPI payment or confirm your Cash payment commitment by this deadline to guarantee your booking.',
+    upiPaymentsClosedTitle: 'UPI Payments Closed',
+    upiPaymentsClosedNotice: 'The payment acceptance deadline has expired. Online UPI submissions are currently closed unless extended by the admin.',
   },
 
   hi: {
@@ -363,6 +367,10 @@ export const translations = {
     receiveCashBtn: 'नकद प्राप्त करें',
     confirmCashReceipt: 'नकद प्राप्ति की पुष्टि करें',
     cashOverdue: 'समय सीमा समाप्त',
+    paymentDeadlineTitle: 'भुगतान स्वीकृति की अंतिम तिथि',
+    paymentDeadlineNotice: 'कृपया अपनी सीट और कमरे की पुष्टि हेतु इस तिथि तक UPI या नकद भुगतान सुनिश्चित करें।',
+    upiPaymentsClosedTitle: 'UPI भुगतान बंद',
+    upiPaymentsClosedNotice: 'भुगतान की अंतिम तिथि समाप्त हो चुकी है। व्यवस्थापक द्वारा तिथि बढ़ाए जाने तक ऑनलाइन UPI भुगतान बंद है।',
   }
 };
 

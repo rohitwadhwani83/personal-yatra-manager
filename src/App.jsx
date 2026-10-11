@@ -208,7 +208,7 @@ export default function App() {
 
   // Form states for adding items
   const defaultDeadline = new Date(Date.now() + 15 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-  const [newYatra, setNewYatra] = useState({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, pricePerPerson: '', customQrImageUrl: '', upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
+  const [newYatra, setNewYatra] = useState({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, pricePerPerson: '', customQrImageUrl: '', upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline, paymentDeadline: '2026-10-20', isUpiPaymentActive: true, allowUpiPastDeadline: false });
   const [newHotel, setNewHotel] = useState({ name: '', address: '', gmapsLink: '', bookingLink: '', contactPerson: '', phone: '', roomsAvailable: 10, roomPrice: 2000, extraMattressCost: 500, distanceFromTemple: '', notes: '', contacted: false, shortlisted: false, finalSelected: false, quoteImageUrl: '' });
   const [newParticipant, setNewParticipant] = useState({ name: '', phone: '', email: '', location: '', type: 'individual', familyName: '', membersCount: 1, familyMembers: [], memberDetails: '', travelMode: 'organised', travelType: '', boardingStation: '', droppingStation: '', remarks: '', status: 'interested', paymentStatus: 'pending', approvalStatus: 'pending', isApproved: false });
   const [newExpense, setNewExpense] = useState({ date: new Date().toISOString().split('T')[0], category: 'hotel', amount: '', paidBy: '', remarks: '', appliesTo: 'everyone', targetIds: [], billImageUrl: '' });
@@ -260,6 +260,45 @@ export default function App() {
       default: return (status || '').replace('_', ' ');
     }
   };
+
+  // Payment Acceptance Deadline & UPI Status Helpers
+  const getYatraPaymentDeadline = (yatra) => {
+    if (yatra && yatra.paymentDeadline) return yatra.paymentDeadline;
+    return '2026-10-20';
+  };
+
+  const formatDeadlineText = (dateStr) => {
+    if (!dateStr) return '20th October 2026';
+    try {
+      const [y, m, d] = dateStr.split('-').map(Number);
+      const date = new Date(y, m - 1, d);
+      const day = date.getDate();
+      const suffix = (day === 1 || day === 21 || day === 31) ? 'st' : (day === 2 || day === 22) ? 'nd' : (day === 3 || day === 23) ? 'rd' : 'th';
+      const month = date.toLocaleString('en-IN', { month: 'long' });
+      const year = date.getFullYear();
+      return `${day}${suffix} ${month} ${year}`;
+    } catch (err) {
+      return dateStr;
+    }
+  };
+
+  const isPaymentDeadlinePassed = (yatra) => {
+    const deadlineStr = getYatraPaymentDeadline(yatra);
+    if (!deadlineStr) return false;
+    const [y, m, d] = deadlineStr.split('-').map(Number);
+    // 23:59:59 on the deadline date
+    const endOfDay = new Date(y, m - 1, d, 23, 59, 59, 999);
+    return new Date() > endOfDay;
+  };
+
+  const isUpiPaymentAllowed = (yatra) => {
+    if (!yatra) return false;
+    if (yatra.isUpiPaymentActive === false) return false;
+    if (yatra.allowUpiPastDeadline === true) return true;
+    return !isPaymentDeadlinePassed(yatra);
+  };
+
+  const [adminEditingPaymentDeadline, setAdminEditingPaymentDeadline] = useState('');
   
   // Public registration form states
   const [publicRegStatus, setPublicRegStatus] = useState(null); // 'success' | null
@@ -1009,8 +1048,49 @@ export default function App() {
       });
     }
     setIsCreateYatraOpen(false);
-    setNewYatra({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, pricePerPerson: '', customQrImageUrl: '', upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline });
+    setNewYatra({ name: '', destination: '', startDate: '', endDate: '', expectedParticipants: 30, pricePerPerson: '', customQrImageUrl: '', upiId: 'rohit.wadhwani83@okaxis', upiName: 'Rohit Wadhwani', registrationDeadline: defaultDeadline, paymentDeadline: '2026-10-20', isUpiPaymentActive: true, allowUpiPastDeadline: false });
     setRefreshTrigger(prev => prev + 1);
+  };
+
+  // --- Payment Deadline & UPI Acceptance Quick Controls ---
+  const handleUpdatePaymentDeadline = async (newDate) => {
+    if (!newDate || !selectedYatra) return;
+    const actor = getCurrentActor();
+    const updated = await db.updateYatra(selectedYatra.id, { paymentDeadline: newDate });
+    setSelectedYatra(updated);
+    await recordAudit({
+      yatraId: selectedYatra.id,
+      yatraTitle: selectedYatra.name,
+      category: 'Payment Settings',
+      action: 'PAYMENT_DEADLINE_UPDATED',
+      details: `${actor.name} (${actor.phone || actor.email}) extended/updated payment acceptance deadline for "${selectedYatra.name}" to ${newDate} (${formatDeadlineText(newDate)}).`,
+      metadata: { paymentDeadline: newDate }
+    });
+    setRefreshTrigger(prev => prev + 1);
+    alert(`🎉 Payment acceptance deadline updated to ${formatDeadlineText(newDate)}! Devotee portals and payment calendars will now accept payments up to this date.`);
+  };
+
+  const handleToggleUpiAcceptance = async () => {
+    if (!selectedYatra) return;
+    const actor = getCurrentActor();
+    const currentAllowed = isUpiPaymentAllowed(selectedYatra);
+    const newOverride = !currentAllowed;
+    const updates = {
+      isUpiPaymentActive: newOverride,
+      allowUpiPastDeadline: newOverride
+    };
+    const updated = await db.updateYatra(selectedYatra.id, updates);
+    setSelectedYatra(updated);
+    await recordAudit({
+      yatraId: selectedYatra.id,
+      yatraTitle: selectedYatra.name,
+      category: 'Payment Settings',
+      action: 'UPI_ACCEPTANCE_TOGGLED',
+      details: `${actor.name} (${actor.phone || actor.email}) ${newOverride ? 're-opened and enabled' : 'temporarily disabled'} UPI payments for "${selectedYatra.name}".`,
+      metadata: updates
+    });
+    setRefreshTrigger(prev => prev + 1);
+    alert(`UPI payments have been ${newOverride ? 're-opened and enabled' : 'temporarily disabled'} for devotees.`);
   };
 
   // --- Universal Stage Change Reconfirmation Guard ---
@@ -2687,6 +2767,17 @@ export default function App() {
 
   const handlePublicPayment = async (e) => {
     e.preventDefault();
+    if (selectedYatra) {
+      const deadline = getYatraPaymentDeadline(selectedYatra);
+      if (publicPayMethod === 'upi' && !isUpiPaymentAllowed(selectedYatra)) {
+        alert(`The deadline for accepting UPI payments has passed (${formatDeadlineText(deadline)}). UPI payments are currently closed. Please contact the organizers or select Cash.`);
+        return;
+      }
+      if (publicPayDate && publicPayDate > deadline) {
+        alert(`The payment acceptance deadline is ${formatDeadlineText(deadline)} (${deadline}). Please choose a date on or before this deadline.`);
+        return;
+      }
+    }
     const payId = 'pay_' + Math.random().toString(36).substring(2, 9);
     await db.addPayment({
       id: payId,
@@ -2733,6 +2824,13 @@ export default function App() {
     if (!devoteeCashPromiseDate) {
       alert("Please select your promised payment date.");
       return;
+    }
+    if (selectedYatra) {
+      const deadline = getYatraPaymentDeadline(selectedYatra);
+      if (devoteeCashPromiseDate > deadline) {
+        alert(`The payment acceptance deadline is ${formatDeadlineText(deadline)} (${deadline}). Cash handover commitment dates cannot exceed this deadline. Please select a date on or before ${formatDeadlineText(deadline)} or request an extension from organizers.`);
+        return;
+      }
     }
     const enteredAmount = parseFloat(devoteeCashPromiseAmount);
     const cleanAmount = !isNaN(enteredAmount) ? enteredAmount : (defaultFee > 0 ? defaultFee : 0);
@@ -4652,7 +4750,10 @@ export default function App() {
                           customQrImageUrl: selectedYatra.customQrImageUrl || '',
                           upiId: selectedYatra.upiId,
                           upiName: selectedYatra.upiName,
-                          registrationDeadline: selectedYatra.registrationDeadline || ''
+                          registrationDeadline: selectedYatra.registrationDeadline || '',
+                          paymentDeadline: selectedYatra.paymentDeadline || '2026-10-20',
+                          isUpiPaymentActive: selectedYatra.isUpiPaymentActive !== false,
+                          allowUpiPastDeadline: selectedYatra.allowUpiPastDeadline || false
                         });
                         setIsCreateYatraOpen(true);
                       }}
@@ -7383,7 +7484,93 @@ export default function App() {
             {/* ======================================= */}
             {activeTab === 'payments' && (
               <div>
-                <h3>Payment Verification Desk</h3>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+                  <div>
+                    <h3 style={{ margin: 0 }}>Payment Verification Desk</h3>
+                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                      Verify devotee UPI receipts and cash commitments. Configure payment deadlines and toggle online UPI payment acceptance.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Admin Payment Acceptance & Deadline Control Card */}
+                {selectedYatra && (() => {
+                  const currentDeadline = getYatraPaymentDeadline(selectedYatra);
+                  const isPassed = isPaymentDeadlinePassed(selectedYatra);
+                  const upiAllowed = isUpiPaymentAllowed(selectedYatra);
+
+                  return (
+                    <div className="card" style={{ padding: '1.15rem 1.25rem', marginBottom: '1.5rem', borderLeft: `4px solid ${upiAllowed ? 'var(--success)' : 'var(--danger)'}`, backgroundColor: 'var(--card-bg)' }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1.25rem' }}>
+                        <div>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                              Payment Acceptance Deadline:
+                            </span>
+                            <span style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--primary)' }}>
+                              📅 {formatDeadlineText(currentDeadline)} (11:59 PM)
+                            </span>
+                            <span className={`badge ${upiAllowed ? 'badge-confirmed' : 'badge-danger'}`} style={{ fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                              {upiAllowed ? '🟢 UPI Payments Active' : '🔴 UPI Payments Closed'}
+                            </span>
+                            {selectedYatra.allowUpiPastDeadline && (
+                              <span className="badge badge-warning" style={{ fontSize: '0.72rem' }}>
+                                ⚡ Admin Override Active
+                              </span>
+                            )}
+                          </div>
+                          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.35rem 0 0', lineHeight: '1.45' }}>
+                            {upiAllowed 
+                              ? `Online UPI payments and cash promise dates are currently accepted until ${formatDeadlineText(currentDeadline)}, 11:59 PM.`
+                              : `Payment deadline has passed (or UPI disabled). UPI payments are closed for devotees. Extend the date below or toggle UPI back on.`}
+                          </p>
+                        </div>
+
+                        {/* Admin Controls */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: 'var(--bg)', padding: '0.35rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)' }}>Extend Deadline:</span>
+                            <input 
+                              type="date" 
+                              className="form-control" 
+                              style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', width: 'auto' }}
+                              value={adminEditingPaymentDeadline || currentDeadline}
+                              onChange={(e) => setAdminEditingPaymentDeadline(e.target.value)}
+                            />
+                            <button 
+                              type="button"
+                              className="btn btn-primary" 
+                              style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', fontWeight: 600 }}
+                              onClick={() => {
+                                const newDate = adminEditingPaymentDeadline || currentDeadline;
+                                handleUpdatePaymentDeadline(newDate);
+                              }}
+                            >
+                              Save Date
+                            </button>
+                          </div>
+
+                          <button 
+                            type="button"
+                            className={`btn ${upiAllowed ? 'btn-outline' : 'btn-primary'}`} 
+                            style={{ 
+                              padding: '0.45rem 0.9rem', 
+                              fontSize: '0.8rem', 
+                              fontWeight: 600,
+                              borderColor: upiAllowed ? 'var(--danger)' : 'var(--success)',
+                              color: upiAllowed ? 'var(--danger)' : 'white',
+                              backgroundColor: upiAllowed ? 'transparent' : 'var(--success)'
+                            }}
+                            onClick={handleToggleUpiAcceptance}
+                            title={upiAllowed ? 'Disable UPI payments immediately' : 'Re-open UPI payments for devotees'}
+                          >
+                            {upiAllowed ? '🔒 Disable UPI Payments' : '🔓 Re-open / Enable UPI'}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="table-container">
                   <table>
                     <thead>
@@ -8544,7 +8731,35 @@ export default function App() {
               <div className="card" style={{ width: '100%', maxWidth: '500px', padding: '2.5rem', textAlign: 'center' }}>
                 <Compass size={40} style={{ color: 'var(--primary)', marginBottom: '0.5rem', display: 'inline-block' }} />
                 <h2>Yatra Payment</h2>
-                <p style={{ color: 'var(--text-muted)', marginBottom: '1.5rem' }}>Complete your yatra fees payment to confirm booking</p>
+                <p style={{ color: 'var(--text-muted)', marginBottom: '1.25rem' }}>Complete your yatra fees payment to confirm booking</p>
+
+                {/* Payment Acceptance Deadline Notice */}
+                {selectedYatra && (() => {
+                  const deadline = getYatraPaymentDeadline(selectedYatra);
+                  const isPassed = isPaymentDeadlinePassed(selectedYatra);
+                  const upiAllowed = isUpiPaymentAllowed(selectedYatra);
+
+                  return (
+                    <div style={{ 
+                      backgroundColor: !upiAllowed ? '#fef2f2' : '#eff6ff', 
+                      border: `1.5px solid ${!upiAllowed ? '#fca5a5' : '#93c5fd'}`, 
+                      borderRadius: 'var(--radius-sm)', 
+                      padding: '0.75rem 1rem', 
+                      marginBottom: '1.25rem', 
+                      textAlign: 'left' 
+                    }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', color: !upiAllowed ? '#991b1b' : '#1e40af', fontSize: '0.85rem' }}>
+                        <Calendar size={16} />
+                        <span>Payment Acceptance Deadline: {formatDeadlineText(deadline)} (11:59 PM)</span>
+                      </div>
+                      <p style={{ margin: '0.25rem 0 0', fontSize: '0.78rem', color: !upiAllowed ? '#7f1d1d' : '#1e3a8a', lineHeight: '1.4' }}>
+                        {!upiAllowed 
+                          ? `The payment acceptance deadline (${formatDeadlineText(deadline)}, 11:59 PM) has passed. Online UPI payments are closed. Please contact organizers or select Cash.`
+                          : `Please submit your UPI contribution proof or confirm your cash handover date on or before ${formatDeadlineText(deadline)}, 11:59 PM.`}
+                      </p>
+                    </div>
+                  );
+                })()}
 
               {publicPayStatus === 'success' ? (
                 <div style={{ padding: '1.5rem 0' }}>
@@ -8566,7 +8781,9 @@ export default function App() {
                       className={`btn ${publicPayMethod === 'upi' ? 'btn-primary' : ''}`}
                       style={{ flex: 1, padding: '0.6rem', background: publicPayMethod === 'upi' ? '' : 'none', color: publicPayMethod === 'upi' ? '' : 'var(--text-muted)' }}
                       onClick={() => setPublicPayMethod('upi')}
-                    >📱 Pay via UPI</button>
+                    >
+                      📱 Pay via UPI {!isUpiPaymentAllowed(selectedYatra) ? '(Closed)' : ''}
+                    </button>
                     <button
                       type="button"
                       className={`btn ${publicPayMethod === 'cash' ? 'btn-primary' : ''}`}
@@ -8577,23 +8794,36 @@ export default function App() {
 
                   {/* UPI QR SCANNER BOX - only for UPI */}
                   {publicPayMethod === 'upi' && (
-                    <div style={{ backgroundColor: 'var(--bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px dashed var(--primary-border)', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
-                      <img 
-                        src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, parseFloat(publicPayAmount) || 0, 'Yatra Payment')} 
-                        alt="UPI QR Scanner" 
-                        style={{ width: '220px', height: '220px', objectFit: 'contain', backgroundColor: 'white', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
-                      />
-                      <div style={{ marginTop: '1rem', fontSize: '0.9rem' }}>
-                        <strong>UPI ID:</strong> <code>{selectedYatra.upiId}</code><br />
-                        <strong>Account Name:</strong> {selectedYatra.upiName}
+                    !isUpiPaymentAllowed(selectedYatra) ? (
+                      <div style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fecaca', borderRadius: 'var(--radius-md)', padding: '1.5rem', marginBottom: '1.5rem', textAlign: 'center' }}>
+                        <Lock size={32} style={{ color: '#dc2626', marginBottom: '0.5rem' }} />
+                        <h4 style={{ color: '#991b1b', margin: '0 0 0.35rem' }}>UPI Payments Closed</h4>
+                        <p style={{ fontSize: '0.82rem', color: '#7f1d1d', margin: 0, lineHeight: '1.45' }}>
+                          The deadline for accepting UPI payments ({formatDeadlineText(getYatraPaymentDeadline(selectedYatra))}, 11:59 PM) has passed.
+                        </p>
+                        <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                          Please switch to <strong>Pay by Cash</strong> above or contact organizers to request an extension.
+                        </p>
                       </div>
-                    </div>
+                    ) : (
+                      <div style={{ backgroundColor: 'var(--bg)', padding: '1.5rem', borderRadius: 'var(--radius-md)', border: '1px dashed var(--primary-border)', marginBottom: '1.5rem', display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                        <img 
+                          src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, parseFloat(publicPayAmount) || 0, 'Yatra Payment')} 
+                          alt="UPI QR Scanner" 
+                          style={{ width: '220px', height: '220px', objectFit: 'contain', backgroundColor: 'white', padding: '0.5rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}
+                        />
+                        <div style={{ marginTop: '1rem', fontSize: '0.9rem' }}>
+                          <strong>UPI ID:</strong> <code>{selectedYatra.upiId}</code><br />
+                          <strong>Account Name:</strong> {selectedYatra.upiName}
+                        </div>
+                      </div>
+                    )
                   )}
 
                   {/* Cash payment info */}
                   {publicPayMethod === 'cash' && (
                     <div style={{ backgroundColor: 'var(--success-light)', padding: '1rem', borderRadius: 'var(--radius-sm)', marginBottom: '1.5rem', fontSize: '0.85rem', color: 'var(--success)', textAlign: 'left' }}>
-                      <strong>💵 Cash Payment:</strong> Please hand over the cash amount to the Yatra organizer and enter the amount below. The organizer will verify and confirm your payment.
+                      <strong>💵 Cash Payment:</strong> Please hand over the cash amount to the Yatra organizer and enter the expected date below. The organizer will verify and confirm your payment.
                     </div>
                   )}
 
@@ -8688,7 +8918,7 @@ export default function App() {
 
                       <div className="form-group" style={{ textAlign: 'left' }}>
                         <label>Payment Date</label>
-                        <input type="date" required className="form-control" value={publicPayDate} onChange={(e) => setPublicPayDate(e.target.value)} />
+                        <input type="date" required className="form-control" max={getYatraPaymentDeadline(selectedYatra)} value={publicPayDate} onChange={(e) => setPublicPayDate(e.target.value)} />
                       </div>
 
                       <div className="form-group" style={{ textAlign: 'left' }}>
@@ -8708,22 +8938,36 @@ export default function App() {
                       <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.85rem', marginBottom: '1rem', fontSize: '0.84rem', color: '#92400e', lineHeight: '1.45' }}>
                         <strong>💵 Pay by Cash (Select Future Date):</strong>
                         <p style={{ margin: '0.2rem 0 0', color: '#b45309', fontSize: '0.8rem' }}>
-                          You can choose today or any date in the future (e.g. 20th Oct 2026) by when you will hand over cash to the organizers. Your commitment will be registered, and organizers will verify upon receiving the cash.
+                          You can choose today or any date up to {formatDeadlineText(getYatraPaymentDeadline(selectedYatra))} by when you will hand over cash to the organizers. Your commitment will be registered, and organizers will verify upon receiving the cash.
                         </p>
                       </div>
                       <div className="form-group">
                         <label style={{ fontWeight: '600' }}>Expected / Promised Date of Cash Handover</label>
-                        <input type="date" required className="form-control" value={publicPayDate} onChange={(e) => setPublicPayDate(e.target.value)} />
+                        <input 
+                          type="date" 
+                          required 
+                          className="form-control" 
+                          min={new Date().toISOString().split('T')[0]} 
+                          max={getYatraPaymentDeadline(selectedYatra)} 
+                          value={publicPayDate} 
+                          onChange={(e) => setPublicPayDate(e.target.value)} 
+                        />
                         <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem', marginTop: '0.25rem', display: 'block' }}>
-                          💡 You can choose a future date (e.g. upon reaching destination, during satsang, or by a specific date)
+                          💡 Dates accepted up to {formatDeadlineText(getYatraPaymentDeadline(selectedYatra))} (Payment Acceptance Deadline)
                         </small>
                       </div>
                     </div>
                   )}
 
-                  <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
-                    {publicPayMethod === 'cash' ? '✓ Confirm Cash Payment Commitment' : 'Submit Payment Receipt'}
-                  </button>
+                  {publicPayMethod === 'upi' && !isUpiPaymentAllowed(selectedYatra) ? (
+                    <button type="button" disabled className="btn btn-outline" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem', opacity: 0.5, cursor: 'not-allowed' }}>
+                      UPI Payments Closed (Deadline Passed)
+                    </button>
+                  ) : (
+                    <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
+                      {publicPayMethod === 'cash' ? '✓ Confirm Cash Payment Commitment' : 'Submit Payment Receipt'}
+                    </button>
+                  )}
                 </form>
               )}
             </div>
@@ -8769,6 +9013,11 @@ export default function App() {
                 <span className="badge" style={{ backgroundColor: myParticipantData.paymentStatus === 'completed' ? 'var(--success-light)' : (myParticipantData.paymentStatus === 'partially_paid' ? 'var(--primary-light)' : 'var(--warning-light)'), color: myParticipantData.paymentStatus === 'completed' ? 'var(--success)' : (myParticipantData.paymentStatus === 'partially_paid' ? 'var(--primary)' : 'var(--warning)') }}>
                   Payment: {myParticipantData.paymentStatus ? myParticipantData.paymentStatus.replace('_', ' ') : 'Pending'}
                 </span>
+                {isDevoteeApproved(myParticipantData) && myParticipantData.paymentStatus !== 'completed' && (
+                  <span className="badge" style={{ backgroundColor: !isUpiPaymentAllowed(selectedYatra) ? '#fee2e2' : '#eff6ff', color: !isUpiPaymentAllowed(selectedYatra) ? '#991b1b' : '#1d4ed8', border: '1px solid currentColor', fontWeight: 600 }}>
+                    ⏰ Payment Deadline: {formatDeadlineText(getYatraPaymentDeadline(selectedYatra))}
+                  </span>
+                )}
               </div>
             </div>
 
@@ -9220,6 +9469,34 @@ export default function App() {
                           <span>{t('eligibilityApprovedBanner') || 'Registration Approved! Payment options are unlocked.'}</span>
                         </div>
 
+                        {/* Prominent Payment Acceptance Deadline Banner for Approved Devotees */}
+                        {(() => {
+                          const deadline = getYatraPaymentDeadline(selectedYatra);
+                          const isPassed = isPaymentDeadlinePassed(selectedYatra);
+                          const upiAllowed = isUpiPaymentAllowed(selectedYatra);
+
+                          return (
+                            <div style={{ 
+                              backgroundColor: !upiAllowed ? '#fef2f2' : '#eff6ff', 
+                              border: `1.5px solid ${!upiAllowed ? '#fca5a5' : '#93c5fd'}`, 
+                              borderRadius: 'var(--radius-sm)', 
+                              padding: '0.85rem 1rem', 
+                              marginBottom: '1.25rem', 
+                              textAlign: 'left' 
+                            }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontWeight: 'bold', color: !upiAllowed ? '#991b1b' : '#1e40af', fontSize: '0.88rem' }}>
+                                <Calendar size={18} style={{ flexShrink: 0 }} />
+                                <span>{t('paymentDeadlineTitle') || 'Payment Acceptance Deadline'}: {formatDeadlineText(deadline)} (11:59 PM)</span>
+                              </div>
+                              <p style={{ margin: '0.35rem 0 0', fontSize: '0.82rem', color: !upiAllowed ? '#7f1d1d' : '#1e3a8a', lineHeight: '1.45' }}>
+                                {!upiAllowed 
+                                  ? (t('upiPaymentsClosedNotice') || `The deadline for accepting UPI payments (${formatDeadlineText(deadline)}, 11:59 PM) has passed. UPI payments are currently closed. Please contact the organizers or record your cash commitment below.`)
+                                  : `Hare Krishna! Your registration has been approved. Please note that the payment deadline is ${formatDeadlineText(deadline)}. Kindly complete your contribution via UPI or confirm your Cash payment handover by ${formatDeadlineText(deadline)}, 11:59 PM to guarantee your confirmed Yatra seat and hotel room allocation.`}
+                              </p>
+                            </div>
+                          );
+                        })()}
+
                         {/* Existing Cash Commitment Banner if Devotee already promised cash */}
                         {myParticipantData.cashPromiseDate && (
                           <div style={{ backgroundColor: '#fffbeb', border: '1.5px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.9rem', textAlign: 'left', marginBottom: '1.25rem' }}>
@@ -9247,7 +9524,7 @@ export default function App() {
                             style={{ flex: 1, padding: '0.5rem', fontSize: '0.82rem', fontWeight: 600, background: devoteePayTab === 'upi' ? '' : 'none', color: devoteePayTab === 'upi' ? '' : 'var(--text-muted)', border: 'none' }}
                             onClick={() => setDevoteePayTab('upi')}
                           >
-                            📱 {t('payViaUpi') || 'Pay via UPI'}
+                            📱 {t('payViaUpi') || 'Pay via UPI'} {!isUpiPaymentAllowed(selectedYatra) ? '(Closed)' : ''}
                           </button>
                           <button
                             type="button"
@@ -9272,26 +9549,46 @@ export default function App() {
                         </div>
 
                         {devoteePayTab === 'upi' ? (
-                          <div>
-                            <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', margin: '0 0 1rem 0' }}>
-                              Scan the UPI QR code below with any UPI App and submit your transaction receipt details.
-                            </p>
-                            
-                            <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', display: 'inline-block', marginBottom: '1rem', border: '1px solid var(--border)' }}>
-                              <img 
-                                src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, calculatedFee, 'Confirm Yatra Seat')} 
-                                alt="Pay UPI" 
-                                style={{ width: '160px', height: '160px', objectFit: 'contain', backgroundColor: 'white', padding: '0.25rem', borderRadius: 'var(--radius-sm)' }}
-                              />
-                              <div style={{ fontSize: '0.78rem', color: 'var(--text)', marginTop: '0.4rem' }}>
-                                <strong>Exact Fee:</strong> ₹{calculatedFee.toLocaleString()}
+                          !isUpiPaymentAllowed(selectedYatra) ? (
+                            <div style={{ textAlign: 'center', padding: '1rem 0' }}>
+                              <div style={{ backgroundColor: '#fef2f2', border: '1.5px solid #fecaca', borderRadius: 'var(--radius-sm)', padding: '1.5rem 1rem', marginBottom: '1rem' }}>
+                                <Lock size={32} style={{ color: '#dc2626', marginBottom: '0.5rem' }} />
+                                <h4 style={{ color: '#991b1b', margin: '0 0 0.35rem' }}>
+                                  {t('upiPaymentsClosedTitle') || 'UPI Payments Closed'}
+                                </h4>
+                                <p style={{ fontSize: '0.82rem', color: '#7f1d1d', margin: 0, lineHeight: '1.45' }}>
+                                  The deadline for accepting UPI payments ({formatDeadlineText(getYatraPaymentDeadline(selectedYatra))}, 11:59 PM) has passed.
+                                </p>
+                                <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+                                  Online UPI option is currently disabled. Please switch to the <strong>Pay by Cash</strong> tab above or contact the organizers if you require an extension.
+                                </p>
                               </div>
+                              <button disabled className="btn btn-outline" style={{ width: '100%', opacity: 0.5, cursor: 'not-allowed' }}>
+                                UPI Payments Closed (Deadline Passed)
+                              </button>
                             </div>
-                            
-                            <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => navigateTo('payment', myParticipantData.id)}>
-                              Upload Payment Receipt / Enter Reference
-                            </button>
-                          </div>
+                          ) : (
+                            <div>
+                              <p style={{ fontSize: '0.84rem', color: 'var(--text-muted)', margin: '0 0 1rem 0' }}>
+                                Scan the UPI QR code below with any UPI App and submit your transaction receipt details.
+                              </p>
+                              
+                              <div style={{ backgroundColor: 'var(--bg)', padding: '1rem', borderRadius: 'var(--radius-sm)', display: 'inline-block', marginBottom: '1rem', border: '1px solid var(--border)' }}>
+                                <img 
+                                  src={selectedYatra.customQrImageUrl || getUPIQRCodeUrl(selectedYatra.upiId, selectedYatra.upiName, calculatedFee, 'Confirm Yatra Seat')} 
+                                  alt="Pay UPI" 
+                                  style={{ width: '160px', height: '160px', objectFit: 'contain', backgroundColor: 'white', padding: '0.25rem', borderRadius: 'var(--radius-sm)' }}
+                                />
+                                <div style={{ fontSize: '0.78rem', color: 'var(--text)', marginTop: '0.4rem' }}>
+                                  <strong>Exact Fee:</strong> ₹{calculatedFee.toLocaleString()}
+                                </div>
+                              </div>
+                              
+                              <button className="btn btn-primary" style={{ width: '100%' }} onClick={() => navigateTo('payment', myParticipantData.id)}>
+                                Upload Payment Receipt / Enter Reference
+                              </button>
+                            </div>
+                          )
                         ) : (
                           <form onSubmit={(e) => handleDevoteeSubmitCashPromise(e, calculatedFee)} style={{ textAlign: 'left' }}>
                             <div style={{ backgroundColor: '#fffbeb', border: '1px solid #fde68a', borderRadius: 'var(--radius-sm)', padding: '0.75rem 0.9rem', marginBottom: '1rem', fontSize: '0.82rem', color: '#92400e', lineHeight: '1.45' }}>
@@ -9308,12 +9605,14 @@ export default function App() {
                               <input
                                 type="date"
                                 required
+                                min={new Date().toISOString().split('T')[0]}
+                                max={getYatraPaymentDeadline(selectedYatra)}
                                 className="form-control"
                                 value={devoteeCashPromiseDate}
                                 onChange={(e) => setDevoteeCashPromiseDate(e.target.value)}
                               />
                               <small style={{ color: 'var(--text-muted)', fontSize: '0.72rem', marginTop: '0.2rem', display: 'block' }}>
-                                💡 E.g. Select today or any future date (e.g. 20th Oct 2026) by when you will pay
+                                💡 Dates accepted up to {formatDeadlineText(getYatraPaymentDeadline(selectedYatra))} (Payment Acceptance Deadline)
                               </small>
                             </div>
 
@@ -9688,6 +9987,24 @@ export default function App() {
                 <div className="form-group">
                   <label>Registration Link Expiry (Deadline)</label>
                   <input type="date" required className="form-control" value={newYatra.registrationDeadline} onChange={(e) => setNewYatra({...newYatra, registrationDeadline: e.target.value})} />
+                </div>
+              </div>
+              <div className="grid-cols-2">
+                <div className="form-group">
+                  <label>⏰ Payment Acceptance Deadline</label>
+                  <input type="date" required className="form-control" value={newYatra.paymentDeadline || '2026-10-20'} onChange={(e) => setNewYatra({...newYatra, paymentDeadline: e.target.value})} />
+                  <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Devotees can pay via UPI and schedule cash promises up to 11:59 PM on this date.</small>
+                </div>
+                <div className="form-group" style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center' }}>
+                  <label style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer', marginTop: '1.25rem' }}>
+                    <input 
+                      type="checkbox" 
+                      checked={newYatra.allowUpiPastDeadline === true} 
+                      onChange={(e) => setNewYatra({...newYatra, allowUpiPastDeadline: e.target.checked})} 
+                    />
+                    <span style={{ fontSize: '0.85rem', fontWeight: 600 }}>Allow UPI Payments Past Deadline (Admin Override)</span>
+                  </label>
+                  <small style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>If checked, devotees can pay via UPI even after deadline expires.</small>
                 </div>
               </div>
               <div className="form-group">

@@ -37,7 +37,9 @@ const DEMO_DATA = {
       expectedParticipants: 45,
       status: 'registration_open',
       upiId: 'rohit.wadhwani83@okaxis',
-      upiName: 'Rohit Wadhwani'
+      upiName: 'Rohit Wadhwani',
+      paymentDeadline: '2026-10-20',
+      isUpiPaymentActive: true
     },
     {
       id: 'yatra_puri_2026',
@@ -48,7 +50,9 @@ const DEMO_DATA = {
       expectedParticipants: 50,
       status: 'planning',
       upiId: 'rohit.wadhwani83@okaxis',
-      upiName: 'Rohit Wadhwani'
+      upiName: 'Rohit Wadhwani',
+      paymentDeadline: '2026-11-17',
+      isUpiPaymentActive: true
     }
   ],
   hotels: [
