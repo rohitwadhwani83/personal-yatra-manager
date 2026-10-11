@@ -75,7 +75,25 @@ const getUPIQRCodeUrl = (upiId, name, amount = 0, memo = 'Yatra Payment') => {
 export default function App() {
   // --- Routing & Role State ---
   const [currentRoute, setCurrentRoute] = useState({ path: 'login' });
-  const [currentUser, setCurrentUser] = useState(null); // { email, role, name, phone }
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = sessionStorage.getItem('yatra_current_user');
+      return saved ? JSON.parse(saved) : null;
+    } catch (e) {
+      return null;
+    }
+  }); // { email, role, name, phone }
+
+  useEffect(() => {
+    try {
+      if (currentUser) {
+        sessionStorage.setItem('yatra_current_user', JSON.stringify(currentUser));
+      } else {
+        sessionStorage.removeItem('yatra_current_user');
+      }
+    } catch (e) {}
+  }, [currentUser]);
+
   // Strict Super Admin authorization check (strictly exclusive to Super Admin)
   const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.email?.toLowerCase() === 'rohit.wadhwani83@gmail.com';
   const [firebaseConfig, setFirebaseConfig] = useState('');
@@ -319,6 +337,7 @@ export default function App() {
   const [editProfileData, setEditProfileData] = useState(null);
   const [myPhotos, setMyPhotos] = useState([]);
   const [myNotes, setMyNotes] = useState(null);
+  const [devoteeRegistrations, setDevoteeRegistrations] = useState([]);
 
   // Devotee payment method & cash commitment states
   const [devoteePayTab, setDevoteePayTab] = useState('upi'); // 'upi' | 'cash'
@@ -576,6 +595,16 @@ export default function App() {
             setResetTokenStatus('invalid');
           }
         });
+      } else if (path === 'my-yatra') {
+        const storedUser = currentUser || (() => {
+          try {
+            const s = sessionStorage.getItem('yatra_current_user');
+            return s ? JSON.parse(s) : null;
+          } catch (e) { return null; }
+        })();
+        if (storedUser && storedUser.role === 'participant' && storedUser.phone) {
+          hydrateDevoteePortal(storedUser.phone, storedUser.yatraId || id);
+        }
       }
     };
 
@@ -588,6 +617,135 @@ export default function App() {
     window.location.hash = id ? `#/${path}/${id}` : `#/${path}`;
   };
 
+  // Devotee portal hydration helper for reliable logins & multi-yatra registrations
+  const hydrateDevoteePortal = async (phoneToLookup, preferredYatraId = '') => {
+    if (!phoneToLookup) return null;
+    const cleanDigits = phoneToLookup.toString().replace(/\D/g, '');
+    const last10 = cleanDigits.slice(-10);
+
+    try {
+      const [allParts, allYatras] = await Promise.all([
+        db.getCollection('participants'),
+        db.getYatras()
+      ]);
+
+      const activeYatras = (allYatras || []).filter(y => !y.isDeleted);
+      const yatraMap = new Map(activeYatras.map(y => [y.id, y]));
+
+      const matches = (allParts || []).filter(p => {
+        if (!p || !p.phone) return false;
+        const pDigits = p.phone.toString().replace(/\D/g, '');
+        return (pDigits.length >= 10 && (pDigits.endsWith(last10) || last10.endsWith(pDigits.slice(-10)))) || pDigits === cleanDigits;
+      });
+
+      if (matches.length === 0) return null;
+
+      const validRegistrations = [];
+      const orphanedRegistrations = [];
+
+      matches.forEach(m => {
+        const matchedYatra = yatraMap.get(m.yatraId);
+        if (matchedYatra) {
+          validRegistrations.push({ participant: m, yatra: matchedYatra });
+        } else {
+          orphanedRegistrations.push(m);
+        }
+      });
+
+      let chosen = null;
+
+      if (validRegistrations.length > 0) {
+        if (preferredYatraId) {
+          chosen = validRegistrations.find(r => r.yatra.id === preferredYatraId);
+        }
+        if (!chosen) {
+          validRegistrations.sort((a, b) => {
+            const aApproved = isDevoteeApproved(a.participant);
+            const bApproved = isDevoteeApproved(b.participant);
+            if (aApproved && !bApproved) return -1;
+            if (!aApproved && bApproved) return 1;
+            const aTime = new Date(a.participant.registeredAt || 0).getTime();
+            const bTime = new Date(b.participant.registeredAt || 0).getTime();
+            return bTime - aTime;
+          });
+          chosen = validRegistrations[0];
+        }
+        setDevoteeRegistrations(validRegistrations);
+      } else if (activeYatras.length > 0 && orphanedRegistrations.length > 0) {
+        const fallbackYatra = activeYatras.find(y => y.status === 'registration_open' || y.status === 'confirmed') || activeYatras[0];
+        chosen = { participant: orphanedRegistrations[0], yatra: fallbackYatra };
+        setDevoteeRegistrations([{ participant: orphanedRegistrations[0], yatra: fallbackYatra }]);
+      }
+
+      if (chosen && chosen.yatra) {
+        const match = chosen.participant;
+        const yatra = chosen.yatra;
+
+        setCurrentUser({
+          role: 'participant',
+          name: match.name,
+          phone: match.phone,
+          id: match.id,
+          yatraId: yatra.id
+        });
+        setSelectedYatra(yatra);
+        setMyParticipantData(match);
+
+        db.getPhotos(yatra.id).then(ph => setMyPhotos(ph || [])).catch(() => setMyPhotos([]));
+        db.getNotes(yatra.id).then(nt => setMyNotes(nt || null)).catch(() => setMyNotes(null));
+
+        if (match.cashPromiseDate) {
+          setDevoteeCashPromiseDate(match.cashPromiseDate);
+          setDevoteeCashPromiseAmount(match.cashPromiseAmount ? match.cashPromiseAmount.toString() : '');
+          setDevoteeCashPromiseNotes(match.cashPromiseNotes || '');
+        } else {
+          setDevoteeCashPromiseDate('');
+          setDevoteeCashPromiseAmount('');
+          setDevoteeCashPromiseNotes('');
+        }
+
+        return chosen;
+      }
+      return null;
+    } catch (err) {
+      console.warn("Devotee portal hydration error:", err);
+      return null;
+    }
+  };
+
+  const handleDevoteeSelectRegistration = async (participantRecord, yatraRecord) => {
+    setMyParticipantData(participantRecord);
+    setSelectedYatra(yatraRecord);
+    setCurrentUser(prev => ({
+      ...prev,
+      yatraId: yatraRecord.id,
+      id: participantRecord.id,
+      name: participantRecord.name,
+      phone: participantRecord.phone
+    }));
+    try {
+      const ph = await db.getPhotos(yatraRecord.id);
+      setMyPhotos(ph || []);
+    } catch (e) {
+      setMyPhotos([]);
+    }
+    try {
+      const nt = await db.getNotes(yatraRecord.id);
+      setMyNotes(nt || null);
+    } catch (e) {
+      setMyNotes(null);
+    }
+    if (participantRecord.cashPromiseDate) {
+      setDevoteeCashPromiseDate(participantRecord.cashPromiseDate);
+      setDevoteeCashPromiseAmount(participantRecord.cashPromiseAmount ? participantRecord.cashPromiseAmount.toString() : '');
+      setDevoteeCashPromiseNotes(participantRecord.cashPromiseNotes || '');
+    } else {
+      setDevoteeCashPromiseDate('');
+      setDevoteeCashPromiseAmount('');
+      setDevoteeCashPromiseNotes('');
+    }
+  };
+
   // --- Authentication Handler ---
   const handleLogin = (e) => {
     e.preventDefault();
@@ -598,31 +756,24 @@ export default function App() {
         setLoginError('Please enter your phone number.');
         return;
       }
-      // Participant Phone Lookup
-      db.getCollection('participants').then(allParts => {
-        const match = allParts.find(p => p.phone.replace(/[^0-9]/g, '').endsWith(loginPhone.replace(/[^0-9]/g, '')));
-        if (match) {
-          // Logged in as participant
-          setCurrentUser({
-            role: 'participant',
-            name: match.name,
-            phone: match.phone,
-            id: match.id,
-            yatraId: match.yatraId
-          });
-          db.getYatras().then(allY => {
-            const yatra = allY.find(y => y.id === match.yatraId);
-            setSelectedYatra(yatra);
-            // Fetch participant-related resources
-            db.getPhotos(match.yatraId).then(setMyPhotos);
-            db.getNotes(match.yatraId).then(setMyNotes);
-            setMyParticipantData(match);
-            navigateTo('my-yatra');
-          });
+      const rawInput = loginPhone.trim();
+      const cleanDigits = rawInput.replace(/\D/g, '');
+      if (cleanDigits.length < 10) {
+        setLoginError('Please enter a valid 10-digit mobile number.');
+        return;
+      }
+
+      hydrateDevoteePortal(rawInput).then(chosen => {
+        if (chosen) {
+          navigateTo('my-yatra');
         } else {
-          setLoginError('No participant record found with this phone number.');
+          setLoginError('No devotee registration record found for this mobile number. Please check the number or submit your registration.');
         }
+      }).catch(err => {
+        console.error('Participant login error:', err);
+        setLoginError('Unable to connect to registration records. Please try again or check network connection.');
       });
+      return;
     } else {
       // Admin / Super Admin Login
       if (!loginEmail || !loginPassword) {
@@ -864,9 +1015,11 @@ export default function App() {
     setCurrentUser(null);
     setSelectedYatra(null);
     setMyParticipantData(null);
+    setDevoteeRegistrations([]);
     setDevoteeCashPromiseAmount('');
     setDevoteeCashPromiseDate('');
     setDevoteeCashPromiseNotes('');
+    try { sessionStorage.removeItem('yatra_current_user'); } catch (e) {}
     navigateTo('login');
   };
 
@@ -8977,12 +9130,50 @@ export default function App() {
         {/* ======================================= */}
         {/* VIEW 6: DEVOTEE PORTAL / MY YATRA */}
         {/* ======================================= */}
-        {currentRoute.path === 'my-yatra' && myParticipantData && selectedYatra && (
+        {currentRoute.path === 'my-yatra' && (
+          (!myParticipantData || !selectedYatra) ? (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '55vh' }}>
+              <div className="card" style={{ maxWidth: '440px', width: '100%', textAlign: 'center', padding: '2rem' }}>
+                <div style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary)', width: '3.5rem', height: '3.5rem', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', margin: '0 auto 1.25rem' }}>
+                  <Compass size={28} />
+                </div>
+                <h3>Loading Devotee Portal...</h3>
+                <p style={{ color: 'var(--text-muted)', fontSize: '0.88rem', margin: '0.75rem 0 1.5rem' }}>
+                  Connecting to your spiritual yatra registration details. Hare Krishna!
+                </p>
+                <button className="btn btn-primary" onClick={() => navigateTo('login')}>
+                  Return to Devotee Sign In
+                </button>
+              </div>
+            </div>
+          ) : (
           <div>
             <div className="devotee-portal-header">
               <div>
                 <h2>Hare Krishna, {myParticipantData.name}!</h2>
                 <p style={{ color: 'var(--text-muted)' }}>Devotee Space for <strong>{selectedYatra.name}</strong></p>
+                {devoteeRegistrations && devoteeRegistrations.length > 1 && (
+                  <div style={{ marginTop: '0.65rem', display: 'flex', alignItems: 'center', gap: '0.5rem', flexWrap: 'wrap' }}>
+                    <span style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 600 }}>Switch Registered Yatra:</span>
+                    <select
+                      className="form-control"
+                      style={{ width: 'auto', padding: '0.25rem 0.65rem', fontSize: '0.8rem', height: 'auto', backgroundColor: 'var(--bg)', borderColor: 'var(--primary)', fontWeight: 600 }}
+                      value={myParticipantData.id}
+                      onChange={(e) => {
+                        const targetReg = devoteeRegistrations.find(r => r.participant.id === e.target.value);
+                        if (targetReg) {
+                          handleDevoteeSelectRegistration(targetReg.participant, targetReg.yatra);
+                        }
+                      }}
+                    >
+                      {devoteeRegistrations.map(reg => (
+                        <option key={reg.participant.id} value={reg.participant.id}>
+                          {reg.yatra.name} ({getLifecycleStatusLabel(reg.participant.status) || 'Registered'})
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                )}
               </div>
               <div className="devotee-header-badges">
                 <button 
@@ -9263,7 +9454,15 @@ export default function App() {
                   </div>
                   {myNotes ? (
                     <div style={{ marginTop: '1rem', whiteSpace: 'pre-line', fontFamily: 'monospace', backgroundColor: 'var(--bg)', padding: '1.25rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                      {JSON.parse(myNotes.content).general || "No notes have been shared by the organizer yet."}
+                      {(() => {
+                        try {
+                          if (!myNotes.content) return "No notes have been shared by the organizer yet.";
+                          const parsed = typeof myNotes.content === 'object' ? myNotes.content : JSON.parse(myNotes.content);
+                          return parsed?.general || "No notes have been shared by the organizer yet.";
+                        } catch (e) {
+                          return typeof myNotes.content === 'string' ? myNotes.content : "No notes have been shared by the organizer yet.";
+                        }
+                      })()}
                     </div>
                   ) : (
                     <p style={{ color: 'var(--text-muted)', marginTop: '1rem' }}>No schedule notes shared yet.</p>
@@ -9661,7 +9860,7 @@ export default function App() {
               </div>
             </div>
           </div>
-        )}
+        ))}
       </main>
 
       {/* FOOTER */}
