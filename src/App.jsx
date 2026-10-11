@@ -75,24 +75,7 @@ const getUPIQRCodeUrl = (upiId, name, amount = 0, memo = 'Yatra Payment') => {
 export default function App() {
   // --- Routing & Role State ---
   const [currentRoute, setCurrentRoute] = useState({ path: 'login' });
-  const [currentUser, setCurrentUser] = useState(() => {
-    try {
-      const saved = sessionStorage.getItem('yatra_current_user');
-      return saved ? JSON.parse(saved) : null;
-    } catch (e) {
-      return null;
-    }
-  }); // { email, role, name, phone }
-
-  useEffect(() => {
-    try {
-      if (currentUser) {
-        sessionStorage.setItem('yatra_current_user', JSON.stringify(currentUser));
-      } else {
-        sessionStorage.removeItem('yatra_current_user');
-      }
-    } catch (e) {}
-  }, [currentUser]);
+  const [currentUser, setCurrentUser] = useState(null); // { email, role, name, phone }
 
   // Strict Super Admin authorization check (strictly exclusive to Super Admin)
   const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.email?.toLowerCase() === 'rohit.wadhwani83@gmail.com';
@@ -595,16 +578,6 @@ export default function App() {
             setResetTokenStatus('invalid');
           }
         });
-      } else if (path === 'my-yatra') {
-        const storedUser = currentUser || (() => {
-          try {
-            const s = sessionStorage.getItem('yatra_current_user');
-            return s ? JSON.parse(s) : null;
-          } catch (e) { return null; }
-        })();
-        if (storedUser && storedUser.role === 'participant' && storedUser.phone) {
-          hydrateDevoteePortal(storedUser.phone, storedUser.yatraId || id);
-        }
       }
     };
 
@@ -1019,7 +992,6 @@ export default function App() {
     setDevoteeCashPromiseAmount('');
     setDevoteeCashPromiseDate('');
     setDevoteeCashPromiseNotes('');
-    try { sessionStorage.removeItem('yatra_current_user'); } catch (e) {}
     navigateTo('login');
   };
 
