@@ -4,7 +4,7 @@ import {
   FileText, BarChart2, MessageSquare, Plus, Trash2, Edit2, Search, Download, 
   Check, X, LogOut, ArrowLeft, Eye, RefreshCw, AlertTriangle, 
   ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink,
-  Sparkles, UserCheck, Lock, Clock,
+  Sparkles, UserCheck, Lock, Clock, Calendar,
   Bus, Bed, Shuffle,
   Key, EyeOff, Copy, ShieldCheck,
   Printer, Languages, BookOpen, ArrowUpDown
