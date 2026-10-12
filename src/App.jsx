@@ -590,6 +590,15 @@ export default function App() {
     window.location.hash = id ? `#/${path}/${id}` : `#/${path}`;
   };
 
+  // Role-based route protection: participants cannot access organizer routes (dashboard, yatra workspace)
+  useEffect(() => {
+    if (currentUser && currentUser.role === 'participant') {
+      if (currentRoute.path === 'dashboard' || currentRoute.path === 'yatra') {
+        navigateTo('my-yatra');
+      }
+    }
+  }, [currentUser, currentRoute]);
+
   // Devotee portal hydration helper for reliable logins & multi-yatra registrations
   const hydrateDevoteePortal = async (phoneToLookup, preferredYatraId = '') => {
     if (!phoneToLookup) return null;
@@ -1216,6 +1225,36 @@ export default function App() {
     });
     setRefreshTrigger(prev => prev + 1);
     alert(`UPI payments have been ${newOverride ? 're-opened and enabled' : 'temporarily disabled'} for devotees.`);
+  };
+
+  const handleToggleDevoteePhotoUploads = async () => {
+    if (!selectedYatra) return;
+    const actor = getCurrentActor();
+    const currentlyUnlocked = (() => {
+      if (selectedYatra.allowDevoteePhotoUploads === true) return true;
+      if (selectedYatra.allowDevoteePhotoUploads === false) return false;
+      if (!selectedYatra.startDate) return false;
+      const parts = selectedYatra.startDate.split('-').map(Number);
+      if (parts.length < 3 || isNaN(parts[0])) return false;
+      const [year, month, day] = parts;
+      const commencementDate = new Date(year, month - 1, day, 0, 0, 0);
+      const unlockDate = new Date(commencementDate.getTime() - (24 * 60 * 60 * 1000));
+      return new Date() >= unlockDate;
+    })();
+
+    const newSetting = !currentlyUnlocked;
+    const updated = await db.updateYatra(selectedYatra.id, { allowDevoteePhotoUploads: newSetting });
+    setSelectedYatra(updated);
+    await recordAudit({
+      yatraId: selectedYatra.id,
+      yatraTitle: selectedYatra.name,
+      category: 'Gallery Settings',
+      action: 'DEVOTEE_PHOTO_UPLOADS_TOGGLED',
+      details: `${actor.name} (${actor.phone || actor.email}) ${newSetting ? 'explicitly unlocked devotee photo uploads' : 'locked devotee photo uploads'} for "${selectedYatra.name}".`,
+      metadata: { allowDevoteePhotoUploads: newSetting }
+    });
+    setRefreshTrigger(prev => prev + 1);
+    alert(`Devotee photo uploads are now ${newSetting ? 'UNLOCKED / ENABLED' : 'STRICTLY LOCKED'}.`);
   };
 
   // --- Universal Stage Change Reconfirmation Guard ---
@@ -3860,7 +3899,14 @@ export default function App() {
     <div className={`app-container ${!currentUser ? 'login-bg-theme' : ''}`}>
       {/* HEADER NAVBAR */}
       <header className="header">
-        <div className="header-title-group" style={{ cursor: 'pointer' }} onClick={() => currentUser ? navigateTo('dashboard') : null}>
+        <div className="header-title-group" style={{ cursor: 'pointer' }} onClick={() => {
+          if (!currentUser) return;
+          if (currentUser.role === 'participant') {
+            navigateTo('my-yatra');
+          } else {
+            navigateTo('dashboard');
+          }
+        }}>
           <Compass className="logo-icon" />
           <div>
             <h1>{t('appName')}</h1>
@@ -4323,7 +4369,7 @@ export default function App() {
         {/* ======================================= */}
         {/* VIEW 2: ORGANIZER DASHBOARD */}
         {/* ======================================= */}
-        {currentRoute.path === 'dashboard' && currentUser && (() => {
+        {currentRoute.path === 'dashboard' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin') && (() => {
           const dashActiveYatras = yatras.filter(y => y.status !== 'completed');
           const dashActiveYatraIds = new Set(dashActiveYatras.map(y => y.id));
 
@@ -4785,7 +4831,7 @@ export default function App() {
         {/* ======================================= */}
         {/* VIEW 3: YATRA DETAIL WORKSPACE */}
         {/* ======================================= */}
-        {currentRoute.path === 'yatra' && selectedYatra && currentUser && (
+        {currentRoute.path === 'yatra' && selectedYatra && currentUser && (currentUser.role === 'admin' || currentUser.role === 'super_admin') && (
           <div>
             {/* SANDBOX SIMULATION BANNER */}
             {selectedYatra.isSandbox && (
@@ -7954,9 +8000,54 @@ export default function App() {
             {/* ======================================= */}
             {activeTab === 'photos' && (
               <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                  <h3>Shared Yatra Photos</h3>
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                  <div>
+                    <h3 style={{ margin: 0 }}>Shared Yatra Photos</h3>
+                    <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.25rem' }}>
+                      Devotee Uploads:{' '}
+                      {(() => {
+                        const isUnlocked = (() => {
+                          if (selectedYatra?.allowDevoteePhotoUploads === true) return true;
+                          if (selectedYatra?.allowDevoteePhotoUploads === false) return false;
+                          if (!selectedYatra?.startDate) return false;
+                          const parts = selectedYatra.startDate.split('-').map(Number);
+                          if (parts.length < 3 || isNaN(parts[0])) return false;
+                          const [year, month, day] = parts;
+                          const commencementDate = new Date(year, month - 1, day, 0, 0, 0);
+                          const unlockDate = new Date(commencementDate.getTime() - (24 * 60 * 60 * 1000));
+                          return new Date() >= unlockDate;
+                        })();
+                        return isUnlocked ? (
+                          <span style={{ color: '#16a34a', fontWeight: 600 }}>🟢 Unlocked (Devotees can upload)</span>
+                        ) : (
+                          <span style={{ color: '#b45309', fontWeight: 600 }}>🔒 Locked (Devotee uploads closed)</span>
+                        );
+                      })()}
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button 
+                      type="button" 
+                      className="btn btn-outline" 
+                      onClick={handleToggleDevoteePhotoUploads}
+                      title="Toggle devotee photo uploads on/off"
+                      style={{ fontSize: '0.82rem', padding: '0.45rem 0.75rem' }}
+                    >
+                      {(() => {
+                        const isUnlocked = (() => {
+                          if (selectedYatra?.allowDevoteePhotoUploads === true) return true;
+                          if (selectedYatra?.allowDevoteePhotoUploads === false) return false;
+                          if (!selectedYatra?.startDate) return false;
+                          const parts = selectedYatra.startDate.split('-').map(Number);
+                          if (parts.length < 3 || isNaN(parts[0])) return false;
+                          const [year, month, day] = parts;
+                          const commencementDate = new Date(year, month - 1, day, 0, 0, 0);
+                          const unlockDate = new Date(commencementDate.getTime() - (24 * 60 * 60 * 1000));
+                          return new Date() >= unlockDate;
+                        })();
+                        return isUnlocked ? '🔒 Lock Devotee Uploads' : '🔓 Unlock Devotee Uploads';
+                      })()}
+                    </button>
                     <button className="btn btn-outline" onClick={downloadAllPhotos}>
                       <Download size={16} /> Download All as ZIP
                     </button>
@@ -9444,12 +9535,14 @@ export default function App() {
                 {/* MY SHARED PHOTOS */}
                 <div className="card">
                   {(() => {
-                    // Photo uploads unlock 1 day prior to Yatra commencement date
+                    // Photo uploads unlock 1 day prior to Yatra commencement date OR when explicitly enabled by Admin
                     const isPhotoUploadUnlocked = (() => {
                       if (currentUser?.role === 'admin' || currentUser?.role === 'super_admin') return true;
-                      if (!selectedYatra?.startDate) return true;
+                      if (selectedYatra?.allowDevoteePhotoUploads === true) return true;
+                      if (selectedYatra?.allowDevoteePhotoUploads === false) return false;
+                      if (!selectedYatra?.startDate) return false;
                       const parts = selectedYatra.startDate.split('-').map(Number);
-                      if (parts.length < 3 || isNaN(parts[0])) return true;
+                      if (parts.length < 3 || isNaN(parts[0])) return false;
                       const [year, month, day] = parts;
                       const commencementDate = new Date(year, month - 1, day, 0, 0, 0);
                       const unlockDate = new Date(commencementDate.getTime() - (24 * 60 * 60 * 1000));
@@ -9457,7 +9550,7 @@ export default function App() {
                     })();
 
                     const unlockDateFormatted = (() => {
-                      if (!selectedYatra?.startDate) return '';
+                      if (!selectedYatra?.startDate) return 'commencement date';
                       const parts = selectedYatra.startDate.split('-').map(Number);
                       if (parts.length < 3 || isNaN(parts[0])) return selectedYatra.startDate;
                       const [year, month, day] = parts;
@@ -9487,6 +9580,11 @@ export default function App() {
                                 accept="image/*" 
                                 style={{ display: 'none' }} 
                                 onChange={(e) => {
+                                  if (!isPhotoUploadUnlocked) {
+                                    alert(`Photo uploads are currently locked for this Yatra.\n\nUploads unlock on ${unlockDateFormatted} (1 day prior to commencement) or when enabled by the organizer.`);
+                                    e.target.value = '';
+                                    return;
+                                  }
                                   if (e.target.files && e.target.files[0]) {
                                     handleImageUpload(e.target.files[0], async (base64) => {
                                       await db.addPhoto({
