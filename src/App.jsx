@@ -335,6 +335,7 @@ export default function App() {
   // Participants Tab Enhanced UI States
   const [participantViewMode, setParticipantViewMode] = useState('table'); // 'table' | 'cards'
   const [participantFilter, setParticipantFilter] = useState('all'); // 'all' | 'confirmed' | 'interested' | 'partially_paid' | 'completed'
+  const [paymentFilter, setPaymentFilter] = useState('all'); // 'all' | 'pending' | 'upi' | 'cash' | 'verified' | 'unpaid'
   const [participantSortOrder, setParticipantSortOrder] = useState('newest'); // 'newest' | 'oldest' | 'name' | 'seats'
   const [expandedParticipantId, setExpandedParticipantId] = useState(null);
 
@@ -3010,6 +3011,32 @@ export default function App() {
       paymentStatus: 'pending'
     };
     const updated = await db.updateParticipant(myParticipantData.id, updates);
+    // Sync cash promise into payments collection so it immediately reflects in the Payments Verification Desk
+    try {
+      const existingPays = await db.getPayments(selectedYatra.id);
+      const existingCash = (existingPays || []).find(p => p.participantId === myParticipantData.id && p.paymentMethod === 'cash' && p.status === 'pending_verification');
+      if (existingCash) {
+        await db.updatePayment(existingCash.id, {
+          amountPaid: cleanAmount,
+          paymentDate: devoteeCashPromiseDate,
+          transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED'
+        });
+      } else {
+        await db.addPayment({
+          id: 'pay_' + Math.random().toString(36).substring(2, 9),
+          yatraId: selectedYatra.id,
+          participantId: myParticipantData.id,
+          amountPaid: cleanAmount,
+          paymentMethod: 'cash',
+          transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED',
+          paymentDate: devoteeCashPromiseDate,
+          screenshotUrl: '',
+          status: 'pending_verification'
+        });
+      }
+    } catch (paySyncErr) {
+      console.warn("Could not sync cash payment record", paySyncErr);
+    }
     await recordAudit({
       yatraId: selectedYatra.id,
       yatraTitle: selectedYatra.name,
@@ -7653,217 +7680,490 @@ export default function App() {
             {/* ======================================= */}
             {/* TAB: PAYMENTS */}
             {/* ======================================= */}
-            {activeTab === 'payments' && (
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
-                  <div>
-                    <h3 style={{ margin: 0 }}>Payment Verification Desk</h3>
-                    <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
-                      Verify devotee UPI receipts and cash commitments. Configure payment deadlines and toggle online UPI payment acceptance.
-                    </p>
+            {activeTab === 'payments' && (() => {
+              // 1. Unified Payments List: Merge payments collection with dynamic devotee cash commitments
+              const allDevoteePayments = (() => {
+                const list = [...(payments || [])];
+                const existingPartIds = new Set(list.map(p => p.participantId));
+                participants.forEach(part => {
+                  if (part.cashPromiseDate && !existingPartIds.has(part.id)) {
+                    const split = expCalc.splits.find(s => s.id === part.id);
+                    if (split?.dynamicPaymentStatus !== 'completed') {
+                      list.push({
+                        id: 'promise_' + part.id,
+                        participantId: part.id,
+                        yatraId: selectedYatra.id,
+                        amountPaid: part.cashPromiseAmount || split?.share || 2500,
+                        paymentMethod: 'cash',
+                        transactionRef: part.cashPromiseNotes ? `CASH PROMISED: ${part.cashPromiseNotes}` : 'CASH PAYMENT PROMISED',
+                        paymentDate: part.cashPromiseDate,
+                        screenshotUrl: '',
+                        status: 'pending_verification',
+                        isVirtualPromise: true
+                      });
+                    }
+                  }
+                });
+                return list;
+              })();
+
+              // 2. Financial Metrics & Totals
+              const totalExpected = expCalc.splits
+                .filter(s => s.dynamicDevoteeStatus !== 'cancelled')
+                .reduce((sum, s) => sum + (s.share || 0), 0);
+
+              const totalVerified = payments
+                .filter(pay => pay.status === 'verified')
+                .reduce((sum, pay) => sum + (pay.amountPaid || 0), 0);
+
+              const pendingUpiList = allDevoteePayments.filter(p => p.paymentMethod === 'upi' && p.status === 'pending_verification');
+              const pendingUpiAmount = pendingUpiList.reduce((sum, p) => sum + (p.amountPaid || 0), 0);
+
+              const cashPromisedList = allDevoteePayments.filter(p => p.paymentMethod === 'cash' && p.status === 'pending_verification');
+              const cashPromisedAmount = cashPromisedList.reduce((sum, p) => sum + (p.amountPaid || 0), 0);
+
+              const verifiedList = allDevoteePayments.filter(p => p.status === 'verified');
+
+              const unpaidParticipants = expCalc.splits.filter(s => {
+                if (s.dynamicDevoteeStatus === 'cancelled') return false;
+                const hasPendingPayment = allDevoteePayments.some(p => p.participantId === s.id && p.status !== 'rejected');
+                return s.dynamicPaymentStatus === 'pending' && !hasPendingPayment;
+              });
+              const unpaidBalance = Math.max(0, totalExpected - totalVerified);
+
+              // 3. Tab Filter logic
+              let tabFiltered = allDevoteePayments;
+              if (paymentFilter === 'pending') {
+                tabFiltered = allDevoteePayments.filter(p => p.status === 'pending_verification');
+              } else if (paymentFilter === 'upi') {
+                tabFiltered = allDevoteePayments.filter(p => p.paymentMethod === 'upi');
+              } else if (paymentFilter === 'cash') {
+                tabFiltered = allDevoteePayments.filter(p => p.paymentMethod === 'cash');
+              } else if (paymentFilter === 'verified') {
+                tabFiltered = allDevoteePayments.filter(p => p.status === 'verified');
+              }
+
+              // 4. Search Filter
+              const searchedPayments = filterList(tabFiltered, ['transactionRef', 'amountPaid', 'paymentDate', 'paymentMethod', 'status'], (pay, q, qDigits) => {
+                const partObj = participants.find(p => p.id === pay.participantId);
+                if (partObj) {
+                  if (partObj.name && partObj.name.toLowerCase().includes(q)) return true;
+                  if (partObj.phone && (partObj.phone.toLowerCase().includes(q) || (qDigits && qDigits.length >= 3 && partObj.phone.replace(/[^0-9]/g, '').includes(qDigits)))) return true;
+                  if (partObj.familyName && partObj.familyName.toLowerCase().includes(q)) return true;
+                  if (partObj.location && partObj.location.toLowerCase().includes(q)) return true;
+                  if (partObj.city && partObj.city.toLowerCase().includes(q)) return true;
+                }
+                return false;
+              });
+
+              return (
+                <div>
+                  {/* HEADER */}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap', gap: '1rem', marginBottom: '1.25rem' }}>
+                    <div>
+                      <h3 style={{ margin: 0 }}>Payment Verification Desk</h3>
+                      <p style={{ color: 'var(--text-muted)', fontSize: '0.85rem', marginTop: '0.25rem' }}>
+                        Verify devotee UPI receipts, track cash commitments, configure payment deadlines, and record received contributions.
+                      </p>
+                    </div>
+                    <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                      <button 
+                        type="button"
+                        className="btn btn-primary"
+                        style={{ fontSize: '0.82rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                        onClick={() => {
+                          const input = window.prompt("Record Cash Payment Received:\nEnter Devotee Name or 10-digit Mobile Number:");
+                          if (!input) return;
+                          const clean = input.trim().toLowerCase();
+                          const cleanDigits = clean.replace(/\D/g, '');
+                          const found = participants.find(p => 
+                            (p.name && p.name.toLowerCase().includes(clean)) ||
+                            (cleanDigits.length >= 4 && p.phone && p.phone.replace(/\D/g, '').includes(cleanDigits))
+                          );
+                          if (!found) {
+                            alert(`No devotee found matching "${input}". Please check the name or phone number.`);
+                            return;
+                          }
+                          const split = expCalc.splits.find(s => s.id === found.id);
+                          handleAdminReceiveCash(found, split ? (split.balance > 0 ? split.balance : split.share) : 2500);
+                        }}
+                      >
+                        <Plus size={15} /> Record Cash Received
+                      </button>
+                    </div>
                   </div>
-                </div>
 
-                {/* Admin Payment Acceptance & Deadline Control Card */}
-                {selectedYatra && (() => {
-                  const currentDeadline = getYatraPaymentDeadline(selectedYatra);
-                  const isPassed = isPaymentDeadlinePassed(selectedYatra);
-                  const upiAllowed = isUpiPaymentAllowed(selectedYatra);
+                  {/* DEADLINE CONTROL CARD */}
+                  {selectedYatra && (() => {
+                    const currentDeadline = getYatraPaymentDeadline(selectedYatra);
+                    const upiAllowed = isUpiPaymentAllowed(selectedYatra);
 
-                  return (
-                    <div className="card" style={{ padding: '1.15rem 1.25rem', marginBottom: '1.5rem', borderLeft: `4px solid ${upiAllowed ? 'var(--success)' : 'var(--danger)'}`, backgroundColor: 'var(--card-bg)' }}>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1.25rem' }}>
-                        <div>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
-                            <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                              Payment Acceptance Deadline:
-                            </span>
-                            <span style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--primary)' }}>
-                              📅 {formatDeadlineText(currentDeadline)} (11:59 PM)
-                            </span>
-                            <span className={`badge ${upiAllowed ? 'badge-confirmed' : 'badge-danger'}`} style={{ fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
-                              {upiAllowed ? '🟢 UPI Payments Active' : '🔴 UPI Payments Closed'}
-                            </span>
-                            {selectedYatra.allowUpiPastDeadline && (
-                              <span className="badge badge-warning" style={{ fontSize: '0.72rem' }}>
-                                ⚡ Admin Override Active
+                    return (
+                      <div className="card" style={{ padding: '1.15rem 1.25rem', marginBottom: '1.25rem', borderLeft: `4px solid ${upiAllowed ? 'var(--success)' : 'var(--danger)'}`, backgroundColor: 'var(--card-bg)' }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1.25rem' }}>
+                          <div>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem', flexWrap: 'wrap' }}>
+                              <span style={{ fontSize: '0.82rem', fontWeight: 600, color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                                Payment Acceptance Deadline:
                               </span>
-                            )}
+                              <span style={{ fontSize: '1.15rem', fontWeight: 800, color: 'var(--primary)' }}>
+                                📅 {formatDeadlineText(currentDeadline)} (11:59 PM)
+                              </span>
+                              <span className={`badge ${upiAllowed ? 'badge-confirmed' : 'badge-danger'}`} style={{ fontSize: '0.78rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}>
+                                {upiAllowed ? '🟢 UPI Payments Active' : '🔴 UPI Payments Closed'}
+                              </span>
+                              {selectedYatra.allowUpiPastDeadline && (
+                                <span className="badge badge-warning" style={{ fontSize: '0.72rem' }}>
+                                  ⚡ Admin Override Active
+                                </span>
+                              )}
+                            </div>
+                            <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.35rem 0 0', lineHeight: '1.45' }}>
+                              {upiAllowed 
+                                ? `Online UPI payments and cash promise dates are currently accepted until ${formatDeadlineText(currentDeadline)}, 11:59 PM.`
+                                : `Payment deadline has passed (or UPI disabled). UPI payments are closed for devotees. Extend the date below or toggle UPI back on.`}
+                            </p>
                           </div>
-                          <p style={{ fontSize: '0.82rem', color: 'var(--text-muted)', margin: '0.35rem 0 0', lineHeight: '1.45' }}>
-                            {upiAllowed 
-                              ? `Online UPI payments and cash promise dates are currently accepted until ${formatDeadlineText(currentDeadline)}, 11:59 PM.`
-                              : `Payment deadline has passed (or UPI disabled). UPI payments are closed for devotees. Extend the date below or toggle UPI back on.`}
-                          </p>
-                        </div>
 
-                        {/* Admin Controls */}
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
-                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: 'var(--bg)', padding: '0.35rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
-                            <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)' }}>Extend Deadline:</span>
-                            <input 
-                              type="date" 
-                              className="form-control" 
-                              style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', width: 'auto' }}
-                              value={adminEditingPaymentDeadline || currentDeadline}
-                              onChange={(e) => setAdminEditingPaymentDeadline(e.target.value)}
-                            />
+                          {/* Admin Controls */}
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', backgroundColor: 'var(--bg)', padding: '0.35rem 0.6rem', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)' }}>
+                              <span style={{ fontSize: '0.78rem', fontWeight: 600, color: 'var(--text-muted)' }}>Extend Deadline:</span>
+                              <input 
+                                type="date" 
+                                className="form-control" 
+                                style={{ fontSize: '0.8rem', padding: '0.25rem 0.5rem', width: 'auto' }}
+                                value={adminEditingPaymentDeadline || currentDeadline}
+                                onChange={(e) => setAdminEditingPaymentDeadline(e.target.value)}
+                              />
+                              <button 
+                                type="button"
+                                className="btn btn-primary" 
+                                style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', fontWeight: 600 }}
+                                onClick={() => {
+                                  const newDate = adminEditingPaymentDeadline || currentDeadline;
+                                  handleUpdatePaymentDeadline(newDate);
+                                }}
+                              >
+                                Save Date
+                              </button>
+                            </div>
+
                             <button 
                               type="button"
-                              className="btn btn-primary" 
-                              style={{ padding: '0.3rem 0.75rem', fontSize: '0.78rem', fontWeight: 600 }}
-                              onClick={() => {
-                                const newDate = adminEditingPaymentDeadline || currentDeadline;
-                                handleUpdatePaymentDeadline(newDate);
+                              className={`btn ${upiAllowed ? 'btn-outline' : 'btn-primary'}`} 
+                              style={{ 
+                                padding: '0.45rem 0.9rem', 
+                                fontSize: '0.8rem', 
+                                fontWeight: 600,
+                                borderColor: upiAllowed ? 'var(--danger)' : 'var(--success)',
+                                color: upiAllowed ? 'var(--danger)' : 'white',
+                                backgroundColor: upiAllowed ? 'transparent' : 'var(--success)'
                               }}
+                              onClick={handleToggleUpiAcceptance}
+                              title={upiAllowed ? 'Disable UPI payments immediately' : 'Re-open UPI payments for devotees'}
                             >
-                              Save Date
+                              {upiAllowed ? '🔒 Disable UPI Payments' : '🔓 Re-open / Enable UPI'}
                             </button>
                           </div>
-
-                          <button 
-                            type="button"
-                            className={`btn ${upiAllowed ? 'btn-outline' : 'btn-primary'}`} 
-                            style={{ 
-                              padding: '0.45rem 0.9rem', 
-                              fontSize: '0.8rem', 
-                              fontWeight: 600,
-                              borderColor: upiAllowed ? 'var(--danger)' : 'var(--success)',
-                              color: upiAllowed ? 'var(--danger)' : 'white',
-                              backgroundColor: upiAllowed ? 'transparent' : 'var(--success)'
-                            }}
-                            onClick={handleToggleUpiAcceptance}
-                            title={upiAllowed ? 'Disable UPI payments immediately' : 'Re-open UPI payments for devotees'}
-                          >
-                            {upiAllowed ? '🔒 Disable UPI Payments' : '🔓 Re-open / Enable UPI'}
-                          </button>
                         </div>
                       </div>
-                    </div>
-                  );
-                })()}
-                <div className="table-container">
-                  <table>
-                    <thead>
-                      <tr>
-                        <th>Participant</th>
-                        <th>Amount</th>
-                        <th>Method</th>
-                        <th>Transaction Ref</th>
-                        <th>Date Paid</th>
-                        <th>Proof Receipt</th>
-                        <th>Verification Status</th>
-                        <th>Quick Verification Action</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {(() => {
-                        const filteredPayments = filterList(payments, ['transactionRef', 'amountPaid', 'paymentDate', 'paymentMethod', 'status'], (pay, q, qDigits) => {
-                          const partObj = participants.find(p => p.id === pay.participantId);
-                          if (partObj) {
-                            if (partObj.name && partObj.name.toLowerCase().includes(q)) return true;
-                            if (partObj.phone && (partObj.phone.toLowerCase().includes(q) || (qDigits && qDigits.length >= 3 && partObj.phone.replace(/[^0-9]/g, '').includes(qDigits)))) return true;
-                            if (partObj.familyName && partObj.familyName.toLowerCase().includes(q)) return true;
-                            if (partObj.location && partObj.location.toLowerCase().includes(q)) return true;
-                            if (partObj.city && partObj.city.toLowerCase().includes(q)) return true;
-                          }
-                          return false;
-                        });
+                    );
+                  })()}
 
-                        return (
-                          <>
-                            {filteredPayments.length === 0 && (
-                              <tr>
-                                <td colSpan={8} style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
-                                  <Search size={36} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
-                                  <div>No payments found matching "{searchQuery}".</div>
-                                  {searchQuery && (
-                                    <button className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', marginTop: '0.5rem' }} onClick={() => setSearchQuery('')}>
-                                      Clear Search
-                                    </button>
-                                  )}
-                                </td>
-                              </tr>
-                            )}
-                            {filteredPayments.map(pay => {
+                  {/* 5 KPI STAT CARDS */}
+                  <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: '0.85rem', marginBottom: '1.25rem' }}>
+                    <div className="card" style={{ padding: '0.9rem 1rem', borderLeft: '3.5px solid var(--primary)' }}>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Target Expected</div>
+                      <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--text-main)', marginTop: '0.25rem' }}>₹{totalExpected.toLocaleString()}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>From {participants.filter(p => !p.isDeleted && p.status !== 'cancelled').length} registered devotees</div>
+                    </div>
+
+                    <div className="card" style={{ padding: '0.9rem 1rem', borderLeft: '3.5px solid var(--success)' }}>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Verified Collected</div>
+                      <div style={{ fontSize: '1.35rem', fontWeight: 800, color: 'var(--success)', marginTop: '0.25rem' }}>₹{totalVerified.toLocaleString()}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{verifiedList.length} verified payment{verifiedList.length === 1 ? '' : 's'}</div>
+                    </div>
+
+                    <div className="card" style={{ padding: '0.9rem 1rem', borderLeft: '3.5px solid #0284c7' }}>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Pending UPI Proofs</div>
+                      <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#0284c7', marginTop: '0.25rem' }}>₹{pendingUpiAmount.toLocaleString()}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{pendingUpiList.length} receipt{pendingUpiList.length === 1 ? '' : 's'} to verify</div>
+                    </div>
+
+                    <div className="card" style={{ padding: '0.9rem 1rem', borderLeft: '3.5px solid #d97706' }}>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Cash Commitments</div>
+                      <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#d97706', marginTop: '0.25rem' }}>₹{cashPromisedAmount.toLocaleString()}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{cashPromisedList.length} devotee{cashPromisedList.length === 1 ? '' : 's'} promised</div>
+                    </div>
+
+                    <div className="card" style={{ padding: '0.9rem 1rem', borderLeft: '3.5px solid #dc2626' }}>
+                      <div style={{ fontSize: '0.74rem', color: 'var(--text-muted)', fontWeight: 600, textTransform: 'uppercase' }}>Unpaid Balance</div>
+                      <div style={{ fontSize: '1.35rem', fontWeight: 800, color: '#dc2626', marginTop: '0.25rem' }}>₹{unpaidBalance.toLocaleString()}</div>
+                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{unpaidParticipants.length} unpaid devotee{unpaidParticipants.length === 1 ? '' : 's'}</div>
+                    </div>
+                  </div>
+
+                  {/* FILTER PILLS BAR */}
+                  <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '1.25rem', flexWrap: 'wrap', alignItems: 'center' }}>
+                    <button 
+                      type="button" 
+                      className={`btn ${paymentFilter === 'all' ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', fontWeight: 600 }}
+                      onClick={() => setPaymentFilter('all')}
+                    >
+                      All Transactions ({allDevoteePayments.length})
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`btn ${paymentFilter === 'pending' ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', fontWeight: 600, borderColor: paymentFilter === 'pending' ? '' : '#f59e0b', color: paymentFilter === 'pending' ? '' : '#b45309' }}
+                      onClick={() => setPaymentFilter('pending')}
+                    >
+                      ⏳ Pending Verification ({pendingUpiList.length + cashPromisedList.length})
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`btn ${paymentFilter === 'upi' ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', fontWeight: 600, borderColor: paymentFilter === 'upi' ? '' : '#0284c7', color: paymentFilter === 'upi' ? '' : '#0369a1' }}
+                      onClick={() => setPaymentFilter('upi')}
+                    >
+                      📱 UPI ({allDevoteePayments.filter(p => p.paymentMethod === 'upi').length})
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`btn ${paymentFilter === 'cash' ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', fontWeight: 600, borderColor: paymentFilter === 'cash' ? '' : '#d97706', color: paymentFilter === 'cash' ? '' : '#b45309' }}
+                      onClick={() => setPaymentFilter('cash')}
+                    >
+                      💵 Cash Promises ({cashPromisedList.length})
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`btn ${paymentFilter === 'verified' ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', fontWeight: 600, borderColor: paymentFilter === 'verified' ? '' : '#10b981', color: paymentFilter === 'verified' ? '' : '#059669' }}
+                      onClick={() => setPaymentFilter('verified')}
+                    >
+                      ✓ Verified ({verifiedList.length})
+                    </button>
+                    <button 
+                      type="button" 
+                      className={`btn ${paymentFilter === 'unpaid' ? 'btn-primary' : 'btn-outline'}`}
+                      style={{ padding: '0.35rem 0.75rem', fontSize: '0.8rem', fontWeight: 600, borderColor: paymentFilter === 'unpaid' ? '' : '#ef4444', color: paymentFilter === 'unpaid' ? '' : '#dc2626' }}
+                      onClick={() => setPaymentFilter('unpaid')}
+                    >
+                      ⚠️ Unpaid Devotees ({unpaidParticipants.length})
+                    </button>
+                  </div>
+
+                  {paymentFilter === 'unpaid' ? (
+                    <div className="table-container">
+                      <table style={{ minWidth: '850px' }}>
+                        <thead>
+                          <tr>
+                            <th>Devotee</th>
+                            <th>Billable Seats</th>
+                            <th>Total Amount Due</th>
+                            <th>Mobile</th>
+                            <th>Registration Date</th>
+                            <th>Quick Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {unpaidParticipants.length === 0 ? (
+                            <tr>
+                              <td colSpan={6} style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+                                🎉 All registered devotees have submitted payment proofs or promised cash!
+                              </td>
+                            </tr>
+                          ) : (
+                            unpaidParticipants.map(split => {
+                              const part = participants.find(p => p.id === split.id) || split;
+                              return (
+                                <tr key={split.id}>
+                                  <td>
+                                    <strong>{part.name}</strong>
+                                    {part.familyName && <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', margin: 0 }}>Family: {part.familyName}</p>}
+                                  </td>
+                                  <td>{split.billableCount || 1} {split.billableCount > 1 ? 'members' : 'devotee'}</td>
+                                  <td><strong style={{ color: 'var(--danger)', fontSize: '1rem' }}>₹{(split.share || 2500).toLocaleString()}</strong></td>
+                                  <td>{part.phone || 'N/A'}</td>
+                                  <td>{part.registeredAt ? part.registeredAt.split('T')[0] : 'N/A'}</td>
+                                  <td>
+                                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
+                                      <button 
+                                        type="button"
+                                        className="btn btn-outline" 
+                                        style={{ padding: '0.35rem 0.55rem', fontSize: '0.75rem', color: 'var(--success)', borderColor: 'var(--success-border)', backgroundColor: 'var(--success-light)' }}
+                                        onClick={() => handleAdminReceiveCash(part, split.share || 2500)}
+                                      >
+                                        💵 Record Cash
+                                      </button>
+                                      {part.phone && (
+                                        <button 
+                                          type="button"
+                                          className="btn btn-outline" 
+                                          style={{ padding: '0.35rem 0.55rem', fontSize: '0.75rem', color: '#16a34a', borderColor: '#86efac' }}
+                                          onClick={() => {
+                                            const payLink = `${window.location.origin}${window.location.pathname}#/payment/${part.id}`;
+                                            const msg = `Hare Krishna ${part.name} Ji! 🙏 Please complete your payment contribution of ₹${(split.share || 2500).toLocaleString()} for ${selectedYatra.name}. Pay securely online or commit cash here: ${payLink}`;
+                                            window.open(`https://wa.me/${part.phone.replace(/[^0-9]/g, '')}?text=${encodeURIComponent(msg)}`, '_blank');
+                                          }}
+                                          title="Send WhatsApp Payment Link"
+                                        >
+                                          <MessageSquare size={13} /> WhatsApp Link
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="table-container">
+                      <table style={{ minWidth: '950px' }}>
+                        <thead>
+                          <tr>
+                            <th>Participant</th>
+                            <th>Amount</th>
+                            <th>Method</th>
+                            <th>Transaction Ref / Note</th>
+                            <th>Payment Date</th>
+                            <th>Proof / Receipt</th>
+                            <th>Verification Status</th>
+                            <th>Quick Verification Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {searchedPayments.length === 0 ? (
+                            <tr>
+                              <td colSpan={8} style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
+                                <Search size={36} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
+                                <div>No records found {searchQuery ? `matching "${searchQuery}"` : `under "${paymentFilter}" filter`}.</div>
+                                {searchQuery && (
+                                  <button className="btn btn-outline" style={{ fontSize: '0.8rem', padding: '0.35rem 0.75rem', marginTop: '0.5rem' }} onClick={() => setSearchQuery('')}>
+                                    Clear Search
+                                  </button>
+                                )}
+                              </td>
+                            </tr>
+                          ) : (
+                            searchedPayments.map(pay => {
                               const partObj = participants.find(p => p.id === pay.participantId) || { name: 'Unknown Devotee' };
                               return (
-                          <tr key={pay.id}>
-                            <td>
-                              <strong>{partObj.name}</strong>
-                              <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>ID: {pay.participantId}</p>
-                            </td>
-                            <td><strong style={{ fontSize: '1.05rem', color: 'var(--success)' }}>₹{pay.amountPaid}</strong></td>
-                            <td>
-                              <span style={{
-                                display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
-                                backgroundColor: pay.paymentMethod === 'cash' ? 'var(--success-light)' : 'var(--primary-light)',
-                                color: pay.paymentMethod === 'cash' ? 'var(--success)' : 'var(--primary)',
-                                padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.78rem', fontWeight: '600', textTransform: 'uppercase'
-                              }}>
-                                {pay.paymentMethod === 'cash' ? '💵 Cash' : '📱 UPI'}
-                              </span>
-                            </td>
-                            <td><code>{pay.transactionRef}</code></td>
-                            <td>{pay.paymentDate}</td>
-                            <td>
-                              {pay.screenshotUrl ? (
-                                <a href={pay.screenshotUrl} target="_blank" rel="noopener noreferrer">
-                                  <img src={pay.screenshotUrl} alt="Receipt proof" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border)' }} />
-                                </a>
-                              ) : pay.paymentMethod === 'cash' ? (
-                                <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', backgroundColor: 'var(--success-light)', color: 'var(--success)', padding: '0.25rem 0.6rem', borderRadius: '4px', fontSize: '0.78rem', fontWeight: '600' }}>
-                                  💵 Cash Payment
-                                </span>
-                              ) : (
-                                <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No screenshot</span>
-                              )}
-                            </td>
-                            <td>
-                              <span className="badge" style={{ 
-                                backgroundColor: pay.status === 'verified' ? 'var(--success-light)' : pay.status === 'rejected' ? 'var(--danger-light)' : 'var(--warning-light)',
-                                color: pay.status === 'verified' ? 'var(--success)' : pay.status === 'rejected' ? 'var(--danger)' : 'var(--warning)'
-                              }}>
-                                {pay.status.replace('_', ' ')}
-                              </span>
-                            </td>
-                            <td>
-                              <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
-                                {pay.status !== 'verified' ? (
-                                  <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', color: 'var(--success)', borderColor: 'var(--success-border)', backgroundColor: 'var(--success-light)' }} onClick={() => verifyPayment(pay.id, pay.participantId, 'verified')}>
-                                    <Check size={14} /> Verify
-                                  </button>
-                                ) : (
-                                  <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: '600' }}>✓ Verified</span>
-                                )}
-                                {partObj && partObj.phone && (
-                                  <button
-                                    className="btn btn-outline"
-                                    style={{ padding: '0.35rem 0.5rem', color: '#16a34a', borderColor: '#86efac', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem' }}
-                                    onClick={() => sendWhatsApp(partObj, 'payment_verified', { amount: pay.amountPaid })}
-                                    title="Send WhatsApp Confirmation Receipt"
-                                  >
-                                    <MessageSquare size={13} /> WhatsApp
-                                  </button>
-                                )}
-                                {pay.status !== 'rejected' && (
-                                  <button className="btn btn-outline" style={{ padding: '0.35rem 0.5rem', color: 'var(--danger)', borderColor: 'hsla(350,80%,55%,0.2)', backgroundColor: 'var(--danger-light)' }} onClick={() => verifyPayment(pay.id, pay.participantId, 'rejected')}>
-                                    <X size={14} /> Reject
-                                  </button>
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </>
-                  );
-                })()}
-              </tbody>
-                  </table>
+                                <tr key={pay.id}>
+                                  <td>
+                                    <strong>{partObj.name}</strong>
+                                    <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>{partObj.phone || `ID: ${pay.participantId}`}</p>
+                                  </td>
+                                  <td><strong style={{ fontSize: '1.05rem', color: 'var(--success)' }}>₹{(pay.amountPaid || 0).toLocaleString()}</strong></td>
+                                  <td>
+                                    <span style={{
+                                      display: 'inline-flex', alignItems: 'center', gap: '0.25rem',
+                                      backgroundColor: pay.paymentMethod === 'cash' ? '#fef3c7' : 'var(--primary-light)',
+                                      color: pay.paymentMethod === 'cash' ? '#b45309' : 'var(--primary)',
+                                      padding: '0.2rem 0.5rem', borderRadius: '4px', fontSize: '0.78rem', fontWeight: '600'
+                                    }}>
+                                      {pay.paymentMethod === 'cash' ? (pay.status === 'verified' ? '💵 Cash Received' : '💵 Cash Promised') : '📱 Online UPI'}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <code style={{ fontSize: '0.78rem' }}>{pay.transactionRef || 'N/A'}</code>
+                                  </td>
+                                  <td>
+                                    <span>{pay.paymentDate || 'N/A'}</span>
+                                    {pay.paymentMethod === 'cash' && pay.status !== 'verified' && pay.paymentDate && new Date(pay.paymentDate) < new Date(new Date().setHours(0,0,0,0)) && (
+                                      <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--danger)', fontWeight: 600 }}>⚠️ Overdue</span>
+                                    )}
+                                  </td>
+                                  <td>
+                                    {pay.screenshotUrl ? (
+                                      <a href={pay.screenshotUrl} target="_blank" rel="noopener noreferrer">
+                                        <img src={pay.screenshotUrl} alt="Receipt proof" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border)' }} />
+                                      </a>
+                                    ) : pay.paymentMethod === 'cash' ? (
+                                      <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', backgroundColor: '#fef3c7', color: '#b45309', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: '600' }}>
+                                        💵 Handover Commitment
+                                      </span>
+                                    ) : (
+                                      <span style={{ color: 'var(--text-muted)', fontSize: '0.8rem' }}>No screenshot</span>
+                                    )}
+                                  </td>
+                                  <td>
+                                    <span className="badge" style={{ 
+                                      backgroundColor: pay.status === 'verified' ? 'var(--success-light)' : pay.status === 'rejected' ? 'var(--danger-light)' : 'var(--warning-light)',
+                                      color: pay.status === 'verified' ? 'var(--success)' : pay.status === 'rejected' ? 'var(--danger)' : 'var(--warning)'
+                                    }}>
+                                      {pay.status === 'verified' ? '✓ Verified' : pay.status === 'rejected' ? '✕ Rejected' : '⏳ Pending Verification'}
+                                    </span>
+                                  </td>
+                                  <td>
+                                    <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                                      {pay.status !== 'verified' ? (
+                                        <button 
+                                          type="button"
+                                          className="btn btn-outline" 
+                                          style={{ padding: '0.35rem 0.55rem', color: 'var(--success)', borderColor: 'var(--success-border)', backgroundColor: 'var(--success-light)', fontSize: '0.78rem', fontWeight: 600 }} 
+                                          onClick={() => {
+                                            if (pay.isVirtualPromise) {
+                                              const part = participants.find(p => p.id === pay.participantId);
+                                              if (part) handleAdminReceiveCash(part, pay.amountPaid);
+                                            } else {
+                                              verifyPayment(pay.id, pay.participantId, 'verified');
+                                            }
+                                          }}
+                                          title={pay.paymentMethod === 'cash' ? 'Confirm cash collection from devotee' : 'Verify UPI payment receipt'}
+                                        >
+                                          <Check size={14} /> {pay.paymentMethod === 'cash' ? 'Receive Cash & Confirm' : 'Verify UPI'}
+                                        </button>
+                                      ) : (
+                                        <span style={{ fontSize: '0.75rem', color: 'var(--success)', fontWeight: '600' }}>✓ Verified</span>
+                                      )}
+                                      {partObj && partObj.phone && (
+                                        <button
+                                          type="button"
+                                          className="btn btn-outline"
+                                          style={{ padding: '0.35rem 0.5rem', color: '#16a34a', borderColor: '#86efac', display: 'inline-flex', alignItems: 'center', gap: '0.25rem', fontSize: '0.75rem' }}
+                                          onClick={() => sendWhatsApp(partObj, 'payment_verified', { amount: pay.amountPaid })}
+                                          title="Send WhatsApp Confirmation Receipt"
+                                        >
+                                          <MessageSquare size={13} /> WhatsApp
+                                        </button>
+                                      )}
+                                      {pay.status !== 'rejected' && (
+                                        <button 
+                                          type="button"
+                                          className="btn btn-outline" 
+                                          style={{ padding: '0.35rem 0.5rem', color: 'var(--danger)', borderColor: 'hsla(350,80%,55%,0.2)', backgroundColor: 'var(--danger-light)' }} 
+                                          onClick={() => {
+                                            if (pay.isVirtualPromise) {
+                                              db.updateParticipant(pay.participantId, { cashPromiseDate: null, cashPromiseAmount: null, paymentStatus: 'pending' }).then(() => setRefreshTrigger(prev => prev + 1));
+                                            } else {
+                                              verifyPayment(pay.id, pay.participantId, 'rejected');
+                                            }
+                                          }}
+                                          title="Reject this payment proof"
+                                        >
+                                          <X size={14} /> Reject
+                                        </button>
+                                      )}
+                                    </div>
+                                  </td>
+                                </tr>
+                              );
+                            })
+                          )}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
                 </div>
-              </div>
-            )}
+              );
+            })()}
 
             {/* ======================================= */}
             {/* TAB: EXPENSE SPLITTER */}
