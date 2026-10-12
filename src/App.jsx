@@ -79,6 +79,7 @@ export default function App() {
 
   // Strict Super Admin authorization check (strictly exclusive to Super Admin)
   const isSuperAdmin = currentUser?.role === 'super_admin' || currentUser?.email?.toLowerCase() === 'rohit.wadhwani83@gmail.com';
+  const isOrganizer = currentUser?.role === 'admin' || currentUser?.role === 'super_admin';
   const [firebaseConfig, setFirebaseConfig] = useState('');
   const [isFirebaseConnected, setIsFirebaseConnected] = useState(db.isFirebaseReady);
 
@@ -591,10 +592,11 @@ export default function App() {
     window.location.hash = id ? `#/${path}/${id}` : `#/${path}`;
   };
 
-  // Role-based route protection: participants cannot access organizer routes (dashboard, yatra workspace)
+  // Role-based route protection: participants are strictly confined to devotee routes (my-yatra, payment, register)
   useEffect(() => {
     if (currentUser && currentUser.role === 'participant') {
-      if (currentRoute.path === 'dashboard' || currentRoute.path === 'yatra') {
+      const allowed = ['my-yatra', 'payment', 'register'];
+      if (!allowed.includes(currentRoute.path)) {
         navigateTo('my-yatra');
       }
     }
@@ -1158,6 +1160,7 @@ export default function App() {
   // --- CRUD Operation Triggers ---
   const handleCreateYatra = async (e) => {
     e.preventDefault();
+    if (!isOrganizer) return;
     const actor = getCurrentActor();
     if (editingYatraId) {
       await db.updateYatra(editingYatraId, newYatra);
@@ -1189,7 +1192,7 @@ export default function App() {
 
   // --- Payment Deadline & UPI Acceptance Quick Controls ---
   const handleUpdatePaymentDeadline = async (newDate) => {
-    if (!newDate || !selectedYatra) return;
+    if (!isOrganizer || !newDate || !selectedYatra) return;
     const actor = getCurrentActor();
     const updated = await db.updateYatra(selectedYatra.id, { paymentDeadline: newDate });
     setSelectedYatra(updated);
@@ -1206,7 +1209,7 @@ export default function App() {
   };
 
   const handleToggleUpiAcceptance = async () => {
-    if (!selectedYatra) return;
+    if (!isOrganizer || !selectedYatra) return;
     const actor = getCurrentActor();
     const currentAllowed = isUpiPaymentAllowed(selectedYatra);
     const newOverride = !currentAllowed;
@@ -1229,7 +1232,7 @@ export default function App() {
   };
 
   const handleToggleDevoteePhotoUploads = async () => {
-    if (!selectedYatra) return;
+    if (!isOrganizer || !selectedYatra) return;
     const actor = getCurrentActor();
     const currentlyUnlocked = (() => {
       if (selectedYatra.allowDevoteePhotoUploads === true) return true;
@@ -1260,7 +1263,7 @@ export default function App() {
 
   // --- Universal Stage Change Reconfirmation Guard ---
   const handleStageChange = async (targetStage) => {
-    if (!selectedYatra || selectedYatra.status === targetStage) return;
+    if (!isOrganizer || !selectedYatra || selectedYatra.status === targetStage) return;
 
     let confirmMsg = '';
     if (targetStage === 'registration_open') {
@@ -1299,6 +1302,7 @@ export default function App() {
   };
 
   const handlePurgeSandbox = async (sandboxYatraId) => {
+    if (!isOrganizer) return;
     if (window.confirm("Are you sure you want to purge and delete this Sandbox Test Yatra? All mock devotees, buses, hotels, and rooms in this sandbox will be permanently deleted.")) {
       try {
         // 1. Delete all participants of this sandbox
@@ -1346,6 +1350,7 @@ export default function App() {
   };
 
   const handleCreateSandboxYatra = async () => {
+    if (!isOrganizer) return;
     const sandboxId = 'sandbox_' + Date.now();
     
     // 1. Create Sandbox Yatra
@@ -1676,6 +1681,7 @@ export default function App() {
   };
 
   const handleDeleteYatra = async (yatraId) => {
+    if (!isOrganizer) return;
     const targetYatra = yatras.find(y => y.id === yatraId);
     if (targetYatra?.isSandbox) {
       return handlePurgeSandbox(yatraId);
@@ -1701,6 +1707,7 @@ export default function App() {
   };
 
   const handleRestoreYatra = async (yatraId) => {
+    if (!isOrganizer) return;
     if (window.confirm("Restore this Yatra to active status?")) {
       const targetYatra = yatras.find(y => y.id === yatraId);
       const actor = getCurrentActor();
@@ -1719,6 +1726,7 @@ export default function App() {
 
   const handleAddHotel = async (e) => {
     e.preventDefault();
+    if (!isOrganizer) return;
     await db.addHotel({ ...newHotel, yatraId: selectedYatra.id });
     setIsAddHotelOpen(false);
     setNewHotel({ name: '', address: '', gmapsLink: '', bookingLink: '', contactPerson: '', phone: '', roomsAvailable: 10, roomPrice: 2000, extraMattressCost: 500, distanceFromTemple: '', notes: '', contacted: false, shortlisted: false, finalSelected: false, quoteImageUrl: '' });
@@ -1824,6 +1832,7 @@ export default function App() {
   };
 
   const handleDeleteParticipant = async (participantId, participantName) => {
+    if (!isOrganizer) return;
     const targetParticipant = participants.find(p => p.id === participantId);
     const displayName = participantName || targetParticipant?.name || 'this devotee';
     if (window.confirm(`Are you sure you want to delete the registration for "${displayName}"?\n\nThis will remove them from participants, bus allocation, and room allocation lists.`)) {
@@ -1842,6 +1851,7 @@ export default function App() {
   };
 
   const handleApproveEligibility = async (participant) => {
+    if (!isOrganizer) return;
     const actor = getCurrentActor();
     const isFamily = participant.type === 'family' && participant.familyMembers && participant.familyMembers.length > 0;
     const updatedFamily = isFamily 
@@ -1872,7 +1882,7 @@ export default function App() {
   };
 
   const handleToggleMemberApproval = async (participant, memberIndex) => {
-    if (!participant.familyMembers || !participant.familyMembers[memberIndex]) return;
+    if (!isOrganizer || !participant.familyMembers || !participant.familyMembers[memberIndex]) return;
     const updatedMembers = participant.familyMembers.map((m, idx) => {
       if (idx === memberIndex) {
         const nextApproved = m.isApproved === false ? true : false;
@@ -1990,6 +2000,7 @@ export default function App() {
 
   const handleAddParticipant = async (e) => {
     e.preventDefault();
+    if (!isOrganizer) return;
     const cleanPhone = (newParticipant.phone || '').replace(/[^0-9]/g, '').slice(-10);
     if (cleanPhone && cleanPhone.length === 10) {
       const duplicate = getExistingYatraParticipantByPhone(newParticipant.phone, editingParticipantId);
@@ -2056,6 +2067,7 @@ export default function App() {
   // --- Bus Logistics Handlers ---
   const handleAddBus = async (e) => {
     e.preventDefault();
+    if (!isOrganizer) return;
     if (editingBusId) {
       await db.updateBus(editingBusId, newBus);
     } else {
@@ -2069,6 +2081,7 @@ export default function App() {
   };
 
   const handleDeleteBus = async (busId) => {
+    if (!isOrganizer) return;
     const targetBus = buses.find(b => b.id === busId);
     const busLabel = targetBus ? `Bus "${targetBus.name}"${targetBus.busNumber ? ` (${targetBus.busNumber})` : ''}` : 'this bus';
     const affectedCount = participants.filter(p => p.busId === busId).length;
@@ -2093,6 +2106,7 @@ export default function App() {
   };
 
   const handleReassignBus = async (participantId, busId) => {
+    if (!isOrganizer) return;
     if (!busId) {
       await db.updateParticipant(participantId, { busId: '', busName: '', busNumber: '' });
     } else {
@@ -2109,6 +2123,7 @@ export default function App() {
   };
 
   const autoAllocateBuses = async () => {
+    if (!isOrganizer) return;
     if (!buses || buses.length === 0) {
       alert("Please add at least one bus with seating capacity before running auto-allocation.");
       return;
@@ -2214,6 +2229,7 @@ export default function App() {
   // --- Hotel Room Logistics Handlers ---
   const handleAddRoom = async (e) => {
     e.preventDefault();
+    if (!isOrganizer) return;
     let hotelName = newRoom.hotelName;
     let hotelId = newRoom.hotelId;
 
@@ -2297,6 +2313,7 @@ export default function App() {
   };
 
   const handleDeleteRoom = async (roomId) => {
+    if (!isOrganizer) return;
     const targetRoom = rooms.find(r => r.id === roomId);
     const roomLabel = targetRoom ? `Room "${targetRoom.roomNumber || ''}" (${targetRoom.hotelName || ''})` : 'this room';
     if (window.confirm(`Are you sure you want to delete ${roomLabel}?\n\nDevotees assigned to this room will become unallocated.`)) {
@@ -2337,6 +2354,7 @@ export default function App() {
 
   // Reassign whole participant / family to a room (or unassign if roomId === '')
   const handleReassignRoom = async (participantId, roomId) => {
+    if (!isOrganizer) return;
     const p = participants.find(x => x.id === participantId);
     if (!p) return;
 
@@ -2379,6 +2397,7 @@ export default function App() {
 
   // Reassign an individual family member to any room (or unassign)
   const handleReassignMemberRoom = async (participantId, memberIndex, roomId) => {
+    if (!isOrganizer) return;
     const p = participants.find(x => x.id === participantId);
     if (!p || !p.familyMembers || memberIndex === null || memberIndex === undefined) return;
 
@@ -2424,6 +2443,7 @@ export default function App() {
 
   // Smart Auto-Allocation considering bed counts, family matching, and same-hotel multi-room splits
   const autoAllocateRooms = async () => {
+    if (!isOrganizer) return;
     if (!rooms || rooms.length === 0) {
       alert("Please add room inventory for your booked hotels before running auto-allocation.");
       return;
@@ -2763,6 +2783,7 @@ export default function App() {
 
   const handleAddExpense = async (e) => {
     e.preventDefault();
+    if (!isOrganizer) return;
     const exp = {
       ...newExpense,
       yatraId: selectedYatra.id,
@@ -2784,6 +2805,7 @@ export default function App() {
   };
 
   const handleDeleteExpense = async (exp) => {
+    if (!isOrganizer) return;
     const formattedAmt = parseFloat(exp.amount || 0).toLocaleString();
     const catLabel = exp.category ? exp.category.toUpperCase() : 'EXPENSE';
     const descLabel = exp.remarks ? ` ("${exp.remarks}")` : '';
@@ -3059,6 +3081,7 @@ export default function App() {
 
   // Admin 1-click Receive Cash & Confirm
   const handleAdminReceiveCash = async (part, defaultAmount = 0) => {
+    if (!isOrganizer) return;
     const amountStr = window.prompt(`Confirm Cash Collection for ${part.name}:\nEnter cash amount received (₹):`, defaultAmount > 0 ? defaultAmount.toString() : '0');
     if (amountStr === null) return;
     const amount = parseFloat(amountStr);
@@ -3166,11 +3189,13 @@ export default function App() {
 
   // --- Status Updates & Quick Controls ---
   const toggleHotelField = async (hotelId, field, value) => {
+    if (!isOrganizer) return;
     await db.updateHotel(hotelId, { [field]: value });
     setRefreshTrigger(prev => prev + 1);
   };
 
   const handleDeleteHotel = async (hotelId) => {
+    if (!isOrganizer) return;
     const targetHotel = hotels.find(h => h.id === hotelId);
     const hotelName = targetHotel?.name || 'this hotel';
     const associatedRooms = rooms.filter(r => r.hotelId === hotelId || r.hotelName === targetHotel?.name);
@@ -3206,6 +3231,7 @@ export default function App() {
   };
 
   const handleDeleteDocument = async (docRec) => {
+    if (!isOrganizer) return;
     if (!window.confirm(`Are you sure you want to delete the document "${docRec.name || 'this document'}"?`)) {
       return;
     }
@@ -3227,6 +3253,7 @@ export default function App() {
   };
 
   const cycleParticipantStatus = async (participantId, currentStatus) => {
+    if (!isOrganizer) return;
     const statuses = ['interested', 'partially_approved', 'approved', 'partially_confirmed', 'confirmed', 'cancelled'];
     const nextIndex = (statuses.indexOf(currentStatus) + 1) % statuses.length;
     const nextStatus = statuses[nextIndex];
@@ -3257,6 +3284,7 @@ export default function App() {
   };
 
   const verifyPayment = async (paymentId, participantId, status) => {
+    if (!isOrganizer) return;
     await db.updatePayment(paymentId, { status });
     if (status === 'verified') {
       const allPays = await db.getPayments(selectedYatra.id);
@@ -3478,10 +3506,15 @@ export default function App() {
   };
 
   const handleDeletePhoto = async (photoId) => {
+    const targetPhoto = (photos && photos.find(p => p.id === photoId)) || (myPhotos && myPhotos.find(p => p.id === photoId));
+    const isOwner = myParticipantData && targetPhoto && (targetPhoto.uploader === myParticipantData.name || targetPhoto.uploader === myParticipantData.phone);
+    if (!isOrganizer && !isOwner) {
+      alert("Unauthorized: You do not have permission to delete this photo.");
+      return;
+    }
     if (!window.confirm("Are you sure you want to permanently delete this photo? It will be removed immediately from both Admin and Devotee galleries.")) {
       return;
     }
-    const targetPhoto = (photos && photos.find(p => p.id === photoId)) || (myPhotos && myPhotos.find(p => p.id === photoId));
     // Optimistic UI update: instantly remove from screen
     setPhotos(prev => prev.filter(p => p.id !== photoId));
     setMyPhotos(prev => prev.filter(p => p.id !== photoId));
@@ -3507,7 +3540,7 @@ export default function App() {
 
   // --- Reports Export to CSV ---
   const exportToCSV = (dataList, filename) => {
-    if (!dataList || dataList.length === 0) return;
+    if (!isOrganizer || !dataList || dataList.length === 0) return;
     
     const headers = Object.keys(dataList[0]).join(',');
     const rows = dataList.map(row => 
@@ -3528,6 +3561,7 @@ export default function App() {
 
   // --- Flattened Participant CSV (family members as individual rows) ---
   const exportParticipantCSV = () => {
+    if (!isOrganizer) return;
     const headers = ['Registration ID', 'Family/Group Name', 'Member Name', 'Relation', 'Age', 'Phone', 'Email', 'Location', 'Travel Mode', 'Travel Type', 'Boarding Station', 'Dropping Station', 'Eligibility', 'Status', 'Payment Status', 'Remarks'];
     
     const rows = [];
@@ -3618,6 +3652,7 @@ export default function App() {
   // --- Admin Management (Super Admin) ---
   const handleAddAdmin = async (e) => {
     e.preventDefault();
+    if (!isSuperAdmin) return;
     if (!newAdminEmail.trim()) return;
 
     const email = newAdminEmail.trim().toLowerCase();
@@ -3658,6 +3693,7 @@ export default function App() {
   };
 
   const handleResetAdminPassword = async (adminUser) => {
+    if (!isSuperAdmin) return;
     const tempPassword = 'YatraAdmin@' + Math.floor(1000 + Math.random() * 9000);
     if (window.confirm(`Reset password for ${adminUser.name} (${adminUser.email}) to temporary password: ${tempPassword}?\n\nThe admin will be forced to change this to their own secret password upon first login.`)) {
       await db.updateUser(adminUser.id, {
@@ -3687,6 +3723,7 @@ export default function App() {
   };
 
   const handleToggleAdminPasswordStatus = async (adminUser) => {
+    if (!isSuperAdmin) return;
     const newMustChange = !adminUser.mustChangePassword;
     await db.updateUser(adminUser.id, {
       mustChangePassword: newMustChange,
@@ -3696,6 +3733,7 @@ export default function App() {
   };
 
   const handleDeleteAdmin = async (id) => {
+    if (!isSuperAdmin) return;
     const targetAdmin = systemUsers.find(u => u.id === id);
     const adminLabel = targetAdmin ? `"${targetAdmin.name || 'Admin'}" (${targetAdmin.email})` : 'this administrator';
     if (window.confirm(`Are you sure you want to completely remove administrator access for ${adminLabel}?\n\nThey will no longer be able to log in or manage Yatras.`)) {
@@ -4185,7 +4223,7 @@ export default function App() {
         {/* ======================================= */}
         {/* VIEW: FORGOT PASSWORD */}
         {/* ======================================= */}
-        {currentRoute.path === 'forgot-password' && (
+        {currentRoute.path === 'forgot-password' && !currentUser && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '65vh', padding: '1rem 0' }}>
             <div className="card login-card">
               <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
@@ -4300,7 +4338,7 @@ export default function App() {
         {/* ======================================= */}
         {/* VIEW: RESET PASSWORD FORM */}
         {/* ======================================= */}
-        {currentRoute.path === 'reset-password' && (
+        {currentRoute.path === 'reset-password' && !currentUser && (
           <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '65vh', padding: '1rem 0' }}>
             <div className="card login-card">
               <div style={{ textAlign: 'center', marginBottom: '2rem' }}>
@@ -10522,7 +10560,7 @@ export default function App() {
       )}
 
       {/* MODAL: CREATE YATRA */}
-      {isCreateYatraOpen && (
+      {isOrganizer && isCreateYatraOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -10622,7 +10660,7 @@ export default function App() {
       )}
 
       {/* MODAL: ADD HOTEL */}
-      {isAddHotelOpen && (
+      {isOrganizer && isAddHotelOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -10695,7 +10733,7 @@ export default function App() {
       )}
 
       {/* MODAL: ADD PARTICIPANT */}
-      {isAddParticipantOpen && (
+      {isOrganizer && isAddParticipantOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -11014,7 +11052,7 @@ export default function App() {
       )}
 
       {/* MODAL: ADD EXPENSE */}
-      {isAddExpenseOpen && (
+      {isOrganizer && isAddExpenseOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -11103,7 +11141,7 @@ export default function App() {
       )}
 
       {/* MODAL: UPLOAD DOCUMENT */}
-      {isUploadDocOpen && (
+      {isOrganizer && isUploadDocOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -11152,7 +11190,7 @@ export default function App() {
       )}
 
       {/* MODAL: ADD / EDIT BUS COACH */}
-      {isAddBusOpen && (
+      {isOrganizer && isAddBusOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -11299,7 +11337,7 @@ export default function App() {
       )}
 
       {/* MODAL: ADD / EDIT HOTEL ROOM */}
-      {isAddRoomOpen && (
+      {isOrganizer && isAddRoomOpen && (
         <div className="modal-overlay">
           <div className="modal-content">
             <div className="modal-header">
@@ -12367,7 +12405,7 @@ export default function App() {
       )}
 
       {/* MODAL: SELF CHANGE PASSWORD ANYTIME */}
-      {isChangePasswordOpen && currentUser && (
+      {isOrganizer && isChangePasswordOpen && currentUser && (
         <div className="modal-overlay">
           <div className="modal-content" style={{ maxWidth: '440px' }}>
             <div className="modal-header">
@@ -12449,9 +12487,9 @@ export default function App() {
       {/* ========================================================= */}
       {isPrintBadgesOpen && selectedYatra && (() => {
         // Determine devotee list
-        const sourceParticipants = singleBadgeParticipant 
-          ? [singleBadgeParticipant]
-          : participants.filter(p => p.status !== 'cancelled');
+        const sourceParticipants = isOrganizer
+          ? (singleBadgeParticipant ? [singleBadgeParticipant] : participants.filter(p => p.status !== 'cancelled'))
+          : (myParticipantData ? [myParticipantData] : (singleBadgeParticipant ? [singleBadgeParticipant] : []));
 
         // Filter by bus
         const busFiltered = badgeFilterBus === 'all' 
@@ -12579,8 +12617,8 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Filters Bar (Only shown when printing all) */}
-                {!singleBadgeParticipant && (
+                {/* Filters Bar (Only shown to organizers when printing all) */}
+                {isOrganizer && !singleBadgeParticipant && (
                   <div style={{ display: 'flex', gap: '1rem', alignItems: 'center', flexWrap: 'wrap', backgroundColor: 'var(--bg)', padding: '0.75rem 1rem', borderRadius: 'var(--radius-sm)' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
                       <strong>Filter Bus:</strong>
