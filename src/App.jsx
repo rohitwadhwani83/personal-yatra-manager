@@ -62,6 +62,56 @@ const formatRegistrationDate = (part, includeYear = false) => {
   }
 };
 
+// Payment Submission Timestamp & Date Helpers (for chronologically sorting newest payment submissions on top)
+const getPaymentTimestamp = (pay, fallbackPart = null) => {
+  if (!pay) return 0;
+  const raw = pay.submittedAt || pay.createdAt || pay.date || (pay.paymentMethod === 'cash' && fallbackPart?.cashPromiseSubmittedAt) || pay.paymentDate;
+  if (raw) {
+    if (typeof raw === 'number') return raw;
+    if (raw.toMillis && typeof raw.toMillis === 'function') return raw.toMillis();
+    if (raw.seconds) return raw.seconds * 1000;
+    const parsed = new Date(raw).getTime();
+    if (!isNaN(parsed) && parsed > 0) return parsed;
+  }
+  if (pay.id && typeof pay.id === 'string') {
+    const match = pay.id.match(/\d{10,13}/);
+    if (match) {
+      const ts = parseInt(match[0], 10);
+      if (ts > 1000000000) return ts > 1000000000000 ? ts : ts * 1000;
+    }
+    const seq = pay.id.match(/^pay(\d+)$/i);
+    if (seq) {
+      return 1700000000000 + parseInt(seq[1], 10) * 86400000;
+    }
+  }
+  if (fallbackPart) {
+    return getParticipantTimestamp(fallbackPart);
+  }
+  return 0;
+};
+
+const formatPaymentTimestamp = (pay, fallbackPart = null, includeYear = false) => {
+  if (!pay) return null;
+  const raw = pay.submittedAt || pay.createdAt || pay.date || (pay.paymentMethod === 'cash' && fallbackPart?.cashPromiseSubmittedAt);
+  if (!raw) return null;
+  try {
+    const d = new Date(raw);
+    if (isNaN(d.getTime())) return null;
+    const options = {
+      day: 'numeric',
+      month: 'short',
+      hour: '2-digit',
+      minute: '2-digit'
+    };
+    if (includeYear) {
+      options.year = 'numeric';
+    }
+    return d.toLocaleDateString('en-IN', options);
+  } catch (e) {
+    return null;
+  }
+};
+
 // Dynamic QR code API helper
 const getUPIQRCodeUrl = (upiId, name, amount = 0, memo = 'Yatra Payment') => {
   const cleanUpiId = encodeURIComponent(upiId || 'rohit.wadhwani83@okaxis');
@@ -338,6 +388,7 @@ export default function App() {
   const [participantFilter, setParticipantFilter] = useState('all'); // 'all' | 'confirmed' | 'interested' | 'partially_paid' | 'completed'
   const [paymentFilter, setPaymentFilter] = useState('all'); // 'all' | 'pending' | 'upi' | 'cash' | 'verified' | 'unpaid'
   const [participantSortOrder, setParticipantSortOrder] = useState('newest'); // 'newest' | 'oldest' | 'name' | 'seats'
+  const [paymentSortOrder, setPaymentSortOrder] = useState('newest'); // 'newest' | 'oldest' | 'amount_desc' | 'amount_asc'
   const [expandedParticipantId, setExpandedParticipantId] = useState(null);
 
   // Devotee Profile Auto-fill States
@@ -2966,6 +3017,7 @@ export default function App() {
       }
     }
     const payId = 'pay_' + Math.random().toString(36).substring(2, 9);
+    const submittedAtIso = new Date().toISOString();
     await db.addPayment({
       id: payId,
       yatraId: selectedYatra.id,
@@ -2975,7 +3027,9 @@ export default function App() {
       transactionRef: publicPayMethod === 'upi' ? publicPayRef : 'CASH PAYMENT PROMISED',
       paymentDate: publicPayDate,
       screenshotUrl: publicPayMethod === 'upi' ? publicPayScreenshot : '',
-      status: 'pending_verification'
+      status: 'pending_verification',
+      submittedAt: submittedAtIso,
+      createdAt: submittedAtIso
     });
     // Update participant payment status and cash promise details
     const partUpdates = { 
@@ -2985,6 +3039,7 @@ export default function App() {
     if (publicPayMethod === 'cash') {
       partUpdates.cashPromiseDate = publicPayDate;
       partUpdates.cashPromiseAmount = parseFloat(publicPayAmount);
+      partUpdates.cashPromiseSubmittedAt = submittedAtIso;
     }
     await db.updateParticipant(currentRoute.id, partUpdates);
     await recordAudit({
@@ -3000,7 +3055,7 @@ export default function App() {
         email: paymentParticipant?.email || '',
         role: 'devotee'
       },
-      metadata: { amount: publicPayAmount, paymentMethod: publicPayMethod }
+      metadata: { amount: publicPayAmount, paymentMethod: publicPayMethod, submittedAt: submittedAtIso }
     });
     setPublicPayStatus('success');
   };
@@ -3025,10 +3080,12 @@ export default function App() {
       alert("Please enter a valid payment amount greater than ₹0.");
       return;
     }
+    const submittedAtIso = new Date().toISOString();
     const updates = {
       cashPromiseDate: devoteeCashPromiseDate,
       cashPromiseAmount: cleanAmount,
       cashPromiseNotes: devoteeCashPromiseNotes,
+      cashPromiseSubmittedAt: submittedAtIso,
       paymentMethodPreference: 'cash',
       paymentStatus: 'pending'
     };
@@ -3041,7 +3098,8 @@ export default function App() {
         await db.updatePayment(existingCash.id, {
           amountPaid: cleanAmount,
           paymentDate: devoteeCashPromiseDate,
-          transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED'
+          transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED',
+          submittedAt: submittedAtIso
         });
       } else {
         await db.addPayment({
@@ -3053,7 +3111,9 @@ export default function App() {
           transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED',
           paymentDate: devoteeCashPromiseDate,
           screenshotUrl: '',
-          status: 'pending_verification'
+          status: 'pending_verification',
+          submittedAt: submittedAtIso,
+          createdAt: submittedAtIso
         });
       }
     } catch (paySyncErr) {
@@ -3072,7 +3132,7 @@ export default function App() {
         email: myParticipantData.email || '',
         role: 'devotee'
       },
-      metadata: { promisedAmount: cleanAmount, promiseDate: devoteeCashPromiseDate, notes: devoteeCashPromiseNotes }
+      metadata: { promisedAmount: cleanAmount, promiseDate: devoteeCashPromiseDate, notes: devoteeCashPromiseNotes, submittedAt: submittedAtIso }
     });
     setMyParticipantData(updated);
     setRefreshTrigger(prev => prev + 1);
@@ -3090,6 +3150,7 @@ export default function App() {
       return;
     }
     const payId = 'pay_' + Math.random().toString(36).substring(2, 9);
+    const submittedAtIso = new Date().toISOString();
     await db.addPayment({
       id: payId,
       yatraId: selectedYatra.id,
@@ -3097,9 +3158,11 @@ export default function App() {
       amountPaid: amount,
       paymentMethod: 'cash',
       transactionRef: 'CASH RECEIVED BY ORGANIZER',
-      paymentDate: new Date().toISOString().split('T')[0],
+      paymentDate: submittedAtIso.split('T')[0],
       screenshotUrl: '',
-      status: 'verified'
+      status: 'verified',
+      submittedAt: submittedAtIso,
+      createdAt: submittedAtIso
     });
     const splitInfo = expCalc.splits.find(s => s.id === part.id);
     const totalDue = splitInfo ? splitInfo.share : defaultAmount;
@@ -6730,7 +6793,9 @@ export default function App() {
                 : participants;
 
               const getPartStatus = (p) => expCalc.splits.find(s => s.id === p.id)?.dynamicDevoteeStatus || p.status || 'interested';
-              const getPendingVerificationPayments = (p) => (payments || []).filter(pay => pay.participantId === p.id && pay.status === 'pending_verification');
+              const getPendingVerificationPayments = (p) => (payments || [])
+                .filter(pay => pay.participantId === p.id && pay.status === 'pending_verification')
+                .sort((a, b) => getPaymentTimestamp(b, p) - getPaymentTimestamp(a, p));
 
               // 2. Participants matching both search filter AND active status filter pill
               const filteredList = baseFiltered.filter(p => {
@@ -7235,9 +7300,14 @@ export default function App() {
                                               <span>{pv.paymentMethod === 'cash' ? '💵 Cash Promise' : '📱 UPI Submitted'}</span>
                                               <span>₹{Number(pv.amountPaid || 0).toLocaleString()}</span>
                                             </div>
-                                            {pv.paymentReference && (
+                                            {(pv.transactionRef || pv.paymentReference) && (
                                               <div style={{ fontSize: '0.67rem', color: 'var(--text-muted)', marginTop: '0.1rem', wordBreak: 'break-all' }}>
-                                                Ref: {pv.paymentReference}
+                                                Ref: {pv.transactionRef || pv.paymentReference}
+                                              </div>
+                                            )}
+                                            {formatPaymentTimestamp(pv, part) && (
+                                              <div style={{ fontSize: '0.66rem', color: '#b45309', marginTop: '0.1rem', fontWeight: 500 }}>
+                                                🕒 {formatPaymentTimestamp(pv, part)}
                                               </div>
                                             )}
                                             <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
@@ -7763,9 +7833,14 @@ export default function App() {
                                         <span>{pv.paymentMethod === 'cash' ? '💵 Cash Commitment' : '📱 UPI Payment'}</span>
                                         <span style={{ color: 'var(--success)' }}>₹{Number(pv.amountPaid || 0).toLocaleString()}</span>
                                       </div>
-                                      {pv.paymentReference && (
+                                      {(pv.transactionRef || pv.paymentReference) && (
                                         <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
-                                          Ref: {pv.paymentReference}
+                                          Ref: {pv.transactionRef || pv.paymentReference}
+                                        </div>
+                                      )}
+                                      {formatPaymentTimestamp(pv, part) && (
+                                        <div style={{ fontSize: '0.68rem', color: '#b45309', marginTop: '0.1rem', fontWeight: 500 }}>
+                                          🕒 Submitted: {formatPaymentTimestamp(pv, part)}
                                         </div>
                                       )}
                                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.35rem', marginTop: '0.35rem', alignItems: 'center' }}>
@@ -7935,6 +8010,7 @@ export default function App() {
                   if (part.cashPromiseDate && !existingPartIds.has(part.id)) {
                     const split = expCalc.splits.find(s => s.id === part.id);
                     if (split?.dynamicPaymentStatus !== 'completed') {
+                      const promiseTs = part.cashPromiseSubmittedAt || part.registeredAt || part.createdAt || '';
                       list.push({
                         id: 'promise_' + part.id,
                         participantId: part.id,
@@ -7943,6 +8019,8 @@ export default function App() {
                         paymentMethod: 'cash',
                         transactionRef: part.cashPromiseNotes ? `CASH PROMISED: ${part.cashPromiseNotes}` : 'CASH PAYMENT PROMISED',
                         paymentDate: part.cashPromiseDate,
+                        submittedAt: promiseTs,
+                        createdAt: promiseTs,
                         screenshotUrl: '',
                         status: 'pending_verification',
                         isVirtualPromise: true
@@ -7974,6 +8052,10 @@ export default function App() {
                 if (s.dynamicDevoteeStatus === 'cancelled') return false;
                 const hasPendingPayment = allDevoteePayments.some(p => p.participantId === s.id && p.status !== 'rejected');
                 return s.dynamicPaymentStatus === 'pending' && !hasPendingPayment;
+              }).sort((a, b) => {
+                const partA = participants.find(p => p.id === a.id) || a;
+                const partB = participants.find(p => p.id === b.id) || b;
+                return getParticipantTimestamp(partB) - getParticipantTimestamp(partA);
               });
               const unpaidBalance = Math.max(0, totalExpected - totalVerified);
 
@@ -8000,6 +8082,29 @@ export default function App() {
                   if (partObj.city && partObj.city.toLowerCase().includes(q)) return true;
                 }
                 return false;
+              });
+
+              // 5. Chronological sorting: latest payment submission on top by default
+              const sortedPayments = [...searchedPayments].sort((a, b) => {
+                const partA = participants.find(p => p.id === a.participantId);
+                const partB = participants.find(p => p.id === b.participantId);
+                if (paymentSortOrder === 'oldest') {
+                  const diff = getPaymentTimestamp(a, partA) - getPaymentTimestamp(b, partB);
+                  return diff !== 0 ? diff : (partA?.name || '').localeCompare(partB?.name || '');
+                }
+                if (paymentSortOrder === 'amount_high') {
+                  const diff = (Number(b.amountPaid) || 0) - (Number(a.amountPaid) || 0);
+                  return diff !== 0 ? diff : getPaymentTimestamp(b, partB) - getPaymentTimestamp(a, partA);
+                }
+                if (paymentSortOrder === 'amount_low') {
+                  const diff = (Number(a.amountPaid) || 0) - (Number(b.amountPaid) || 0);
+                  return diff !== 0 ? diff : getPaymentTimestamp(b, partB) - getPaymentTimestamp(a, partA);
+                }
+                // Default: 'newest' (most recent submission at the top)
+                const tsA = getPaymentTimestamp(a, partA);
+                const tsB = getPaymentTimestamp(b, partB);
+                if (tsB !== tsA) return tsB - tsA;
+                return (partA?.name || '').localeCompare(partB?.name || '');
               });
 
               return (
@@ -8200,6 +8305,25 @@ export default function App() {
                     >
                       ⚠️ Unpaid Devotees ({unpaidParticipants.length})
                     </button>
+
+                    {/* Sort Order Selector */}
+                    {paymentFilter !== 'unpaid' && (
+                      <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                        <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' }}>Sort:</span>
+                        <select
+                          className="form-control"
+                          value={paymentSortOrder}
+                          onChange={(e) => setPaymentSortOrder(e.target.value)}
+                          style={{ padding: '0.28rem 0.55rem', fontSize: '0.78rem', width: 'auto', minWidth: '175px', height: 'auto', fontWeight: 600 }}
+                          title="Sort payments order"
+                        >
+                          <option value="newest">🕒 Newest First (Latest on Top)</option>
+                          <option value="oldest">⏳ Oldest First (Earliest on Top)</option>
+                          <option value="amount_high">💰 Amount (High → Low)</option>
+                          <option value="amount_low">💰 Amount (Low → High)</option>
+                        </select>
+                      </div>
+                    )}
                   </div>
 
                   {paymentFilter === 'unpaid' ? (
@@ -8234,7 +8358,7 @@ export default function App() {
                                   <td>{split.billableCount || 1} {split.billableCount > 1 ? 'members' : 'devotee'}</td>
                                   <td><strong style={{ color: 'var(--danger)', fontSize: '1rem' }}>₹{(split.share || 2500).toLocaleString()}</strong></td>
                                   <td>{part.phone || 'N/A'}</td>
-                                  <td>{part.registeredAt ? part.registeredAt.split('T')[0] : 'N/A'}</td>
+                                  <td>{formatRegistrationDate(part, true) || (part.registeredAt ? part.registeredAt.split('T')[0] : 'N/A')}</td>
                                   <td>
                                     <div style={{ display: 'flex', gap: '0.35rem', alignItems: 'center' }}>
                                       <button 
@@ -8278,14 +8402,14 @@ export default function App() {
                             <th>Amount</th>
                             <th>Method</th>
                             <th>Transaction Ref / Note</th>
-                            <th>Payment Date</th>
+                            <th>Payment Date & Submitted At</th>
                             <th>Proof / Receipt</th>
                             <th>Verification Status</th>
                             <th>Quick Verification Action</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {searchedPayments.length === 0 ? (
+                          {sortedPayments.length === 0 ? (
                             <tr>
                               <td colSpan={8} style={{ textAlign: 'center', padding: '3rem 1.5rem', color: 'var(--text-muted)' }}>
                                 <Search size={36} style={{ opacity: 0.35, marginBottom: '0.5rem' }} />
@@ -8298,13 +8422,26 @@ export default function App() {
                               </td>
                             </tr>
                           ) : (
-                            searchedPayments.map(pay => {
+                            sortedPayments.map(pay => {
                               const partObj = participants.find(p => p.id === pay.participantId) || { name: 'Unknown Devotee' };
+                              const formattedSubmittedAt = formatPaymentTimestamp(pay, partObj);
                               return (
                                 <tr key={pay.id}>
                                   <td>
                                     <strong>{partObj.name}</strong>
                                     <p style={{ fontSize: '0.8rem', color: 'var(--text-muted)', margin: 0 }}>{partObj.phone || `ID: ${pay.participantId}`}</p>
+                                    <div style={{ display: 'flex', gap: '0.3rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+                                      {partObj.type === 'family' && (
+                                        <span style={{ fontSize: '0.68rem', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', padding: '0.08rem 0.35rem', borderRadius: '3px', fontWeight: 600 }}>
+                                          👨‍👩‍👧‍👦 {partObj.familyName || 'Family'}
+                                        </span>
+                                      )}
+                                      {formattedSubmittedAt && (
+                                        <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)', backgroundColor: 'var(--bg)', border: '1px solid var(--border)', padding: '0.08rem 0.35rem', borderRadius: '3px', display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }} title={`Payment Submitted: ${pay.submittedAt || pay.createdAt || pay.paymentDate || ''}`}>
+                                          🕒 {formattedSubmittedAt}
+                                        </span>
+                                      )}
+                                    </div>
                                   </td>
                                   <td><strong style={{ fontSize: '1.05rem', color: 'var(--success)' }}>₹{(pay.amountPaid || 0).toLocaleString()}</strong></td>
                                   <td>
@@ -8321,9 +8458,14 @@ export default function App() {
                                     <code style={{ fontSize: '0.78rem' }}>{pay.transactionRef || 'N/A'}</code>
                                   </td>
                                   <td>
-                                    <span>{pay.paymentDate || 'N/A'}</span>
+                                    <div style={{ fontWeight: 600, fontSize: '0.84rem' }}>{pay.paymentDate || 'N/A'}</div>
+                                    {formattedSubmittedAt && (
+                                      <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginTop: '0.15rem' }} title={pay.submittedAt || pay.createdAt || ''}>
+                                        🕒 Submitted: <strong>{formattedSubmittedAt}</strong>
+                                      </div>
+                                    )}
                                     {pay.paymentMethod === 'cash' && pay.status !== 'verified' && pay.paymentDate && new Date(pay.paymentDate) < new Date(new Date().setHours(0,0,0,0)) && (
-                                      <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--danger)', fontWeight: 600 }}>⚠️ Overdue</span>
+                                      <span style={{ display: 'block', fontSize: '0.7rem', color: 'var(--danger)', fontWeight: 600, marginTop: '0.15rem' }}>⚠️ Overdue</span>
                                     )}
                                   </td>
                                   <td>

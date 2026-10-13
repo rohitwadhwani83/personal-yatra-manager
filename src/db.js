@@ -910,9 +910,41 @@ class Database {
 
   async getPayments(yatraId) {
     const all = await this.getCollection('payments');
-    return all.filter(pay => pay.yatraId === yatraId);
+    const filtered = all.filter(pay => pay.yatraId === yatraId);
+    return filtered.sort((a, b) => {
+      const getPayTs = (pay) => {
+        if (!pay) return 0;
+        const d = pay.submittedAt || pay.createdAt || pay.date || pay.paymentDate;
+        if (d) {
+          if (typeof d === 'number') return d;
+          if (d.toMillis && typeof d.toMillis === 'function') return d.toMillis();
+          if (d.seconds) return d.seconds * 1000;
+          const t = new Date(d).getTime();
+          if (!isNaN(t) && t > 0) return t;
+        }
+        if (pay.id && typeof pay.id === 'string') {
+          const m = pay.id.match(/\d{10,13}/);
+          if (m) {
+            const ts = parseInt(m[0], 10);
+            if (ts > 1000000000) return ts > 1000000000000 ? ts : ts * 1000;
+          }
+          const seq = pay.id.match(/^pay(\d+)$/i);
+          if (seq) return 1700000000000 + parseInt(seq[1], 10) * 86400000;
+        }
+        return 0;
+      };
+      return getPayTs(b) - getPayTs(a);
+    });
   }
-  async addPayment(payment) { return this.addDocument('payments', payment); }
+  async addPayment(payment) { 
+    const nowIso = new Date().toISOString();
+    const withTimestamps = {
+      ...payment,
+      submittedAt: payment.submittedAt || payment.createdAt || nowIso,
+      createdAt: payment.createdAt || payment.submittedAt || nowIso
+    };
+    return this.addDocument('payments', withTimestamps); 
+  }
   async updatePayment(id, updates) { return this.updateDocument('payments', id, updates); }
   async deletePayment(id) { return this.deleteDocument('payments', id); }
 
