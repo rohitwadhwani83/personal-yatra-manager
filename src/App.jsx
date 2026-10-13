@@ -390,6 +390,7 @@ export default function App() {
   const [participantSortOrder, setParticipantSortOrder] = useState('newest'); // 'newest' | 'oldest' | 'name' | 'seats'
   const [paymentSortOrder, setPaymentSortOrder] = useState('newest'); // 'newest' | 'oldest' | 'amount_desc' | 'amount_asc'
   const [expandedParticipantId, setExpandedParticipantId] = useState(null);
+  const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
 
   // Devotee Profile Auto-fill States
   const [autoFilledDevotee, setAutoFilledDevotee] = useState(null);
@@ -3005,6 +3006,7 @@ export default function App() {
 
   const handlePublicPayment = async (e) => {
     e.preventDefault();
+    if (isSubmittingPayment) return;
     if (selectedYatra) {
       const deadline = getYatraPaymentDeadline(selectedYatra);
       if (publicPayMethod === 'upi' && !isUpiPaymentAllowed(selectedYatra)) {
@@ -3016,53 +3018,89 @@ export default function App() {
         return;
       }
     }
-    const payId = 'pay_' + Math.random().toString(36).substring(2, 9);
-    const submittedAtIso = new Date().toISOString();
-    await db.addPayment({
-      id: payId,
-      yatraId: selectedYatra.id,
-      participantId: currentRoute.id, // Participant ID is stored in the route param
-      amountPaid: parseFloat(publicPayAmount),
-      paymentMethod: publicPayMethod,
-      transactionRef: publicPayMethod === 'upi' ? publicPayRef : 'CASH PAYMENT PROMISED',
-      paymentDate: publicPayDate,
-      screenshotUrl: publicPayMethod === 'upi' ? publicPayScreenshot : '',
-      status: 'pending_verification',
-      submittedAt: submittedAtIso,
-      createdAt: submittedAtIso
-    });
-    // Update participant payment status and cash promise details
-    const partUpdates = { 
-      paymentStatus: 'pending',
-      paymentMethodPreference: publicPayMethod 
-    };
-    if (publicPayMethod === 'cash') {
-      partUpdates.cashPromiseDate = publicPayDate;
-      partUpdates.cashPromiseAmount = parseFloat(publicPayAmount);
-      partUpdates.cashPromiseSubmittedAt = submittedAtIso;
+    setIsSubmittingPayment(true);
+    try {
+      const submittedAtIso = new Date().toISOString();
+      const existingPays = await db.getPayments(selectedYatra.id);
+      const cleanRef = (publicPayRef || '').trim().toLowerCase();
+
+      if (publicPayMethod === 'upi' && cleanRef) {
+        const duplicateUpi = (existingPays || []).find(
+          p => p.participantId === currentRoute.id &&
+               p.paymentMethod === 'upi' &&
+               p.status !== 'rejected' &&
+               (p.transactionRef || '').trim().toLowerCase() === cleanRef
+        );
+        if (duplicateUpi) {
+          setPublicPayStatus('success');
+          return;
+        }
+      }
+
+      const existingPendingCash = publicPayMethod === 'cash'
+        ? (existingPays || []).find(p => p.participantId === currentRoute.id && p.paymentMethod === 'cash' && p.status === 'pending_verification')
+        : null;
+
+      if (existingPendingCash) {
+        await db.updatePayment(existingPendingCash.id, {
+          amountPaid: parseFloat(publicPayAmount),
+          paymentDate: publicPayDate,
+          transactionRef: 'CASH PAYMENT PROMISED',
+          submittedAt: submittedAtIso
+        });
+      } else {
+        const payId = 'pay_' + Math.random().toString(36).substring(2, 9);
+        await db.addPayment({
+          id: payId,
+          yatraId: selectedYatra.id,
+          participantId: currentRoute.id, // Participant ID is stored in the route param
+          amountPaid: parseFloat(publicPayAmount),
+          paymentMethod: publicPayMethod,
+          transactionRef: publicPayMethod === 'upi' ? (publicPayRef || '').trim() : 'CASH PAYMENT PROMISED',
+          paymentDate: publicPayDate,
+          screenshotUrl: publicPayMethod === 'upi' ? publicPayScreenshot : '',
+          status: 'pending_verification',
+          submittedAt: submittedAtIso,
+          createdAt: submittedAtIso
+        });
+      }
+
+      // Update participant payment status and cash promise details
+      const partUpdates = { 
+        paymentStatus: 'pending',
+        paymentMethodPreference: publicPayMethod 
+      };
+      if (publicPayMethod === 'cash') {
+        partUpdates.cashPromiseDate = publicPayDate;
+        partUpdates.cashPromiseAmount = parseFloat(publicPayAmount);
+        partUpdates.cashPromiseSubmittedAt = submittedAtIso;
+      }
+      await db.updateParticipant(currentRoute.id, partUpdates);
+      await recordAudit({
+        yatraId: selectedYatra.id,
+        yatraTitle: selectedYatra.name,
+        category: 'Payments',
+        action: 'PAYMENT_SUBMITTED',
+        details: `Devotee "${paymentParticipant?.name || 'Devotee'}" (Mobile: ${paymentParticipant?.phone || ''}) submitted payment proof of ₹${publicPayAmount} via ${publicPayMethod.toUpperCase()} (Ref: ${publicPayMethod === 'upi' ? publicPayRef : 'Cash Promised'}).`,
+        actorOverride: {
+          id: paymentParticipant?.id || '',
+          name: paymentParticipant?.name || 'Devotee',
+          phone: paymentParticipant?.phone || '',
+          email: paymentParticipant?.email || '',
+          role: 'devotee'
+        },
+        metadata: { amount: publicPayAmount, paymentMethod: publicPayMethod, submittedAt: submittedAtIso }
+      });
+      setPublicPayStatus('success');
+    } finally {
+      setIsSubmittingPayment(false);
     }
-    await db.updateParticipant(currentRoute.id, partUpdates);
-    await recordAudit({
-      yatraId: selectedYatra.id,
-      yatraTitle: selectedYatra.name,
-      category: 'Payments',
-      action: 'PAYMENT_SUBMITTED',
-      details: `Devotee "${paymentParticipant?.name || 'Devotee'}" (Mobile: ${paymentParticipant?.phone || ''}) submitted payment proof of ₹${publicPayAmount} via ${publicPayMethod.toUpperCase()} (Ref: ${publicPayMethod === 'upi' ? publicPayRef : 'Cash Promised'}).`,
-      actorOverride: {
-        id: paymentParticipant?.id || '',
-        name: paymentParticipant?.name || 'Devotee',
-        phone: paymentParticipant?.phone || '',
-        email: paymentParticipant?.email || '',
-        role: 'devotee'
-      },
-      metadata: { amount: publicPayAmount, paymentMethod: publicPayMethod, submittedAt: submittedAtIso }
-    });
-    setPublicPayStatus('success');
   };
 
   // Devotee submits/updates cash promise directly from Devotee Portal
   const handleDevoteeSubmitCashPromise = async (e, defaultFee = 0) => {
     e.preventDefault();
+    if (isSubmittingPayment) return;
     if (!devoteeCashPromiseDate) {
       alert("Please select your promised payment date.");
       return;
@@ -3080,63 +3118,68 @@ export default function App() {
       alert("Please enter a valid payment amount greater than ₹0.");
       return;
     }
-    const submittedAtIso = new Date().toISOString();
-    const updates = {
-      cashPromiseDate: devoteeCashPromiseDate,
-      cashPromiseAmount: cleanAmount,
-      cashPromiseNotes: devoteeCashPromiseNotes,
-      cashPromiseSubmittedAt: submittedAtIso,
-      paymentMethodPreference: 'cash',
-      paymentStatus: 'pending'
-    };
-    const updated = await db.updateParticipant(myParticipantData.id, updates);
-    // Sync cash promise into payments collection so it immediately reflects in the Payments Verification Desk
+    setIsSubmittingPayment(true);
     try {
-      const existingPays = await db.getPayments(selectedYatra.id);
-      const existingCash = (existingPays || []).find(p => p.participantId === myParticipantData.id && p.paymentMethod === 'cash' && p.status === 'pending_verification');
-      if (existingCash) {
-        await db.updatePayment(existingCash.id, {
-          amountPaid: cleanAmount,
-          paymentDate: devoteeCashPromiseDate,
-          transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED',
-          submittedAt: submittedAtIso
-        });
-      } else {
-        await db.addPayment({
-          id: 'pay_' + Math.random().toString(36).substring(2, 9),
-          yatraId: selectedYatra.id,
-          participantId: myParticipantData.id,
-          amountPaid: cleanAmount,
-          paymentMethod: 'cash',
-          transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED',
-          paymentDate: devoteeCashPromiseDate,
-          screenshotUrl: '',
-          status: 'pending_verification',
-          submittedAt: submittedAtIso,
-          createdAt: submittedAtIso
-        });
+      const submittedAtIso = new Date().toISOString();
+      const updates = {
+        cashPromiseDate: devoteeCashPromiseDate,
+        cashPromiseAmount: cleanAmount,
+        cashPromiseNotes: devoteeCashPromiseNotes,
+        cashPromiseSubmittedAt: submittedAtIso,
+        paymentMethodPreference: 'cash',
+        paymentStatus: 'pending'
+      };
+      const updated = await db.updateParticipant(myParticipantData.id, updates);
+      // Sync cash promise into payments collection so it immediately reflects in the Payments Verification Desk
+      try {
+        const existingPays = await db.getPayments(selectedYatra.id);
+        const existingCash = (existingPays || []).find(p => p.participantId === myParticipantData.id && p.paymentMethod === 'cash' && p.status === 'pending_verification');
+        if (existingCash) {
+          await db.updatePayment(existingCash.id, {
+            amountPaid: cleanAmount,
+            paymentDate: devoteeCashPromiseDate,
+            transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED',
+            submittedAt: submittedAtIso
+          });
+        } else {
+          await db.addPayment({
+            id: 'pay_' + Math.random().toString(36).substring(2, 9),
+            yatraId: selectedYatra.id,
+            participantId: myParticipantData.id,
+            amountPaid: cleanAmount,
+            paymentMethod: 'cash',
+            transactionRef: devoteeCashPromiseNotes ? `CASH PROMISED: ${devoteeCashPromiseNotes}` : 'CASH PAYMENT PROMISED',
+            paymentDate: devoteeCashPromiseDate,
+            screenshotUrl: '',
+            status: 'pending_verification',
+            submittedAt: submittedAtIso,
+            createdAt: submittedAtIso
+          });
+        }
+      } catch (paySyncErr) {
+        console.warn("Could not sync cash payment record", paySyncErr);
       }
-    } catch (paySyncErr) {
-      console.warn("Could not sync cash payment record", paySyncErr);
+      await recordAudit({
+        yatraId: selectedYatra.id,
+        yatraTitle: selectedYatra.name,
+        category: 'Payments',
+        action: 'CASH_PROMISED',
+        details: `Devotee "${myParticipantData.name}" (Mobile: ${myParticipantData.phone}) promised cash contribution of ₹${cleanAmount.toLocaleString()} by ${devoteeCashPromiseDate}. Handover Notes: ${devoteeCashPromiseNotes || 'None'}.`,
+        actorOverride: {
+          id: myParticipantData.id,
+          name: myParticipantData.name,
+          phone: myParticipantData.phone,
+          email: myParticipantData.email || '',
+          role: 'devotee'
+        },
+        metadata: { promisedAmount: cleanAmount, promiseDate: devoteeCashPromiseDate, notes: devoteeCashPromiseNotes, submittedAt: submittedAtIso }
+      });
+      setMyParticipantData(updated);
+      setRefreshTrigger(prev => prev + 1);
+      alert(`Hare Krishna! Your commitment to pay ₹${cleanAmount.toLocaleString()} in cash by ${devoteeCashPromiseDate} has been recorded. The organizers will verify upon receiving the cash.`);
+    } finally {
+      setIsSubmittingPayment(false);
     }
-    await recordAudit({
-      yatraId: selectedYatra.id,
-      yatraTitle: selectedYatra.name,
-      category: 'Payments',
-      action: 'CASH_PROMISED',
-      details: `Devotee "${myParticipantData.name}" (Mobile: ${myParticipantData.phone}) promised cash contribution of ₹${cleanAmount.toLocaleString()} by ${devoteeCashPromiseDate}. Handover Notes: ${devoteeCashPromiseNotes || 'None'}.`,
-      actorOverride: {
-        id: myParticipantData.id,
-        name: myParticipantData.name,
-        phone: myParticipantData.phone,
-        email: myParticipantData.email || '',
-        role: 'devotee'
-      },
-      metadata: { promisedAmount: cleanAmount, promiseDate: devoteeCashPromiseDate, notes: devoteeCashPromiseNotes, submittedAt: submittedAtIso }
-    });
-    setMyParticipantData(updated);
-    setRefreshTrigger(prev => prev + 1);
-    alert(`Hare Krishna! Your commitment to pay ₹${cleanAmount.toLocaleString()} in cash by ${devoteeCashPromiseDate} has been recorded. The organizers will verify upon receiving the cash.`);
   };
 
   // Admin 1-click Receive Cash & Confirm
@@ -9868,8 +9911,8 @@ export default function App() {
                       UPI Payments Closed (Deadline Passed)
                     </button>
                   ) : (
-                    <button type="submit" className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem' }}>
-                      {publicPayMethod === 'cash' ? '✓ Confirm Cash Payment Commitment' : 'Submit Payment Receipt'}
+                    <button type="submit" disabled={isSubmittingPayment} className="btn btn-primary" style={{ width: '100%', marginTop: '1rem', padding: '0.75rem', opacity: isSubmittingPayment ? 0.65 : 1, cursor: isSubmittingPayment ? 'wait' : 'pointer' }}>
+                      {isSubmittingPayment ? '⏳ Submitting Payment...' : (publicPayMethod === 'cash' ? '✓ Confirm Cash Payment Commitment' : 'Submit Payment Receipt')}
                     </button>
                   )}
                 </form>
@@ -10604,10 +10647,11 @@ export default function App() {
 
                             <button
                               type="submit"
+                              disabled={isSubmittingPayment}
                               className="btn btn-primary"
-                              style={{ width: '100%', padding: '0.65rem', fontWeight: 600 }}
+                              style={{ width: '100%', padding: '0.65rem', fontWeight: 600, opacity: isSubmittingPayment ? 0.65 : 1, cursor: isSubmittingPayment ? 'wait' : 'pointer' }}
                             >
-                              ✓ {t('submitCashPromiseBtn') || 'Confirm Cash Payment Date'}
+                              {isSubmittingPayment ? '⏳ Submitting Commitment...' : `✓ ${t('submitCashPromiseBtn') || 'Confirm Cash Payment Date'}`}
                             </button>
                           </form>
                         )}
