@@ -122,6 +122,46 @@ const getUPIQRCodeUrl = (upiId, name, amount = 0, memo = 'Yatra Payment') => {
   return `https://api.qrserver.com/v1/create-qr-code/?size=250x250&data=${encodeURIComponent(upiUrl)}`;
 };
 
+// Safe helper to open payment receipt screenshot in a new tab without browser data: URL block
+const openReceiptInNewTab = (screenshotUrl, devoteeName = 'Devotee', transactionRef = '') => {
+  if (!screenshotUrl) return;
+  if (screenshotUrl.startsWith('data:')) {
+    try {
+      const parts = screenshotUrl.split(';base64,');
+      const contentType = (parts[0] && parts[0].replace('data:', '')) || 'image/jpeg';
+      const byteCharacters = atob(parts[1]);
+      const byteNumbers = new Array(byteCharacters.length);
+      for (let i = 0; i < byteCharacters.length; i++) {
+        byteNumbers[i] = byteCharacters.charCodeAt(i);
+      }
+      const byteArray = new Uint8Array(byteNumbers);
+      const blob = new Blob([byteArray], { type: contentType });
+      const blobUrl = URL.createObjectURL(blob);
+      const win = window.open(blobUrl, '_blank');
+      if (win) return;
+    } catch (e) {
+      console.warn('Blob URL generation failed, falling back to popup document', e);
+    }
+    const popup = window.open('', '_blank');
+    if (popup) {
+      popup.document.write(`<!DOCTYPE html><html><head><title>Payment Receipt - ${devoteeName}</title><meta name="viewport" content="width=device-width, initial-scale=1.0"><style>body{margin:0;background:#0f172a;color:#f8fafc;font-family:system-ui,-apple-system,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:20px;box-sizing:border-box;}.header{margin-bottom:12px;text-align:center;}.title{font-size:1.15rem;font-weight:bold;}.meta{font-size:0.85rem;color:#94a3b8;margin-top:4px;}img{max-width:95vw;max-height:85vh;object-fit:contain;border-radius:8px;box-shadow:0 10px 30px rgba(0,0,0,0.6);border:1px solid rgba(255,255,255,0.1);background:#1e293b;}</style></head><body><div class="header"><div class="title">Payment Receipt: ${devoteeName}</div>${transactionRef ? `<div class="meta">Ref / UTR: ${transactionRef}</div>` : ''}</div><img src="${screenshotUrl}" alt="Payment Receipt Proof" /></body></html>`);
+      popup.document.close();
+      return;
+    }
+  }
+  window.open(screenshotUrl, '_blank');
+};
+
+const downloadReceiptImage = (screenshotUrl, filename = 'payment_receipt.jpg') => {
+  if (!screenshotUrl) return;
+  const link = document.createElement('a');
+  link.href = screenshotUrl;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
 export default function App() {
   // --- Routing & Role State ---
   const [currentRoute, setCurrentRoute] = useState({ path: 'login' });
@@ -391,6 +431,7 @@ export default function App() {
   const [paymentSortOrder, setPaymentSortOrder] = useState('newest'); // 'newest' | 'oldest' | 'amount_desc' | 'amount_asc'
   const [expandedParticipantId, setExpandedParticipantId] = useState(null);
   const [isSubmittingPayment, setIsSubmittingPayment] = useState(false);
+  const [viewingReceipt, setViewingReceipt] = useState(null); // { screenshotUrl, devoteeName, phone, familyName, amount, transactionRef, paymentDate, submittedAt, paymentMethod, status, paymentId, participantId, isVirtualPromise }
 
   // Devotee Profile Auto-fill States
   const [autoFilledDevotee, setAutoFilledDevotee] = useState(null);
@@ -7355,15 +7396,27 @@ export default function App() {
                                             )}
                                             <div style={{ display: 'flex', gap: '0.25rem', marginTop: '0.25rem', alignItems: 'center', flexWrap: 'wrap' }}>
                                               {pv.screenshotUrl && (
-                                                <a 
-                                                  href={pv.screenshotUrl} 
-                                                  target="_blank" 
-                                                  rel="noopener noreferrer" 
-                                                  style={{ fontSize: '0.68rem', color: 'var(--primary)', textDecoration: 'underline', marginRight: '0.15rem' }}
-                                                  title="View payment receipt screenshot"
+                                                <button 
+                                                  type="button" 
+                                                  onClick={() => setViewingReceipt({
+                                                    screenshotUrl: pv.screenshotUrl,
+                                                    devoteeName: part.name,
+                                                    phone: part.phone,
+                                                    familyName: part.familyName,
+                                                    amount: pv.amountPaid,
+                                                    transactionRef: pv.transactionRef || pv.paymentReference,
+                                                    paymentDate: pv.paymentDate,
+                                                    submittedAt: formatPaymentTimestamp(pv, part),
+                                                    paymentMethod: pv.paymentMethod,
+                                                    status: pv.status,
+                                                    paymentId: pv.id,
+                                                    participantId: part.id
+                                                  })}
+                                                  style={{ fontSize: '0.68rem', color: 'var(--primary)', textDecoration: 'underline', marginRight: '0.15rem', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}
+                                                  title="Click to view payment receipt proof"
                                                 >
                                                   📷 Proof
-                                                </a>
+                                                </button>
                                               )}
                                               <button
                                                 type="button"
@@ -7888,14 +7941,27 @@ export default function App() {
                                       )}
                                       <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '0.35rem', marginTop: '0.35rem', alignItems: 'center' }}>
                                         {pv.screenshotUrl && (
-                                          <a 
-                                            href={pv.screenshotUrl} 
-                                            target="_blank" 
-                                            rel="noopener noreferrer" 
-                                            style={{ fontSize: '0.72rem', color: 'var(--primary)', textDecoration: 'underline', marginRight: 'auto' }}
+                                          <button 
+                                            type="button" 
+                                            onClick={() => setViewingReceipt({
+                                              screenshotUrl: pv.screenshotUrl,
+                                              devoteeName: part.name,
+                                              phone: part.phone,
+                                              familyName: part.familyName,
+                                              amount: pv.amountPaid,
+                                              transactionRef: pv.transactionRef || pv.paymentReference,
+                                              paymentDate: pv.paymentDate,
+                                              submittedAt: formatPaymentTimestamp(pv, part),
+                                              paymentMethod: pv.paymentMethod,
+                                              status: pv.status,
+                                              paymentId: pv.id,
+                                              participantId: part.id
+                                            })}
+                                            style={{ fontSize: '0.72rem', color: 'var(--primary)', textDecoration: 'underline', marginRight: 'auto', background: 'none', border: 'none', padding: 0, cursor: 'pointer', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}
+                                            title="Click to view payment receipt proof"
                                           >
                                             📷 Proof
-                                          </a>
+                                          </button>
                                         )}
                                         <button
                                           type="button"
@@ -8513,9 +8579,31 @@ export default function App() {
                                   </td>
                                   <td>
                                     {pay.screenshotUrl ? (
-                                      <a href={pay.screenshotUrl} target="_blank" rel="noopener noreferrer">
-                                        <img src={pay.screenshotUrl} alt="Receipt proof" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border)' }} />
-                                      </a>
+                                      <button
+                                        type="button"
+                                        onClick={() => setViewingReceipt({
+                                          screenshotUrl: pay.screenshotUrl,
+                                          devoteeName: partObj.name,
+                                          phone: partObj.phone,
+                                          familyName: partObj.familyName,
+                                          amount: pay.amountPaid,
+                                          transactionRef: pay.transactionRef,
+                                          paymentDate: pay.paymentDate,
+                                          submittedAt: formattedSubmittedAt || pay.submittedAt || pay.createdAt,
+                                          paymentMethod: pay.paymentMethod,
+                                          status: pay.status,
+                                          paymentId: pay.id,
+                                          participantId: pay.participantId,
+                                          isVirtualPromise: pay.isVirtualPromise
+                                        })}
+                                        style={{ border: 'none', background: 'none', padding: 0, cursor: 'pointer', textAlign: 'left', display: 'inline-flex', flexDirection: 'column', alignItems: 'center', gap: '0.25rem' }}
+                                        title="Click to view full receipt proof"
+                                      >
+                                        <img src={pay.screenshotUrl} alt="Receipt proof" style={{ width: '60px', height: '60px', objectFit: 'cover', borderRadius: '4px', border: '1px solid var(--border)', boxShadow: '0 1px 3px rgba(0,0,0,0.1)' }} />
+                                        <span style={{ fontSize: '0.7rem', color: 'var(--primary)', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.2rem' }}>
+                                          <Eye size={12} /> View Proof
+                                        </span>
+                                      </button>
                                     ) : pay.paymentMethod === 'cash' ? (
                                       <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.3rem', backgroundColor: '#fef3c7', color: '#b45309', padding: '0.25rem 0.5rem', borderRadius: '4px', fontSize: '0.75rem', fontWeight: '600' }}>
                                         💵 Handover Commitment
@@ -13216,6 +13304,156 @@ export default function App() {
           </div>
         );
       })()}
+
+      {/* MODAL: PAYMENT RECEIPT PROOF VIEWER & VERIFICATION */}
+      {viewingReceipt && (
+        <div 
+          className="modal-overlay" 
+          onClick={() => setViewingReceipt(null)}
+          style={{ zIndex: 1100, backgroundColor: 'rgba(15, 23, 42, 0.75)', backdropFilter: 'blur(3px)' }}
+        >
+          <div 
+            className="modal-content" 
+            onClick={(e) => e.stopPropagation()} 
+            style={{ maxWidth: '640px', width: '92%', maxHeight: '92vh', display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden', borderRadius: '12px' }}
+          >
+            {/* Modal Header */}
+            <div style={{ padding: '1rem 1.25rem', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', backgroundColor: 'var(--card-bg)' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+                <div style={{ backgroundColor: 'var(--primary-light)', color: 'var(--primary)', padding: '0.45rem', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <Receipt size={20} />
+                </div>
+                <div>
+                  <h3 style={{ margin: 0, fontSize: '1.05rem', fontWeight: 700 }}>Payment Receipt & Proof</h3>
+                  <div style={{ fontSize: '0.8rem', color: 'var(--text-muted)', marginTop: '0.15rem' }}>
+                    Devotee: <strong>{viewingReceipt.devoteeName}</strong> {viewingReceipt.phone ? `(${viewingReceipt.phone})` : ''} {viewingReceipt.familyName ? `• 👨‍👩‍👧‍👦 ${viewingReceipt.familyName}` : ''}
+                  </div>
+                </div>
+              </div>
+              <button 
+                type="button" 
+                className="modal-close" 
+                onClick={() => setViewingReceipt(null)}
+                style={{ fontSize: '1.4rem', border: 'none', background: 'none', cursor: 'pointer', color: 'var(--text-muted)' }}
+              >
+                ×
+              </button>
+            </div>
+
+            {/* Summary Details Pill Bar */}
+            <div style={{ padding: '0.75rem 1.25rem', backgroundColor: 'var(--bg)', borderBottom: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.5rem', fontSize: '0.82rem' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
+                <span style={{ fontWeight: 800, fontSize: '1.1rem', color: 'var(--success)' }}>
+                  ₹{Number(viewingReceipt.amount || 0).toLocaleString()}
+                </span>
+                <span className={`badge ${viewingReceipt.status === 'verified' ? 'badge-confirmed' : 'badge-warning'}`} style={{ fontSize: '0.75rem' }}>
+                  {viewingReceipt.status === 'verified' ? '✓ Verified' : '⏳ Pending Verification'}
+                </span>
+                {viewingReceipt.transactionRef && (
+                  <span style={{ fontFamily: 'monospace', fontSize: '0.78rem', backgroundColor: 'var(--card-bg)', border: '1px solid var(--border)', padding: '0.15rem 0.45rem', borderRadius: '4px' }}>
+                    UTR/Ref: <strong>{viewingReceipt.transactionRef}</strong>
+                  </span>
+                )}
+              </div>
+              {viewingReceipt.submittedAt && (
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', display: 'inline-flex', alignItems: 'center', gap: '0.25rem' }}>
+                  🕒 {viewingReceipt.submittedAt}
+                </div>
+              )}
+            </div>
+
+            {/* Receipt Image Display Area */}
+            <div style={{ 
+              flex: 1, 
+              backgroundColor: '#0b1120', 
+              padding: '1rem', 
+              overflowY: 'auto', 
+              display: 'flex', 
+              alignItems: 'center', 
+              justifyContent: 'center',
+              minHeight: '260px',
+              maxHeight: '62vh'
+            }}>
+              {viewingReceipt.screenshotUrl ? (
+                <img 
+                  src={viewingReceipt.screenshotUrl} 
+                  alt={`Payment proof from ${viewingReceipt.devoteeName}`} 
+                  style={{ 
+                    maxWidth: '100%', 
+                    maxHeight: '58vh', 
+                    objectFit: 'contain', 
+                    borderRadius: '6px', 
+                    boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
+                    border: '1px solid rgba(255,255,255,0.1)'
+                  }} 
+                />
+              ) : (
+                <div style={{ color: '#94a3b8', textAlign: 'center', padding: '2rem' }}>
+                  <ImageIcon size={42} style={{ opacity: 0.4, marginBottom: '0.5rem' }} />
+                  <div>No receipt image available for this transaction.</div>
+                </div>
+              )}
+            </div>
+
+            {/* Modal Actions Footer */}
+            <div style={{ padding: '0.85rem 1.25rem', borderTop: '1px solid var(--border)', display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '0.75rem', backgroundColor: 'var(--card-bg)' }}>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                {viewingReceipt.screenshotUrl && (
+                  <>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                      onClick={() => openReceiptInNewTab(viewingReceipt.screenshotUrl, viewingReceipt.devoteeName, viewingReceipt.transactionRef)}
+                      title="Open receipt image in a new browser tab without blank page issue"
+                    >
+                      <ExternalLink size={14} /> Open in New Tab
+                    </button>
+                    <button
+                      type="button"
+                      className="btn btn-outline"
+                      style={{ padding: '0.4rem 0.75rem', fontSize: '0.8rem', display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                      onClick={() => downloadReceiptImage(viewingReceipt.screenshotUrl, `receipt_${(viewingReceipt.devoteeName || 'payment').replace(/\s+/g, '_')}_${viewingReceipt.transactionRef || 'proof'}.jpg`)}
+                      title="Download receipt image file to your device"
+                    >
+                      <Download size={14} /> Download
+                    </button>
+                  </>
+                )}
+              </div>
+
+              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center', flexWrap: 'wrap' }}>
+                {isOrganizer && viewingReceipt.status !== 'verified' && viewingReceipt.paymentId && (
+                  <button
+                    type="button"
+                    className="btn btn-primary"
+                    style={{ padding: '0.4rem 0.85rem', fontSize: '0.8rem', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem', backgroundColor: 'var(--success)', borderColor: 'var(--success)' }}
+                    onClick={async () => {
+                      if (viewingReceipt.isVirtualPromise) {
+                        const part = participants.find(p => p.id === viewingReceipt.participantId);
+                        if (part) await handleAdminReceiveCash(part, viewingReceipt.amount);
+                      } else {
+                        await verifyPayment(viewingReceipt.paymentId, viewingReceipt.participantId, 'verified');
+                      }
+                      setViewingReceipt(prev => prev ? ({ ...prev, status: 'verified' }) : null);
+                    }}
+                  >
+                    <CheckCircle size={14} /> Confirm & Verify Payment
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="btn btn-outline"
+                  style={{ padding: '0.4rem 0.85rem', fontSize: '0.8rem' }}
+                  onClick={() => setViewingReceipt(null)}
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
