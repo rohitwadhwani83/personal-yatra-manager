@@ -5,7 +5,7 @@ import {
   Check, X, LogOut, ArrowLeft, Eye, RefreshCw, AlertTriangle, 
   ClipboardList, Settings, Share2, Upload, FileDown, Phone, MapPin, ExternalLink,
   Sparkles, UserCheck, Lock, Clock, Calendar,
-  Bus, Bed, Shuffle,
+  Bus, Bed, Shuffle, RotateCcw, Undo2,
   Key, EyeOff, Copy, ShieldCheck,
   Printer, Languages, BookOpen, ArrowUpDown
 } from 'lucide-react';
@@ -186,6 +186,10 @@ export default function App() {
   const [rooms, setRooms] = useState([]);
   const [busAllocationApproved, setBusAllocationApproved] = useState(false);
   const [roomAllocationApproved, setRoomAllocationApproved] = useState(false);
+  const [busAllocationSnapshot, setBusAllocationSnapshot] = useState(null);
+  const [roomAllocationSnapshot, setRoomAllocationSnapshot] = useState(null);
+  const [isAllocatingBus, setIsAllocatingBus] = useState(false);
+  const [isAllocatingRoom, setIsAllocatingRoom] = useState(false);
 
   // --- Interactive UI States ---
   const [selectedYatra, setSelectedYatra] = useState(null);
@@ -2228,81 +2232,259 @@ export default function App() {
       return;
     }
 
-    // Sort by group size descending (larger families first for optimal bin-packing)
-    const sorted = [...organisedDevotees].sort((a, b) => {
-      const aCount = getParticipantApprovedPax(a);
-      const bCount = getParticipantApprovedPax(b);
-      return bCount - aCount;
+    // Capture pre-allocation snapshot so admin can undo anytime
+    const snapshot = participants.map(p => ({
+      id: p.id,
+      busId: p.busId || '',
+      busName: p.busName || '',
+      busNumber: p.busNumber || ''
+    }));
+    setBusAllocationSnapshot({
+      participants: snapshot,
+      wasApproved: busAllocationApproved,
+      timestamp: Date.now()
     });
 
-    const tracker = buses.map(b => ({
-      ...b,
-      remaining: parseInt(b.capacity) || 35,
-      allocated: []
-    }));
+    setIsAllocatingBus(true);
+    try {
+      // Sort by group size descending (larger families first for optimal bin-packing)
+      const sorted = [...organisedDevotees].sort((a, b) => {
+        const aCount = getParticipantApprovedPax(a);
+        const bCount = getParticipantApprovedPax(b);
+        return bCount - aCount;
+      });
 
-    const updates = [];
-    let unallocatedCount = 0;
+      const tracker = buses.map(b => ({
+        ...b,
+        remaining: parseInt(b.capacity) || 35,
+        allocated: []
+      }));
 
-    for (const devotee of sorted) {
-      const devoteePax = getParticipantApprovedPax(devotee);
-      if (devoteePax <= 0) continue;
-      
-      // Best fit: find a bus that has enough remaining capacity
-      const suitable = tracker
-        .filter(b => b.remaining >= devoteePax)
-        .sort((a, b) => a.remaining - b.remaining);
+      const updates = [];
+      let unallocatedCount = 0;
 
-      if (suitable.length > 0) {
-        const chosen = suitable[0];
-        chosen.remaining -= devoteePax;
-        chosen.allocated.push(devotee);
-        updates.push({
-          id: devotee.id,
-          busId: chosen.id,
-          busName: chosen.name,
-          busNumber: chosen.busNumber
-        });
-      } else {
-        // Find bus with most space
-        const largest = [...tracker].sort((a, b) => b.remaining - a.remaining)[0];
-        if (largest && largest.remaining > 0) {
-          largest.remaining -= devoteePax;
-          largest.allocated.push(devotee);
+      for (const devotee of sorted) {
+        const devoteePax = getParticipantApprovedPax(devotee);
+        if (devoteePax <= 0) continue;
+        
+        // Best fit: find a bus that has enough remaining capacity
+        const suitable = tracker
+          .filter(b => b.remaining >= devoteePax)
+          .sort((a, b) => a.remaining - b.remaining);
+
+        if (suitable.length > 0) {
+          const chosen = suitable[0];
+          chosen.remaining -= devoteePax;
+          chosen.allocated.push(devotee);
           updates.push({
             id: devotee.id,
-            busId: largest.id,
-            busName: largest.name,
-            busNumber: largest.busNumber
+            busId: chosen.id,
+            busName: chosen.name,
+            busNumber: chosen.busNumber
           });
         } else {
-          unallocatedCount++;
-          updates.push({
-            id: devotee.id,
-            busId: '',
-            busName: '',
-            busNumber: ''
-          });
+          // Find bus with most space
+          const largest = [...tracker].sort((a, b) => b.remaining - a.remaining)[0];
+          if (largest && largest.remaining > 0) {
+            largest.remaining -= devoteePax;
+            largest.allocated.push(devotee);
+            updates.push({
+              id: devotee.id,
+              busId: largest.id,
+              busName: largest.name,
+              busNumber: largest.busNumber
+            });
+          } else {
+            unallocatedCount++;
+            updates.push({
+              id: devotee.id,
+              busId: '',
+              busName: '',
+              busNumber: ''
+            });
+          }
         }
       }
+
+      for (const u of updates) {
+        await db.updateParticipant(u.id, {
+          busId: u.busId,
+          busName: u.busName,
+          busNumber: u.busNumber
+        });
+      }
+
+      setBusAllocationApproved(false);
+      setRefreshTrigger(prev => prev + 1);
+
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Travel & Logistics',
+        action: 'BUS_AUTO_ALLOCATED',
+        details: `${actor.name} (${actor.phone || actor.email}) ran 1-Click Bus Auto-Allocation for ${organisedDevotees.length} devotees across ${buses.length} buses.`,
+        metadata: { yatraId: selectedYatra?.id, busesCount: buses.length, devoteesCount: organisedDevotees.length }
+      });
+
+      if (unallocatedCount > 0) {
+        alert(`Auto-allocation complete! ${updates.length - unallocatedCount} devotees placed. Notice: ${unallocatedCount} devotees could not fit within the current total bus capacity. Please add another bus or increase capacity.\n\n💡 Tip: You can click '↩ Undo Allocation' anytime to reverse this allocation.`);
+      } else {
+        alert(`🎉 Auto-allocation successful! All ${sorted.length} devotee groups have been placed into ${buses.length} buses keeping all family members intact! Review assignments below and click 'Approve & Publish' when ready.\n\n💡 Tip: You can click '↩ Undo Allocation' anytime to reverse this allocation.`);
+      }
+    } finally {
+      setIsAllocatingBus(false);
+    }
+  };
+
+  // Reverses the last 1-click bus allocation back to its prior snapshot
+  const undoBusAllocation = async () => {
+    if (!isOrganizer) return;
+    if (!busAllocationSnapshot || !busAllocationSnapshot.participants) {
+      alert("No previous bus allocation snapshot found to undo.");
+      return;
     }
 
-    for (const u of updates) {
-      await db.updateParticipant(u.id, {
-        busId: u.busId,
-        busName: u.busName,
-        busNumber: u.busNumber
+    if (!window.confirm("↩ Are you sure you want to undo the last bus allocation?\nThis will revert all devotee coach assignments to their exact state prior to the last allocation.")) {
+      return;
+    }
+
+    setIsAllocatingBus(true);
+    try {
+      const snapParticipants = busAllocationSnapshot.participants;
+      for (const item of snapParticipants) {
+        await db.updateParticipant(item.id, {
+          busId: item.busId || '',
+          busName: item.busName || '',
+          busNumber: item.busNumber || ''
+        });
+      }
+
+      setBusAllocationApproved(busAllocationSnapshot.wasApproved || false);
+      setBusAllocationSnapshot(null);
+      setRefreshTrigger(prev => prev + 1);
+
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Travel & Logistics',
+        action: 'BUS_ALLOCATION_REVERTED',
+        details: `${actor.name} (${actor.phone || actor.email}) undid the last 1-Click bus allocation, restoring coach assignments to their previous snapshot.`,
+        metadata: { yatraId: selectedYatra?.id }
+      });
+
+      alert("↩ Bus allocation successfully undone! All devotee coach assignments have been restored to their previous state.");
+    } catch (err) {
+      console.error("Failed to undo bus allocation:", err);
+      alert("Error undoing bus allocation: " + err.message);
+    } finally {
+      setIsAllocatingBus(false);
+    }
+  };
+
+  // Resets/unassigns all devotees from all buses so admin can start fresh
+  const resetAllBusAllocations = async () => {
+    if (!isOrganizer) return;
+    const assignedDevotees = participants.filter(p => p.busId);
+    if (assignedDevotees.length === 0) {
+      alert("All buses are currently unassigned/empty. There are no coach allocations to reset.");
+      return;
+    }
+
+    if (!window.confirm(`↺ Are you sure you want to unassign ALL ${assignedDevotees.length} devotees from all buses?\nThis will clear all coach assignments so you can start fresh or reallocate.\n\n(A restore snapshot will be saved so you can Undo if needed)`)) {
+      return;
+    }
+
+    // Save snapshot so admin can undo the reset if done by mistake!
+    setBusAllocationSnapshot({
+      participants: participants.map(p => ({
+        id: p.id,
+        busId: p.busId || '',
+        busName: p.busName || '',
+        busNumber: p.busNumber || ''
+      })),
+      wasApproved: busAllocationApproved,
+      timestamp: Date.now()
+    });
+
+    setIsAllocatingBus(true);
+    try {
+      for (const devotee of assignedDevotees) {
+        await db.updateParticipant(devotee.id, {
+          busId: '',
+          busName: '',
+          busNumber: ''
+        });
+      }
+
+      setBusAllocationApproved(false);
+      setRefreshTrigger(prev => prev + 1);
+
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Travel & Logistics',
+        action: 'BUS_ALLOCATIONS_CLEARED',
+        details: `${actor.name} (${actor.phone || actor.email}) reset and cleared all devotee bus assignments across all coaches.`,
+        metadata: { yatraId: selectedYatra?.id, clearedCount: assignedDevotees.length }
+      });
+
+      alert(`↺ All bus allocations cleared! ${assignedDevotees.length} devotees have been unassigned. You can now reallocate or click '↩ Undo Allocation' to restore.`);
+    } catch (err) {
+      console.error("Failed to reset bus allocations:", err);
+      alert("Error resetting bus allocations: " + err.message);
+    } finally {
+      setIsAllocatingBus(false);
+    }
+  };
+
+  // Empty an individual coach
+  const emptySingleBus = async (bus) => {
+    if (!isOrganizer || !bus) return;
+    const assignedDevotees = participants.filter(p => p.busId === bus.id);
+    if (assignedDevotees.length === 0) {
+      alert(`${bus.name} has no devotees assigned. It is already empty.`);
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to unassign all ${assignedDevotees.length} devotee groups from ${bus.name}?`)) {
+      return;
+    }
+
+    // Save snapshot before emptying single coach
+    setBusAllocationSnapshot({
+      participants: participants.map(p => ({
+        id: p.id,
+        busId: p.busId || '',
+        busName: p.busName || '',
+        busNumber: p.busNumber || ''
+      })),
+      wasApproved: busAllocationApproved,
+      timestamp: Date.now()
+    });
+
+    for (const d of assignedDevotees) {
+      await db.updateParticipant(d.id, {
+        busId: '',
+        busName: '',
+        busNumber: ''
       });
     }
 
     setBusAllocationApproved(false);
     setRefreshTrigger(prev => prev + 1);
 
-    if (unallocatedCount > 0) {
-      alert(`Auto-allocation complete! ${updates.length - unallocatedCount} devotees placed. Notice: ${unallocatedCount} devotees could not fit within the current total bus capacity. Please add another bus or increase capacity.`);
-    } else {
-      alert(`🎉 Auto-allocation successful! All ${sorted.length} devotee groups have been placed into ${buses.length} buses keeping all family members intact! Review assignments below and click 'Approve & Publish' when ready.`);
-    }
+    const actor = getCurrentActor();
+    await recordAudit({
+      yatraId: selectedYatra?.id,
+      yatraTitle: selectedYatra?.name,
+      category: 'Travel & Logistics',
+      action: 'BUS_COACH_EMPTIED',
+      details: `${actor.name} (${actor.phone || actor.email}) emptied coach "${bus.name}", unassigning ${assignedDevotees.length} devotees.`,
+      metadata: { yatraId: selectedYatra?.id, busId: bus.id, busName: bus.name }
+    });
   };
 
   const sendBusWhatsApp = (participant, bus) => {
@@ -2445,6 +2627,51 @@ export default function App() {
     }
   };
 
+  // Helper: get all assigned occupants for a specific room (individuals + family members)
+  const getOccupantsOfRoom = (roomId, partList = participants) => {
+    if (!roomId) return [];
+    const list = [];
+    partList.forEach(p => {
+      if (!isEligibleForAllocation(p)) return;
+      if (p.type === 'family' && p.familyMembers && p.familyMembers.length > 0) {
+        p.familyMembers.forEach((m, idx) => {
+          if (m.isApproved === false) return; // Skip unapproved family member
+          const assignedRoomId = m.roomId !== undefined && m.roomId !== '' ? m.roomId : p.roomId;
+          if (assignedRoomId === roomId) {
+            list.push({
+              participantId: p.id,
+              parentParticipant: p,
+              isFamily: true,
+              familyName: p.familyName || p.name,
+              primaryName: p.name,
+              phone: p.phone,
+              memberIndex: idx,
+              name: m.name,
+              relation: m.relation || 'Member',
+              age: m.age
+            });
+          }
+        });
+      } else {
+        if (p.roomId === roomId) {
+          list.push({
+            participantId: p.id,
+            parentParticipant: p,
+            isFamily: false,
+            familyName: '',
+            primaryName: p.name,
+            phone: p.phone,
+            memberIndex: null,
+            name: p.name,
+            relation: 'Self',
+            age: ''
+          });
+        }
+      }
+    });
+    return list;
+  };
+
   // Reassign whole participant / family to a room (or unassign if roomId === '')
   const handleReassignRoom = async (participantId, roomId) => {
     if (!isOrganizer) return;
@@ -2548,8 +2775,25 @@ export default function App() {
       return;
     }
 
-    // Build tracking inventory of rooms with accurate bedCount
-    const roomTracker = rooms.map(r => {
+    // Capture pre-allocation snapshot so admin can undo anytime
+    const snapshot = participants.map(p => ({
+      id: p.id,
+      roomId: p.roomId || '',
+      roomNumber: p.roomNumber || '',
+      hotelName: p.hotelName || '',
+      hotelId: p.hotelId || '',
+      familyMembers: p.familyMembers ? p.familyMembers.map(m => ({ ...m })) : undefined
+    }));
+    setRoomAllocationSnapshot({
+      participants: snapshot,
+      wasApproved: roomAllocationApproved,
+      timestamp: Date.now()
+    });
+
+    setIsAllocatingRoom(true);
+    try {
+      // Build tracking inventory of rooms with accurate bedCount
+      const roomTracker = rooms.map(r => {
       const beds = parseInt(r.bedCount) || parseInt(r.capacity) || 2;
       return {
         id: r.id,
@@ -2807,20 +3051,243 @@ export default function App() {
       }
     }
 
-    // Save updates
-    for (const u of participantUpdates) {
-      await db.updateParticipant(u.id, u.data);
+      // Save updates
+      for (const u of participantUpdates) {
+        await db.updateParticipant(u.id, u.data);
+      }
+
+      setRoomAllocationApproved(false);
+      setRefreshTrigger(prev => prev + 1);
+
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Accommodations',
+        action: 'ROOM_AUTO_ALLOCATED',
+        details: `${actor.name} (${actor.phone || actor.email}) ran 1-Click Bed & Room Auto-Allocation for ${devotees.length} devotees across ${rooms.length} hotel rooms.`,
+        metadata: { yatraId: selectedYatra?.id, roomsCount: rooms.length, devoteesCount: devotees.length }
+      });
+
+      const totalEligiblePax = devotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
+      if (unallocatedDevoteeCount > 0) {
+        alert(`Room allocation completed! ${totalEligiblePax - unallocatedDevoteeCount} devotees placed across booked hotel rooms. Notice: ${unallocatedDevoteeCount} devotee beds could not be accommodated. Please add more rooms across your booked accommodations.\n\n💡 Tip: You can click '↩ Undo Allocation' anytime to reverse this allocation.`);
+      } else {
+        alert(`🎉 Smart room allocation successful! All ${totalEligiblePax} devotees have been allocated rooms matching their bed counts (with families kept together in suites or split into rooms at the same hotel). You can manually fine-tune any room or individual family member below.\n\n💡 Tip: You can click '↩ Undo Allocation' anytime to reverse this allocation.`);
+      }
+    } finally {
+      setIsAllocatingRoom(false);
+    }
+  };
+
+  // Reverses the last 1-click room allocation back to its prior snapshot
+  const undoRoomAllocation = async () => {
+    if (!isOrganizer) return;
+    if (!roomAllocationSnapshot || !roomAllocationSnapshot.participants) {
+      alert("No previous room allocation snapshot found to undo.");
+      return;
+    }
+
+    if (!window.confirm("↩ Are you sure you want to undo the last room allocation?\nThis will revert all devotee room assignments and family bed links to their exact state prior to the last allocation.")) {
+      return;
+    }
+
+    setIsAllocatingRoom(true);
+    try {
+      const snapParticipants = roomAllocationSnapshot.participants;
+      for (const item of snapParticipants) {
+        const updateData = {
+          roomId: item.roomId || '',
+          roomNumber: item.roomNumber || '',
+          hotelName: item.hotelName || '',
+          hotelId: item.hotelId || ''
+        };
+        if (item.familyMembers !== undefined) {
+          updateData.familyMembers = item.familyMembers;
+        }
+        await db.updateParticipant(item.id, updateData);
+      }
+
+      setRoomAllocationApproved(roomAllocationSnapshot.wasApproved || false);
+      setRoomAllocationSnapshot(null);
+      setRefreshTrigger(prev => prev + 1);
+
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Accommodations',
+        action: 'ROOM_ALLOCATION_REVERTED',
+        details: `${actor.name} (${actor.phone || actor.email}) undid the last 1-Click room allocation, restoring room assignments and family bed links to their previous snapshot.`,
+        metadata: { yatraId: selectedYatra?.id }
+      });
+
+      alert("↩ Room allocation successfully undone! All devotee room assignments have been restored to their previous state.");
+    } catch (err) {
+      console.error("Failed to undo room allocation:", err);
+      alert("Error undoing room allocation: " + err.message);
+    } finally {
+      setIsAllocatingRoom(false);
+    }
+  };
+
+  // Resets/unassigns all devotees from all hotel rooms so admin can start fresh
+  const resetAllRoomAllocations = async () => {
+    if (!isOrganizer) return;
+    const assignedDevotees = participants.filter(p => p.roomId || (p.familyMembers && p.familyMembers.some(m => m.roomId)));
+    if (assignedDevotees.length === 0) {
+      alert("All hotel rooms are currently unassigned/vacant. There are no room allocations to reset.");
+      return;
+    }
+
+    if (!window.confirm(`↺ Are you sure you want to unassign ALL devotees from all hotel rooms?\nThis will clear all room assignments so you can start fresh or reallocate.\n\n(A restore snapshot will be saved so you can Undo if needed)`)) {
+      return;
+    }
+
+    // Save snapshot so admin can undo the reset if done by mistake!
+    setRoomAllocationSnapshot({
+      participants: participants.map(p => ({
+        id: p.id,
+        roomId: p.roomId || '',
+        roomNumber: p.roomNumber || '',
+        hotelName: p.hotelName || '',
+        hotelId: p.hotelId || '',
+        familyMembers: p.familyMembers ? p.familyMembers.map(m => ({ ...m })) : undefined
+      })),
+      wasApproved: roomAllocationApproved,
+      timestamp: Date.now()
+    });
+
+    setIsAllocatingRoom(true);
+    try {
+      for (const p of assignedDevotees) {
+        const clearedMembers = p.familyMembers ? p.familyMembers.map(m => ({
+          ...m,
+          roomId: '',
+          roomNumber: '',
+          hotelName: '',
+          hotelId: ''
+        })) : undefined;
+
+        const updateData = {
+          roomId: '',
+          roomNumber: '',
+          hotelName: '',
+          hotelId: ''
+        };
+        if (clearedMembers) updateData.familyMembers = clearedMembers;
+
+        await db.updateParticipant(p.id, updateData);
+      }
+
+      setRoomAllocationApproved(false);
+      setRefreshTrigger(prev => prev + 1);
+
+      const actor = getCurrentActor();
+      await recordAudit({
+        yatraId: selectedYatra?.id,
+        yatraTitle: selectedYatra?.name,
+        category: 'Accommodations',
+        action: 'ROOM_ALLOCATIONS_CLEARED',
+        details: `${actor.name} (${actor.phone || actor.email}) reset and cleared all devotee hotel room assignments.`,
+        metadata: { yatraId: selectedYatra?.id, clearedCount: assignedDevotees.length }
+      });
+
+      alert(`↺ All room allocations cleared! Devotees have been unassigned. You can now reallocate or click '↩ Undo Allocation' to restore.`);
+    } catch (err) {
+      console.error("Failed to reset room allocations:", err);
+      alert("Error resetting room allocations: " + err.message);
+    } finally {
+      setIsAllocatingRoom(false);
+    }
+  };
+
+  // Empty an individual hotel room
+  const emptySingleRoom = async (room) => {
+    if (!isOrganizer || !room) return;
+    const occupants = getOccupantsOfRoom(room.id, participants);
+    if (occupants.length === 0) {
+      alert(`Room ${room.roomNumber} has no devotees assigned. It is already vacant.`);
+      return;
+    }
+
+    if (!window.confirm(`Are you sure you want to unassign all ${occupants.length} devotee(s) from Room ${room.roomNumber}?`)) {
+      return;
+    }
+
+    // Save snapshot before emptying single room
+    setRoomAllocationSnapshot({
+      participants: participants.map(p => ({
+        id: p.id,
+        roomId: p.roomId || '',
+        roomNumber: p.roomNumber || '',
+        hotelName: p.hotelName || '',
+        hotelId: p.hotelId || '',
+        familyMembers: p.familyMembers ? p.familyMembers.map(m => ({ ...m })) : undefined
+      })),
+      wasApproved: roomAllocationApproved,
+      timestamp: Date.now()
+    });
+
+    const partMap = {};
+    for (const occ of occupants) {
+      if (!partMap[occ.participantId]) {
+        const p = participants.find(x => x.id === occ.participantId);
+        if (p) {
+          partMap[occ.participantId] = {
+            ...p,
+            familyMembers: p.familyMembers ? p.familyMembers.map(m => ({ ...m })) : undefined
+          };
+        }
+      }
+      const p = partMap[occ.participantId];
+      if (!p) continue;
+
+      if (occ.memberIndex !== null && occ.memberIndex !== undefined && p.familyMembers && p.familyMembers[occ.memberIndex]) {
+        p.familyMembers[occ.memberIndex].roomId = '';
+        p.familyMembers[occ.memberIndex].roomNumber = '';
+        p.familyMembers[occ.memberIndex].hotelName = '';
+        p.familyMembers[occ.memberIndex].hotelId = '';
+        if (occ.memberIndex === 0 || p.familyMembers[occ.memberIndex].relation === 'Self') {
+          p.roomId = '';
+          p.roomNumber = '';
+          p.hotelName = '';
+          p.hotelId = '';
+        }
+      } else {
+        p.roomId = '';
+        p.roomNumber = '';
+        p.hotelName = '';
+        p.hotelId = '';
+      }
+    }
+
+    for (const pid of Object.keys(partMap)) {
+      const p = partMap[pid];
+      const updateData = {
+        roomId: p.roomId || '',
+        roomNumber: p.roomNumber || '',
+        hotelName: p.hotelName || '',
+        hotelId: p.hotelId || ''
+      };
+      if (p.familyMembers) {
+        updateData.familyMembers = p.familyMembers;
+      }
+      await db.updateParticipant(pid, updateData);
     }
 
     setRoomAllocationApproved(false);
     setRefreshTrigger(prev => prev + 1);
 
-    const totalEligiblePax = devotees.reduce((sum, p) => sum + getParticipantApprovedPax(p), 0);
-    if (unallocatedDevoteeCount > 0) {
-      alert(`Room allocation completed! ${totalEligiblePax - unallocatedDevoteeCount} devotees placed across booked hotel rooms. Notice: ${unallocatedDevoteeCount} devotee beds could not be accommodated. Please add more rooms across your booked accommodations.`);
-    } else {
-      alert(`🎉 Smart room allocation successful! All ${totalEligiblePax} devotees have been allocated rooms matching their bed counts (with families kept together in suites or split into rooms at the same hotel). You can manually fine-tune any room or individual family member below.`);
-    }
+    const actor = getCurrentActor();
+    await recordAudit({
+      yatraId: selectedYatra?.id,
+      yatraTitle: selectedYatra?.name,
+      category: 'Accommodations',
+      action: 'ROOM_EMPTIED',
+      details: `${actor.name} (${actor.phone || actor.email}) emptied Room ${room.roomNumber} at ${room.hotelName}, unassigning ${occupants.length} devotees.`,
+      metadata: { yatraId: selectedYatra?.id, roomId: room.id, roomNumber: room.roomNumber }
+    });
   };
 
   const sendRoomWhatsApp = (participant, currentRoom, hotel) => {
@@ -5697,7 +6164,7 @@ export default function App() {
                       Stage 3 Confirmed Logistics: Input bus coaches, auto-allocate devotees opting for <strong>Organizer Arrangements</strong> (keeps all family members together), review/edit layout, and trigger WhatsApp passes.
                     </p>
                   </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                  <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap', alignItems: 'center' }}>
                     <button 
                       className="btn btn-primary" 
                       onClick={() => {
@@ -5712,10 +6179,33 @@ export default function App() {
                       className="btn btn-outline" 
                       style={{ borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
                       onClick={autoAllocateBuses}
+                      disabled={isAllocatingBus}
                       title="Optimally assigns devotees into buses keeping all family members in the same coach"
                     >
-                      <Shuffle size={16} /> Auto-Allocate Devotees
+                      <Shuffle size={16} className={isAllocatingBus ? "spin" : ""} /> {isAllocatingBus ? 'Allocating...' : 'Auto-Allocate Devotees'}
                     </button>
+                    {busAllocationSnapshot && (
+                      <button
+                        className="btn btn-outline"
+                        style={{ borderColor: '#d97706', color: '#d97706', backgroundColor: '#fffbeb', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                        onClick={undoBusAllocation}
+                        disabled={isAllocatingBus}
+                        title="Undo the last 1-click allocation and restore coach assignments to their previous snapshot"
+                      >
+                        <Undo2 size={16} /> Undo Allocation
+                      </button>
+                    )}
+                    {participants.some(p => p.busId) && (
+                      <button
+                        className="btn btn-outline"
+                        style={{ borderColor: 'var(--danger)', color: 'var(--danger)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                        onClick={resetAllBusAllocations}
+                        disabled={isAllocatingBus}
+                        title="Unassign all devotees from all buses to start fresh"
+                      >
+                        <RotateCcw size={15} /> Reset / Clear All
+                      </button>
+                    )}
                     <button 
                       className={`btn ${busAllocationApproved ? 'btn-outline' : 'btn-primary'}`} 
                       style={{ backgroundColor: busAllocationApproved ? 'transparent' : 'var(--success)', borderColor: 'var(--success)', color: busAllocationApproved ? 'var(--success)' : 'white' }}
@@ -5865,6 +6355,16 @@ export default function App() {
                                 </div>
                               </div>
                               <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                {assignedDevotees.length > 0 && (
+                                  <button 
+                                    className="btn btn-outline" 
+                                    style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem', color: '#d97706', borderColor: '#fde68a' }}
+                                    onClick={() => emptySingleBus(bus)}
+                                    title="Empty this coach (unassign all devotees from this bus)"
+                                  >
+                                    <RotateCcw size={13} /> Empty Coach
+                                  </button>
+                                )}
                                 <button 
                                   className="btn btn-outline" 
                                   style={{ padding: '0.35rem 0.6rem', fontSize: '0.75rem' }}
@@ -6246,10 +6746,33 @@ export default function App() {
                         className="btn btn-outline" 
                         style={{ borderColor: 'var(--primary)', color: 'var(--primary)', fontWeight: 600 }}
                         onClick={autoAllocateRooms}
+                        disabled={isAllocatingRoom}
                         title="Intelligently matches families to rooms by bed count (or same-hotel multi-room splits like 3-bed + 2-bed twin room) and pairs individuals"
                       >
-                        <Shuffle size={16} /> Auto-Allocate by Beds
+                        <Shuffle size={16} className={isAllocatingRoom ? "spin" : ""} /> {isAllocatingRoom ? 'Allocating...' : 'Auto-Allocate by Beds'}
                       </button>
+                      {roomAllocationSnapshot && (
+                        <button
+                          className="btn btn-outline"
+                          style={{ borderColor: '#d97706', color: '#d97706', backgroundColor: '#fffbeb', fontWeight: 600, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                          onClick={undoRoomAllocation}
+                          disabled={isAllocatingRoom}
+                          title="Undo the last 1-click room allocation and restore room assignments to their previous snapshot"
+                        >
+                          <Undo2 size={16} /> Undo Allocation
+                        </button>
+                      )}
+                      {participants.some(p => p.roomId || (p.familyMembers && p.familyMembers.some(m => m.roomId))) && (
+                        <button
+                          className="btn btn-outline"
+                          style={{ borderColor: 'var(--danger)', color: 'var(--danger)', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: '0.35rem' }}
+                          onClick={resetAllRoomAllocations}
+                          disabled={isAllocatingRoom}
+                          title="Unassign all devotees from all hotel rooms to start fresh"
+                        >
+                          <RotateCcw size={15} /> Reset / Clear All
+                        </button>
+                      )}
                       <button 
                         className={`btn ${roomAllocationApproved ? 'btn-outline' : 'btn-primary'}`} 
                         style={{ backgroundColor: roomAllocationApproved ? 'transparent' : 'var(--success)', borderColor: 'var(--success)', color: roomAllocationApproved ? 'var(--success)' : 'white' }}
@@ -6605,6 +7128,16 @@ export default function App() {
                                           🛏️ <strong>{bedCount} Beds</strong> {extraAllowed > 0 ? `• Extra mattress: ₹${room.extraMattressCost || 500}` : ''}
                                         </span>
                                         <div style={{ display: 'flex', gap: '0.35rem' }}>
+                                          {occupantCount > 0 && (
+                                            <button 
+                                              className="btn btn-outline" 
+                                              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', color: '#d97706', borderColor: '#fde68a' }}
+                                              onClick={() => emptySingleRoom(room)}
+                                              title="Empty this room (unassign all occupants)"
+                                            >
+                                              <RotateCcw size={12} /> Empty Room
+                                            </button>
+                                          )}
                                           <button 
                                             className="btn btn-outline" 
                                             style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
